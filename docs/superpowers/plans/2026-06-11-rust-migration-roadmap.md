@@ -334,6 +334,8 @@ language-specific setup where needed.
   fallback and direct installs preserve the same download-saving behavior.
 - Python TTS and STT runtime paths now resolve `ffmpeg` from PATH first and then from `$HERMES_HOME/bin`, so an
   installer-managed or bundled ffmpeg remains usable before a fresh shell picks up PATH changes.
+- The WhatsApp bridge voice-conversion path now uses the same `$HERMES_HOME/bin/ffmpeg` fallback before falling back to
+  PATH lookup, so managed ffmpeg archives also cover WhatsApp voice replies without requiring a separate user install.
 - `desktop` now uses a Rust no-op skip when `apps/desktop/package.json` is absent, matching the existing script
   behavior without starting PowerShell or bash for a stage that can only skip.
 - Windows `desktop` now has a Rust native-first build path for workspace npm install and `npm run pack`, verifies the

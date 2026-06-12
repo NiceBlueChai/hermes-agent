@@ -32,6 +32,8 @@ User-visible behavior:
   installer platform being uploaded.
 - Optional reviewed ffmpeg archives can now use `ffmpeg-<platform>-<arch>` names under `bootstrap-tools/`; native
   setup installs them before package-manager recovery when present and manifest-verified.
+- Python TTS/STT and WhatsApp voice conversion can consume that managed ffmpeg binary from `$HERMES_HOME/bin` while
+  keeping PATH-based ffmpeg as the compatibility fallback.
 - Release maintainers can add such archives with `prepare_bootstrap_tools.py --local-archive PATH=HTTPS_URL`, which
   copies the local file and records the reviewed URL, target platform, architecture, size, and SHA-256 in the manifest.
 - Release workflows can alternatively use `prepare_bootstrap_tools.py --audited-archive NAME=HTTPS_URL=SHA256` to

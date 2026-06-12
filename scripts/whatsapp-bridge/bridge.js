@@ -18,17 +18,24 @@
  *   node bridge.js --port 3000 --session ~/.hermes/whatsapp/session
  */
 
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } from '@whiskeysockets/baileys';
+import {
+  DisconnectReason,
+  downloadMediaMessage,
+  fetchLatestBaileysVersion,
+  makeWASocket,
+  useMultiFileAuthState,
+} from '@whiskeysockets/baileys';
 import express from 'express';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import path from 'path';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from 'fs';
 import { randomBytes } from 'crypto';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
 import qrcode from 'qrcode-terminal';
 import { matchesAllowedUser, parseAllowedUsers } from './allowlist.js';
+import { resolveFfmpegBinary } from './managed-ffmpeg.js';
 
 // Parse CLI args
 const args = process.argv.slice(2);
@@ -316,11 +323,14 @@ async function startSocket() {
 
       const messageContent = getMessageContent(msg);
       const contextInfo = getContextInfo(messageContent);
-      const mentionedIds = Array.from(new Set((contextInfo?.mentionedJid || []).map(normalizeWhatsAppId).filter(Boolean)));
+      const mentionedIds = Array.from(new Set(
+        (contextInfo?.mentionedJid || []).map(normalizeWhatsAppId).filter(Boolean),
+      ));
       const quotedMessageId = contextInfo?.stanzaId || null;
       const quotedParticipant = normalizeWhatsAppId(contextInfo?.participant || '') || null;
       const quotedRemoteJid = normalizeWhatsAppId(contextInfo?.remoteJid || '') || null;
       const hasQuotedMessage = !!contextInfo?.quotedMessage;
+      const mediaDownloadOptions = { logger, reuploadRequest: sock.updateMediaMessage };
 
       // Extract message body
       let body = '';
@@ -337,7 +347,7 @@ async function startSocket() {
         hasMedia = true;
         mediaType = 'image';
         try {
-          const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+          const buf = await downloadMediaMessage(msg, 'buffer', {}, mediaDownloadOptions);
           const mime = messageContent.imageMessage.mimetype || 'image/jpeg';
           const extMap = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif' };
           const ext = extMap[mime] || '.jpg';
@@ -353,7 +363,7 @@ async function startSocket() {
         hasMedia = true;
         mediaType = 'video';
         try {
-          const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+          const buf = await downloadMediaMessage(msg, 'buffer', {}, mediaDownloadOptions);
           const mime = messageContent.videoMessage.mimetype || 'video/mp4';
           const ext = mime.includes('mp4') ? '.mp4' : '.mkv';
           mkdirSync(DOCUMENT_CACHE_DIR, { recursive: true });
@@ -368,7 +378,7 @@ async function startSocket() {
         mediaType = messageContent.pttMessage ? 'ptt' : 'audio';
         try {
           const audioMsg = messageContent.pttMessage || messageContent.audioMessage;
-          const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+          const buf = await downloadMediaMessage(msg, 'buffer', {}, mediaDownloadOptions);
           const mime = audioMsg.mimetype || 'audio/ogg';
           const ext = mime.includes('ogg') ? '.ogg' : mime.includes('mp4') ? '.m4a' : '.ogg';
           mkdirSync(AUDIO_CACHE_DIR, { recursive: true });
@@ -384,7 +394,7 @@ async function startSocket() {
         mediaType = 'document';
         const fileName = messageContent.documentMessage.fileName || 'document';
         try {
-          const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+          const buf = await downloadMediaMessage(msg, 'buffer', {}, mediaDownloadOptions);
           mkdirSync(DOCUMENT_CACHE_DIR, { recursive: true });
           const safeFileName = path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, '_');
           const filePath = path.join(DOCUMENT_CACHE_DIR, `doc_${randomBytes(6).toString('hex')}_${safeFileName}`);
@@ -403,7 +413,9 @@ async function startSocket() {
       // Ignore Hermes' own reply messages in self-chat mode to avoid loops.
       if (msg.key.fromMe && ((REPLY_PREFIX && body.startsWith(REPLY_PREFIX)) || recentlySentIds.has(msg.key.id))) {
         if (WHATSAPP_DEBUG) {
-          try { console.log(JSON.stringify({ event: 'ignored', reason: 'agent_echo', chatId, messageId: msg.key.id })); } catch {}
+          try {
+            console.log(JSON.stringify({ event: 'ignored', reason: 'agent_echo', chatId, messageId: msg.key.id }));
+          } catch {}
         }
         continue;
       }
@@ -411,8 +423,13 @@ async function startSocket() {
       // Skip empty messages
       if (!body && !hasMedia) {
         if (WHATSAPP_DEBUG) {
-          try { 
-            console.log(JSON.stringify({ event: 'ignored', reason: 'empty', chatId, messageKeys: Object.keys(msg.message || {}) })); 
+          try {
+            console.log(JSON.stringify({
+              event: 'ignored',
+              reason: 'empty',
+              chatId,
+              messageKeys: Object.keys(msg.message || {}),
+            }));
           } catch (err) {
             console.error('Failed to log empty message event:', err);
           }
@@ -614,10 +631,18 @@ app.post('/send-media', async (req, res) => {
         if (needsConversion) {
           tmpPath = path.join(tmpdir(), `hermes_voice_${randomBytes(6).toString('hex')}.ogg`);
           try {
-            execSync(
-              `ffmpeg -y -i ${JSON.stringify(filePath)} -ar 48000 -ac 1 -c:a libopus ${JSON.stringify(tmpPath)}`,
-              { timeout: 30000, stdio: 'pipe' }
-            );
+            execFileSync(resolveFfmpegBinary(), [
+              '-y',
+              '-i',
+              filePath,
+              '-ar',
+              '48000',
+              '-ac',
+              '1',
+              '-c:a',
+              'libopus',
+              tmpPath,
+            ], { timeout: 30000, stdio: 'pipe' });
             audioBuffer = readFileSync(tmpPath);
             audioExt = 'ogg';
           } catch (convErr) {
