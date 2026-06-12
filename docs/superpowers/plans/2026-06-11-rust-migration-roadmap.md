@@ -299,6 +299,8 @@ language-specific setup where needed.
 - Linux `desktop` now uses the same Rust native-first workspace npm install and `npm run pack` path, verifies the
   produced unpacked app, and configures Electron's `chrome-sandbox` helper while preserving script fallback for build
   recovery or privileged sandbox setup failures.
+- Native desktop pack now retries once with the same public Electron mirror fallback as the install scripts when the
+  default Electron download path fails and the user has not pinned `ELECTRON_MIRROR`.
 - Linux `chrome-sandbox` repair now checks the current effective UID through Rust instead of spawning `id -u`, removing
   another external command assumption from the native desktop stage.
 - When the Linux bootstrap process is already root, `chrome-sandbox` owner/mode repair now uses libc/Rust filesystem
@@ -323,9 +325,8 @@ language-specific setup where needed.
 **Still script-backed:**
 - Recovery tiers remain script-backed for failure cases that still need package-manager or mirror-specific handling:
   Python dependency fallback when `uv sync --locked` cannot complete, RPM/zypper/unknown Linux Playwright
-  system-library recovery, Electron/npm cache purge and mirror recovery, privileged Linux `chrome-sandbox` repair,
-  unsupported or failed Unix package-manager recovery, and messaging-platform SDK recovery if the native targeted pip
-  path fails.
+  system-library recovery, Electron/npm cache purge, privileged Linux `chrome-sandbox` repair, unsupported or failed
+  Unix package-manager recovery, and messaging-platform SDK recovery if the native targeted pip path fails.
 - Fresh archive installs and archive updates do not require Git. Unix Git acquisition now has a native-first package
   manager path for common Linux/macOS/Termux setups, while unsupported distro handling, macOS CLT dialog recovery, and
   package-manager failures remain shell fallbacks.

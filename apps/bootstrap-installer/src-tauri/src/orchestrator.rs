@@ -12,10 +12,11 @@ use serde::Deserialize;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 
 const BOOTSTRAP_TOOLS_MANIFEST: &str = "bootstrap-tools-manifest.json";
 const BOOTSTRAP_TOOLS_MANIFEST_SCHEMA_VERSION: u32 = 1;
+const DESKTOP_ELECTRON_FALLBACK_MIRROR: &str = "https://npmmirror.com/mirrors/electron/";
 const SCRIPT_REASON_INTERACTIVE: &str = "requires user input; handled by post-install UI";
 const SCRIPT_REASON_UNPORTED: &str = "not yet ported to Rust; delegated to install script";
 
@@ -99,6 +100,11 @@ struct PlaywrightInstallPlan {
     npx_args: Vec<String>,
     system_package_commands: Vec<UnixPackageInstallCommandPlan>,
     system_deps: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DesktopPackResult {
+    fallback_mirror_used: bool,
 }
 
 /// Native desktop build stage execution plan.
@@ -3812,25 +3818,85 @@ fn run_node_dependency_command_args(
 }
 
 fn run_desktop_pack_command(npm: &Path, desktop_dir: &Path, npm_cache_dir: &Path) -> Result<()> {
-    let status = Command::new(npm)
-        .args(["run", "pack"])
-        .current_dir(desktop_dir)
-        .env("npm_config_cache", npm_cache_dir)
-        .env("CSC_IDENTITY_AUTO_DISCOVERY", "false")
-        .env("WIN_CSC_LINK", "")
-        .env("WIN_CSC_KEY_PASSWORD", "")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .with_context(|| format!("running {} run pack", npm.display()))?;
+    let user_mirror_is_set = std::env::var_os("ELECTRON_MIRROR").is_some();
+    run_desktop_pack_command_with_mirror_policy(
+        npm,
+        desktop_dir,
+        npm_cache_dir,
+        user_mirror_is_set,
+    )
+    .map(|_| ())
+}
+
+fn run_desktop_pack_command_with_mirror_policy(
+    npm: &Path,
+    desktop_dir: &Path,
+    npm_cache_dir: &Path,
+    user_mirror_is_set: bool,
+) -> Result<DesktopPackResult> {
+    let status = run_desktop_pack_attempt(
+        npm,
+        desktop_dir,
+        npm_cache_dir,
+        None,
+        !user_mirror_is_set,
+    )?;
     if status.success() {
-        return Ok(());
+        return Ok(DesktopPackResult {
+            fallback_mirror_used: false,
+        });
+    }
+    if !user_mirror_is_set {
+        let retry_status = run_desktop_pack_attempt(
+            npm,
+            desktop_dir,
+            npm_cache_dir,
+            Some(DESKTOP_ELECTRON_FALLBACK_MIRROR),
+            false,
+        )?;
+        if retry_status.success() {
+            return Ok(DesktopPackResult {
+                fallback_mirror_used: true,
+            });
+        }
+        return Err(anyhow!(
+            "{} run pack failed after fallback mirror with exit {:?}",
+            npm.display(),
+            retry_status.code()
+        ));
     }
     Err(anyhow!(
         "{} run pack failed with exit {:?}",
         npm.display(),
         status.code()
     ))
+}
+
+fn run_desktop_pack_attempt(
+    npm: &Path,
+    desktop_dir: &Path,
+    npm_cache_dir: &Path,
+    electron_mirror: Option<&str>,
+    clear_electron_mirror: bool,
+) -> Result<ExitStatus> {
+    let mut child = Command::new(npm);
+    child
+        .args(["run", "pack"])
+        .current_dir(desktop_dir)
+        .env("npm_config_cache", npm_cache_dir)
+        .env("CSC_IDENTITY_AUTO_DISCOVERY", "false")
+        .env("WIN_CSC_LINK", "")
+        .env("WIN_CSC_KEY_PASSWORD", "");
+    if let Some(mirror) = electron_mirror {
+        child.env("ELECTRON_MIRROR", mirror);
+    } else if clear_electron_mirror {
+        child.env_remove("ELECTRON_MIRROR");
+    }
+    child
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .with_context(|| format!("running {} run pack", npm.display()))
 }
 
 fn find_built_desktop_app(install_root: &Path, target_os: &str) -> Option<PathBuf> {
@@ -5348,6 +5414,83 @@ mod tests {
         assert_eq!(plan.cwd, install_root);
         assert_eq!(plan.npm_cache_dir, hermes_home.join("npm-cache"));
         assert_eq!(plan.desktop_dir, desktop_dir);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn desktop_pack_command_retries_public_electron_mirror_when_default_fails() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-desktop-pack-mirror-test-{}",
+            std::process::id()
+        ));
+        let desktop_dir = root.join("desktop");
+        let cache = root.join("npm-cache");
+        let count_file = root.join("attempt.txt");
+        let first_mirror = root.join("first-mirror.txt");
+        let second_mirror = root.join("second-mirror.txt");
+        std::fs::create_dir_all(&desktop_dir).unwrap();
+        std::fs::create_dir_all(&cache).unwrap();
+
+        #[cfg(target_os = "windows")]
+        let command = {
+            let command = root.join("fake-npm.cmd");
+            let script = format!(
+                concat!(
+                    "@echo off\r\n",
+                    "if not exist \"{count}\" (\r\n",
+                    "  > \"{count}\" echo first\r\n",
+                    "  > \"{first}\" echo(%ELECTRON_MIRROR%\r\n",
+                    "  exit /b 1\r\n",
+                    ")\r\n",
+                    "> \"{second}\" echo(%ELECTRON_MIRROR%\r\n",
+                    "if \"%ELECTRON_MIRROR%\"==\"{mirror}\" exit /b 0\r\n",
+                    "exit /b 1\r\n"
+                ),
+                count = count_file.display(),
+                first = first_mirror.display(),
+                second = second_mirror.display(),
+                mirror = DESKTOP_ELECTRON_FALLBACK_MIRROR,
+            );
+            std::fs::write(&command, script).unwrap();
+            command
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let command = {
+            let command = root.join("fake-npm.sh");
+            let script = format!(
+                concat!(
+                    "#!/usr/bin/env sh\n",
+                    "if [ ! -f '{count}' ]; then\n",
+                    "  printf '%s' first > '{count}'\n",
+                    "  printf '%s' \"$ELECTRON_MIRROR\" > '{first}'\n",
+                    "  exit 1\n",
+                    "fi\n",
+                    "printf '%s' \"$ELECTRON_MIRROR\" > '{second}'\n",
+                    "[ \"$ELECTRON_MIRROR\" = '{mirror}' ] && exit 0\n",
+                    "exit 1\n"
+                ),
+                count = count_file.display(),
+                first = first_mirror.display(),
+                second = second_mirror.display(),
+                mirror = DESKTOP_ELECTRON_FALLBACK_MIRROR,
+            );
+            std::fs::write(&command, script).unwrap();
+            make_executable(&command).unwrap();
+            command
+        };
+
+        let result =
+            run_desktop_pack_command_with_mirror_policy(&command, &desktop_dir, &cache, false)
+                .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&first_mirror).unwrap().trim(), "");
+        assert_eq!(
+            std::fs::read_to_string(&second_mirror).unwrap().trim(),
+            DESKTOP_ELECTRON_FALLBACK_MIRROR
+        );
+        assert_eq!(result.fallback_mirror_used, true);
 
         let _ = std::fs::remove_dir_all(&root);
     }
