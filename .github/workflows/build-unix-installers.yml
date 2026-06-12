@@ -138,6 +138,7 @@ jobs:
                   ./apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup --self-check
                   --self-check-expect-commit "${{ github.sha }}"
                   --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
+                  --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse
 
             - name: Validate Linux installer artifacts
               if: matrix.platform == 'linux'

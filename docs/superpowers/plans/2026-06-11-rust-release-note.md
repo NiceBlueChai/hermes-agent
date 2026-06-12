@@ -35,6 +35,8 @@ User-visible behavior:
 - Installer release workflows now generate a Python wheelhouse with `pip wheel .[all]`, write
   `wheelhouse-manifest.json`, validate every wheel's platform, architecture, Python tag, size, and SHA-256, and upload
   the retained wheel payload for release review.
+- The built installer's no-UI self-check now verifies the bundled wheelhouse manifest and rejects missing, mismatched,
+  or unmanifested wheel payloads during release smoke tests.
 - Release staging writes a checksummed bundled manifest beside the Rust manager binary and retains a
   `bootstrap-tools-manifest.json` artifact for packaged runtime archives. Installer workflows now run a no-UI binary
   self-check against the just-built setup executable, embedded install scripts, commit pin, and bootstrap-tools manifest.

@@ -547,6 +547,14 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             "--self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools",
             unix_workflow,
         )
+        self.assertIn(
+            "--self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse",
+            windows_workflow,
+        )
+        self.assertIn(
+            "--self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse",
+            unix_workflow,
+        )
         self.assertGreater(
             windows_workflow.index("- name: Smoke built installer binary"),
             windows_workflow.index("- name: Sign Hermes-Setup.exe with Azure Artifact Signing"),

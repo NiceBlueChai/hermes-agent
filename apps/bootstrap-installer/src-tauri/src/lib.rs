@@ -24,6 +24,8 @@ use tokio::sync::Mutex;
 
 const BOOTSTRAP_TOOLS_MANIFEST: &str = "bootstrap-tools-manifest.json";
 const ALLOWED_BOOTSTRAP_TOOLS_METADATA: [&str; 2] = [".gitignore", "README.md"];
+const WHEELHOUSE_MANIFEST: &str = "wheelhouse-manifest.json";
+const ALLOWED_WHEELHOUSE_METADATA: [&str; 2] = [".gitignore", "README.md"];
 
 /// Machine-readable report emitted by the no-UI bootstrap installer self-check.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -33,6 +35,7 @@ pub struct BootstrapSelfCheckReport {
     pub branch: Option<String>,
     pub embedded_scripts: Vec<install_script::BundledScriptResource>,
     pub bootstrap_tools_archives: Option<usize>,
+    pub python_wheelhouse_wheels: Option<usize>,
     pub errors: Vec<String>,
 }
 
@@ -87,10 +90,12 @@ pub fn bootstrap_self_check_report(
     commit: Option<&str>,
     branch: Option<&str>,
     bootstrap_tools_dir: Option<&Path>,
+    wheelhouse_dir: Option<&Path>,
 ) -> BootstrapSelfCheckReport {
     let embedded_scripts = install_script::bundled_script_manifest();
     let mut errors = Vec::new();
     let mut bootstrap_tools_archives = None;
+    let mut python_wheelhouse_wheels = None;
     if commit.map(|value| value.trim().is_empty()).unwrap_or(true) {
         errors.push("installer was built without a commit pin".to_string());
     }
@@ -117,12 +122,19 @@ pub fn bootstrap_self_check_report(
             Err(err) => errors.push(err),
         }
     }
+    if let Some(dir) = wheelhouse_dir {
+        match validate_wheelhouse_for_self_check(dir) {
+            Ok(count) => python_wheelhouse_wheels = Some(count),
+            Err(err) => errors.push(err),
+        }
+    }
     BootstrapSelfCheckReport {
         ok: errors.is_empty(),
         commit: commit.map(str::to_string),
         branch: branch.map(str::to_string),
         embedded_scripts,
         bootstrap_tools_archives,
+        python_wheelhouse_wheels,
         errors,
     }
 }
@@ -157,6 +169,24 @@ where
             return Some(PathBuf::from(value));
         }
         if arg == "--self-check-bootstrap-tools" {
+            return iter.next().map(|value| PathBuf::from(value.as_ref()));
+        }
+    }
+    None
+}
+
+fn self_check_wheelhouse_dir<I, S>(args: I) -> Option<PathBuf>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        let arg = arg.as_ref();
+        if let Some(value) = arg.strip_prefix("--self-check-wheelhouse=") {
+            return Some(PathBuf::from(value));
+        }
+        if arg == "--self-check-wheelhouse" {
             return iter.next().map(|value| PathBuf::from(value.as_ref()));
         }
     }
@@ -272,6 +302,110 @@ fn validate_bootstrap_tools_for_self_check(dir: &Path) -> Result<usize, String> 
     Ok(archives.len())
 }
 
+fn validate_wheelhouse_for_self_check(dir: &Path) -> Result<usize, String> {
+    let manifest_path = dir.join(WHEELHOUSE_MANIFEST);
+    let manifest_text = std::fs::read_to_string(&manifest_path)
+        .map_err(|err| format!("reading wheelhouse manifest failed: {err}"))?;
+    let manifest: serde_json::Value = serde_json::from_str(&manifest_text)
+        .map_err(|err| format!("parsing wheelhouse manifest failed: {err}"))?;
+    if manifest.get("schemaVersion").and_then(|value| value.as_u64()) != Some(1) {
+        return Err("wheelhouse manifest has unsupported schema".to_string());
+    }
+    let wheels = manifest
+        .get("wheels")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "wheelhouse manifest has no wheels".to_string())?;
+    if wheels.is_empty() {
+        return Err("wheelhouse manifest has no wheels".to_string());
+    }
+
+    let mut expected = std::collections::BTreeSet::from([WHEELHOUSE_MANIFEST.to_string()]);
+    for name in ALLOWED_WHEELHOUSE_METADATA {
+        expected.insert(name.to_string());
+    }
+    for wheel in wheels {
+        let name = wheel
+            .get("name")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "wheelhouse manifest wheel is missing name".to_string())?;
+        if !wheel_name_is_plain_file(name) {
+            return Err(format!("wheelhouse manifest wheel has unsafe name: {name}"));
+        }
+        if !expected.insert(name.to_string()) {
+            return Err(format!("duplicate wheel in wheelhouse manifest: {name}"));
+        }
+        let arch = wheel
+            .get("arch")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("wheelhouse wheel is missing arch: {name}"))?;
+        if arch.trim().is_empty() {
+            return Err(format!("wheelhouse wheel is missing arch: {name}"));
+        }
+        let platform = wheel
+            .get("platform")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("wheelhouse wheel is missing platform: {name}"))?;
+        if !matches!(platform, "windows" | "linux" | "macos") {
+            return Err(format!("wheelhouse wheel is missing platform: {name}"));
+        }
+        let python = wheel
+            .get("python")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("wheelhouse wheel is missing python tag: {name}"))?;
+        if !python.starts_with("cp") || python.len() <= 2 {
+            return Err(format!("wheelhouse wheel has invalid python tag: {name}"));
+        }
+        let path = dir.join(name);
+        let bytes = std::fs::read(&path)
+            .map_err(|err| format!("reading wheelhouse wheel failed: {name}: {err}"))?;
+        let expected_size = wheel
+            .get("sizeBytes")
+            .and_then(|value| value.as_u64())
+            .ok_or_else(|| format!("wheelhouse wheel is missing sizeBytes: {name}"))?;
+        if bytes.len() as u64 != expected_size {
+            return Err(format!(
+                "wheelhouse wheel size mismatch: {name}: expected {expected_size}, got {}",
+                bytes.len()
+            ));
+        }
+        let expected_sha256 = wheel
+            .get("sha256")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("wheelhouse wheel is missing sha256: {name}"))?;
+        if expected_sha256.len() != 64
+            || !expected_sha256.chars().all(|ch| ch.is_ascii_hexdigit())
+        {
+            return Err(format!("wheelhouse wheel has invalid sha256: {name}"));
+        }
+        let actual_sha256 = crate::artifact::sha256_hex(&bytes);
+        if !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
+            return Err(format!(
+                concat!(
+                    "wheelhouse wheel checksum mismatch: {name}: ",
+                    "expected {expected_sha256}, got {actual_sha256}"
+                ),
+                name = name,
+                expected_sha256 = expected_sha256,
+                actual_sha256 = actual_sha256
+            ));
+        }
+    }
+
+    for entry in std::fs::read_dir(dir)
+        .map_err(|err| format!("reading wheelhouse directory failed: {err}"))?
+    {
+        let entry = entry.map_err(|err| format!("reading wheelhouse entry failed: {err}"))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !expected.contains(&name) {
+            return Err(format!("unmanifested wheelhouse payload: {name}"));
+        }
+        if !entry.path().is_file() {
+            return Err(format!("wheelhouse payload is not a file: {name}"));
+        }
+    }
+    Ok(wheels.len())
+}
+
 fn bootstrap_tool_archive_target(name: &str) -> Option<(&'static str, &'static str)> {
     for (suffix, platform, arch) in [
         ("-win-x64.zip", "windows", "x64"),
@@ -316,11 +450,16 @@ fn bootstrap_tool_name_is_plain_file(name: &str) -> bool {
     !name.is_empty() && name != "." && name != ".." && !name.contains('/') && !name.contains('\\')
 }
 
+fn wheel_name_is_plain_file(name: &str) -> bool {
+    bootstrap_tool_name_is_plain_file(name) && name.ends_with(".whl")
+}
+
 fn write_self_check_and_exit(args: &[String]) {
     let mut report = bootstrap_self_check_report(
         option_env!("BUILD_PIN_COMMIT"),
         option_env!("BUILD_PIN_BRANCH"),
         self_check_bootstrap_tools_dir(args).as_deref(),
+        self_check_wheelhouse_dir(args).as_deref(),
     );
     if let Some(expected) = expected_self_check_commit(args) {
         if report.commit.as_deref() != Some(expected.as_str()) {
@@ -469,7 +608,8 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        bootstrap_self_check_report, expected_self_check_commit, force_setup_from_args, AppMode,
+        bootstrap_self_check_report, expected_self_check_commit, force_setup_from_args,
+        self_check_wheelhouse_dir, AppMode,
     };
     use std::path::PathBuf;
 
@@ -525,14 +665,14 @@ mod tests {
 
     #[test]
     fn self_check_requires_commit_pin_and_embedded_scripts() {
-        let missing_commit = bootstrap_self_check_report(None, Some("main"), None);
+        let missing_commit = bootstrap_self_check_report(None, Some("main"), None, None);
         assert!(!missing_commit.ok);
         assert!(missing_commit
             .errors
             .iter()
             .any(|err| err.contains("commit pin")));
 
-        let report = bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), None);
+        let report = bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), None, None);
         assert!(report.ok, "{:?}", report.errors);
         assert_eq!(report.commit.as_deref(), Some("abcdef1234567890"));
         assert!(report.embedded_scripts.len() >= 2);
@@ -576,18 +716,72 @@ mod tests {
         .unwrap();
 
         let report =
-            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools));
+            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools), None);
         assert!(report.ok, "{:?}", report.errors);
         assert_eq!(report.bootstrap_tools_archives, Some(1));
 
         std::fs::write(tools.join("rogue.zip"), b"rogue").unwrap();
         let report =
-            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools));
+            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools), None);
         assert!(!report.ok);
         assert!(report
             .errors
             .iter()
             .any(|err| err.contains("unmanifested bootstrap tool payload")));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn self_check_validates_python_wheelhouse_manifest_dir() {
+        let root = unique_tmp_dir("wheelhouse");
+        let wheelhouse = root.join("wheelhouse");
+        std::fs::create_dir_all(&wheelhouse).unwrap();
+        let wheel = wheelhouse.join("demo-0.1-py3-none-any.whl");
+        std::fs::write(&wheel, b"wheel bytes").unwrap();
+        let sha256 = crate::artifact::sha256_hex(b"wheel bytes");
+        std::fs::write(
+            wheelhouse.join("wheelhouse-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "wheels": [
+    {{
+      "arch": "x64",
+      "platform": "windows",
+      "python": "cp311",
+      "name": "demo-0.1-py3-none-any.whl",
+      "sizeBytes": 11,
+      "sha256": "{sha256}"
+    }}
+  ]
+}}
+"#
+            ),
+        )
+        .unwrap();
+
+        let report = bootstrap_self_check_report(
+            Some("abcdef1234567890"),
+            Some("main"),
+            None,
+            Some(&wheelhouse),
+        );
+        assert!(report.ok, "{:?}", report.errors);
+        assert_eq!(report.python_wheelhouse_wheels, Some(1));
+
+        std::fs::write(wheelhouse.join("rogue-0.1-py3-none-any.whl"), b"rogue").unwrap();
+        let report = bootstrap_self_check_report(
+            Some("abcdef1234567890"),
+            Some("main"),
+            None,
+            Some(&wheelhouse),
+        );
+        assert!(!report.ok);
+        assert!(report
+            .errors
+            .iter()
+            .any(|err| err.contains("unmanifested wheelhouse payload")));
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -619,7 +813,7 @@ mod tests {
         .unwrap();
 
         let report =
-            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools));
+            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools), None);
         assert!(!report.ok);
         assert!(report
             .errors
@@ -646,7 +840,7 @@ mod tests {
         )
         .unwrap();
         let report =
-            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools));
+            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools), None);
         assert!(!report.ok);
         assert!(report
             .errors
@@ -674,7 +868,7 @@ mod tests {
         )
         .unwrap();
         let report =
-            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools));
+            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools), None);
         assert!(!report.ok);
         assert!(report
             .errors
@@ -702,7 +896,7 @@ mod tests {
         )
         .unwrap();
         let report =
-            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools));
+            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools), None);
         assert!(!report.ok);
         assert!(report
             .errors
@@ -738,7 +932,7 @@ mod tests {
         )
         .unwrap();
         let report =
-            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools));
+            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools), None);
         assert!(!report.ok);
         assert!(report
             .errors
@@ -759,5 +953,18 @@ mod tests {
             Some("def".to_string())
         );
         assert_eq!(expected_self_check_commit(["--self-check"]), None);
+    }
+
+    #[test]
+    fn self_check_wheelhouse_dir_parses_space_or_equals_forms() {
+        assert_eq!(
+            self_check_wheelhouse_dir(["--self-check", "--self-check-wheelhouse", "wheels"]),
+            Some(PathBuf::from("wheels"))
+        );
+        assert_eq!(
+            self_check_wheelhouse_dir(["--self-check-wheelhouse=wheels2"]),
+            Some(PathBuf::from("wheels2"))
+        );
+        assert_eq!(self_check_wheelhouse_dir(["--self-check"]), None);
     }
 }
