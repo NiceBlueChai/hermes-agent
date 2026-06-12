@@ -26,6 +26,8 @@ const BOOTSTRAP_TOOLS_MANIFEST: &str = "bootstrap-tools-manifest.json";
 const ALLOWED_BOOTSTRAP_TOOLS_METADATA: [&str; 2] = [".gitignore", "README.md"];
 const WHEELHOUSE_MANIFEST: &str = "wheelhouse-manifest.json";
 const ALLOWED_WHEELHOUSE_METADATA: [&str; 2] = [".gitignore", "README.md"];
+const PYTHON_RUNTIME_MANIFEST: &str = "python-runtime-manifest.json";
+const ALLOWED_PYTHON_RUNTIME_METADATA: [&str; 2] = [".gitignore", "README.md"];
 const TAURI_CONFIG_JSON: &str = include_str!("../tauri.conf.json");
 
 /// Machine-readable report emitted by the no-UI bootstrap installer self-check.
@@ -37,6 +39,7 @@ pub struct BootstrapSelfCheckReport {
     pub embedded_scripts: Vec<install_script::BundledScriptResource>,
     pub bootstrap_tools_archives: Option<usize>,
     pub python_wheelhouse_wheels: Option<usize>,
+    pub python_runtime_files: Option<usize>,
     pub errors: Vec<String>,
 }
 
@@ -96,11 +99,15 @@ pub fn bootstrap_self_check_report(
     wheelhouse_dir: Option<&Path>,
     wheelhouse_platform: Option<&str>,
     wheelhouse_arch: Option<&str>,
+    python_runtime_dir: Option<&Path>,
+    python_runtime_platform: Option<&str>,
+    python_runtime_arch: Option<&str>,
 ) -> BootstrapSelfCheckReport {
     let embedded_scripts = install_script::bundled_script_manifest();
     let mut errors = Vec::new();
     let mut bootstrap_tools_archives = None;
     let mut python_wheelhouse_wheels = None;
+    let mut python_runtime_files = None;
     if commit.map(|value| value.trim().is_empty()).unwrap_or(true) {
         errors.push("installer was built without a commit pin".to_string());
     }
@@ -136,6 +143,12 @@ pub fn bootstrap_self_check_report(
             Err(err) => errors.push(err),
         }
     }
+    if let Some(dir) = python_runtime_dir {
+        match validate_python_runtime_for_self_check(dir, python_runtime_platform, python_runtime_arch) {
+            Ok(count) => python_runtime_files = Some(count),
+            Err(err) => errors.push(err),
+        }
+    }
     BootstrapSelfCheckReport {
         ok: errors.is_empty(),
         commit: commit.map(str::to_string),
@@ -143,6 +156,7 @@ pub fn bootstrap_self_check_report(
         embedded_scripts,
         bootstrap_tools_archives,
         python_wheelhouse_wheels,
+        python_runtime_files,
         errors,
     }
 }
@@ -295,6 +309,60 @@ where
             return Some(value.to_string());
         }
         if arg == "--self-check-wheelhouse-arch" {
+            return iter.next().map(|value| value.as_ref().to_string());
+        }
+    }
+    None
+}
+
+fn self_check_python_runtime_dir<I, S>(args: I) -> Option<PathBuf>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        let arg = arg.as_ref();
+        if let Some(value) = arg.strip_prefix("--self-check-python-runtime=") {
+            return Some(PathBuf::from(value));
+        }
+        if arg == "--self-check-python-runtime" {
+            return iter.next().map(|value| PathBuf::from(value.as_ref()));
+        }
+    }
+    None
+}
+
+fn self_check_python_runtime_platform<I, S>(args: I) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        let arg = arg.as_ref();
+        if let Some(value) = arg.strip_prefix("--self-check-python-runtime-platform=") {
+            return Some(value.to_string());
+        }
+        if arg == "--self-check-python-runtime-platform" {
+            return iter.next().map(|value| value.as_ref().to_string());
+        }
+    }
+    None
+}
+
+fn self_check_python_runtime_arch<I, S>(args: I) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        let arg = arg.as_ref();
+        if let Some(value) = arg.strip_prefix("--self-check-python-runtime-arch=") {
+            return Some(value.to_string());
+        }
+        if arg == "--self-check-python-runtime-arch" {
             return iter.next().map(|value| value.as_ref().to_string());
         }
     }
@@ -603,6 +671,122 @@ fn validate_wheelhouse_source_files_for_self_check(
     Ok(())
 }
 
+fn validate_python_runtime_for_self_check(
+    dir: &Path,
+    expected_platform: Option<&str>,
+    expected_arch: Option<&str>,
+) -> Result<usize, String> {
+    let manifest_path = dir.join(PYTHON_RUNTIME_MANIFEST);
+    let manifest_text = std::fs::read_to_string(&manifest_path)
+        .map_err(|err| format!("reading python runtime manifest failed: {err}"))?;
+    let manifest: serde_json::Value = serde_json::from_str(&manifest_text)
+        .map_err(|err| format!("parsing python runtime manifest failed: {err}"))?;
+    if manifest.get("schemaVersion").and_then(|value| value.as_u64()) != Some(1) {
+        return Err("python runtime manifest has unsupported schema".to_string());
+    }
+    if let Some(expected) = expected_platform {
+        let platform = manifest
+            .get("platform")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "python runtime manifest is missing platform".to_string())?;
+        if platform != expected {
+            return Err(format!(
+                "unexpected python runtime platform: expected {expected}, got {platform}"
+            ));
+        }
+    }
+    if let Some(expected) = expected_arch {
+        let arch = manifest
+            .get("arch")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "python runtime manifest is missing arch".to_string())?;
+        if arch != expected {
+            return Err(format!(
+                "unexpected python runtime arch: expected {expected}, got {arch}"
+            ));
+        }
+    }
+    let python_tag = manifest
+        .get("pythonTag")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "python runtime manifest has no pythonTag".to_string())?;
+    if python_tag.trim().is_empty() {
+        return Err("python runtime manifest has no pythonTag".to_string());
+    }
+
+    let files = manifest
+        .get("files")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "python runtime manifest has no files".to_string())?;
+    if files.is_empty() {
+        return Err("python runtime manifest has no files".to_string());
+    }
+
+    let mut expected = std::collections::BTreeSet::from([PYTHON_RUNTIME_MANIFEST.to_string()]);
+    for name in ALLOWED_PYTHON_RUNTIME_METADATA {
+        expected.insert(name.to_string());
+    }
+    for file in files {
+        let name = file
+            .get("name")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "python runtime file is missing name".to_string())?;
+        if !bootstrap_tool_name_is_plain_file(name) {
+            return Err(format!("python runtime file has unsafe name: {name}"));
+        }
+        if !expected.insert(name.to_string()) {
+            return Err(format!("duplicate python runtime file: {name}"));
+        }
+        let bytes = std::fs::read(dir.join(name))
+            .map_err(|err| format!("reading python runtime file failed: {name}: {err}"))?;
+        let expected_size = file
+            .get("sizeBytes")
+            .and_then(|value| value.as_u64())
+            .ok_or_else(|| format!("python runtime file is missing sizeBytes: {name}"))?;
+        if bytes.len() as u64 != expected_size {
+            return Err(format!(
+                "python runtime file size mismatch: {name}: expected {expected_size}, got {}",
+                bytes.len()
+            ));
+        }
+        let expected_sha256 = file
+            .get("sha256")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("python runtime file is missing sha256: {name}"))?;
+        if expected_sha256.len() != 64
+            || !expected_sha256.chars().all(|ch| ch.is_ascii_hexdigit())
+        {
+            return Err(format!("python runtime file has invalid sha256: {name}"));
+        }
+        let actual_sha256 = crate::artifact::sha256_hex(&bytes);
+        if !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
+            return Err(format!(
+                concat!(
+                    "python runtime file checksum mismatch: {name}: ",
+                    "expected {expected_sha256}, got {actual_sha256}"
+                ),
+                name = name,
+                expected_sha256 = expected_sha256,
+                actual_sha256 = actual_sha256
+            ));
+        }
+    }
+
+    for entry in std::fs::read_dir(dir)
+        .map_err(|err| format!("reading python runtime directory failed: {err}"))?
+    {
+        let entry = entry.map_err(|err| format!("reading python runtime entry failed: {err}"))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !expected.contains(&name) {
+            return Err(format!("unmanifested python runtime payload: {name}"));
+        }
+        if !entry.path().is_file() {
+            return Err(format!("python runtime payload is not a file: {name}"));
+        }
+    }
+    Ok(files.len())
+}
+
 fn bootstrap_tool_archive_target(name: &str) -> Option<(&'static str, &'static str)> {
     for (suffix, platform, arch) in [
         ("-win-x64.zip", "windows", "x64"),
@@ -735,6 +919,9 @@ fn write_self_check_and_exit(args: &[String]) {
         self_check_wheelhouse_dir(args).as_deref(),
         self_check_wheelhouse_platform(args).as_deref(),
         self_check_wheelhouse_arch(args).as_deref(),
+        self_check_python_runtime_dir(args).as_deref(),
+        self_check_python_runtime_platform(args).as_deref(),
+        self_check_python_runtime_arch(args).as_deref(),
     );
     if let Some(expected) = expected_self_check_commit(args) {
         if report.commit.as_deref() != Some(expected.as_str()) {
@@ -759,6 +946,7 @@ fn lifecycle_self_check_report(
 ) -> serde_json::Value {
     let should_validate_resources = self_check_bootstrap_tools_dir(args).is_some()
         || self_check_wheelhouse_dir(args).is_some()
+        || self_check_python_runtime_dir(args).is_some()
         || expected_self_check_commit(args).is_some();
     let resource_report = should_validate_resources.then(|| {
         let mut report = bootstrap_self_check_report(
@@ -770,6 +958,9 @@ fn lifecycle_self_check_report(
             self_check_wheelhouse_dir(args).as_deref(),
             self_check_wheelhouse_platform(args).as_deref(),
             self_check_wheelhouse_arch(args).as_deref(),
+            self_check_python_runtime_dir(args).as_deref(),
+            self_check_python_runtime_platform(args).as_deref(),
+            self_check_python_runtime_arch(args).as_deref(),
         );
         if let Some(expected) = expected_self_check_commit(args) {
             if report.commit.as_deref() != Some(expected.as_str()) {
@@ -974,7 +1165,8 @@ mod tests {
         lifecycle_self_check_report, required_bootstrap_tool_kinds, self_check_bootstrap_tools_arch,
         self_check_bootstrap_tools_platform,
         self_check_wheelhouse_arch, self_check_wheelhouse_dir, self_check_wheelhouse_platform,
-        validate_tauri_bundle_resources_config_for_self_check, wheel_name_is_plain_file, AppMode,
+        validate_python_runtime_for_self_check, validate_tauri_bundle_resources_config_for_self_check,
+        wheel_name_is_plain_file, AppMode,
     };
     use std::path::PathBuf;
 
@@ -1031,7 +1223,19 @@ mod tests {
     #[test]
     fn self_check_requires_commit_pin_and_embedded_scripts() {
         let missing_commit =
-            bootstrap_self_check_report(None, Some("main"), None, None, None, None, None, None);
+            bootstrap_self_check_report(
+                None,
+                Some("main"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            );
         assert!(!missing_commit.ok);
         assert!(missing_commit
             .errors
@@ -1041,6 +1245,9 @@ mod tests {
         let report = bootstrap_self_check_report(
             Some("abcdef1234567890"),
             Some("main"),
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -1125,6 +1332,9 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
+                None,
             );
         assert!(report.ok, "{:?}", report.errors);
         assert_eq!(report.bootstrap_tools_archives, Some(1));
@@ -1135,6 +1345,9 @@ mod tests {
                 Some("abcdef1234567890"),
                 Some("main"),
                 Some(&tools),
+                None,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -1194,6 +1407,9 @@ mod tests {
             Some(&wheelhouse),
             None,
             None,
+            None,
+            None,
+            None,
         );
         assert!(report.ok, "{:?}", report.errors);
         assert_eq!(report.python_wheelhouse_wheels, Some(1));
@@ -1208,12 +1424,72 @@ mod tests {
             Some(&wheelhouse),
             None,
             None,
+            None,
+            None,
+            None,
         );
         assert!(!report.ok);
         assert!(report
             .errors
             .iter()
             .any(|err| err.contains("unmanifested wheelhouse payload")));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn self_check_validates_python_runtime_manifest_dir() {
+        let root = unique_tmp_dir("python-runtime");
+        let runtime = root.join("python-runtime");
+        std::fs::create_dir_all(&runtime).unwrap();
+        let python = runtime.join("python.exe");
+        std::fs::write(&python, b"python runtime").unwrap();
+        let sha256 = crate::artifact::sha256_hex(b"python runtime");
+        std::fs::write(
+            runtime.join("python-runtime-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "platform": "windows",
+  "arch": "x64",
+  "pythonTag": "cp311",
+  "files": [
+    {{
+      "name": "python.exe",
+      "sizeBytes": 14,
+      "sha256": "{sha256}"
+    }}
+  ]
+}}
+"#
+            ),
+        )
+        .unwrap();
+
+        let count =
+            validate_python_runtime_for_self_check(&runtime, Some("windows"), Some("x64")).unwrap();
+        assert_eq!(count, 1);
+        let report = bootstrap_self_check_report(
+            Some("abcdef1234567890"),
+            Some("main"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            Some("windows"),
+            Some("x64"),
+        );
+        assert!(report.ok, "{:?}", report.errors);
+        assert_eq!(report.python_runtime_files, Some(1));
+
+        std::fs::write(runtime.join("rogue.dll"), b"rogue").unwrap();
+        let err =
+            validate_python_runtime_for_self_check(&runtime, Some("windows"), Some("x64"))
+                .unwrap_err();
+        assert!(err.contains("unmanifested python runtime payload"));
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1281,6 +1557,9 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
+                None,
             );
         assert!(!report.ok);
         assert!(report
@@ -1312,6 +1591,9 @@ mod tests {
                 Some("abcdef1234567890"),
                 Some("main"),
                 Some(&tools),
+                None,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -1354,6 +1636,9 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
+                None,
             );
         assert!(!report.ok);
         assert!(report
@@ -1386,6 +1671,9 @@ mod tests {
                 Some("abcdef1234567890"),
                 Some("main"),
                 Some(&tools),
+                None,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -1431,6 +1719,9 @@ mod tests {
                 Some("abcdef1234567890"),
                 Some("main"),
                 Some(&tools),
+                None,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -1516,6 +1807,9 @@ mod tests {
             Some(&wheelhouse),
             Some("linux"),
             None,
+            None,
+            None,
+            None,
         );
         assert!(!report.ok);
         assert!(report
@@ -1564,6 +1858,9 @@ mod tests {
             Some(&wheelhouse),
             Some("windows"),
             Some("x64"),
+            None,
+            None,
+            None,
         );
         assert!(!report.ok);
         assert!(report
@@ -1625,6 +1922,9 @@ mod tests {
             Some("main"),
             Some(&tools),
             Some("linux"),
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -1704,6 +2004,9 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
+            None,
         );
         assert!(!report.ok);
         assert!(report
@@ -1747,6 +2050,9 @@ mod tests {
             Some("abcdef1234567890"),
             Some("main"),
             Some(&tools),
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -1933,6 +2239,9 @@ mod tests {
             Some(&wheelhouse),
             Some("windows"),
             Some("x64"),
+            None,
+            None,
+            None,
         );
         assert!(!report.ok);
         assert!(report
