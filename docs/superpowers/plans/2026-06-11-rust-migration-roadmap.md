@@ -273,6 +273,8 @@ language-specific setup where needed.
 - Native Playwright Chromium install now mirrors the Linux shell recovery for apt-family distributions by using
   Playwright's `--with-deps` path when root or non-interactive sudo is available, and mirrors the Arch-family recovery
   by installing the same pacman system libraries before the browser download.
+- Native Playwright Chromium install now also plans the same Fedora/RHEL-family and openSUSE/SLES system-library
+  packages that the shell script previously only printed as manual recovery hints.
 - Script fallback for `node-deps` and desktop npm stages now receives the same managed npm cache and Playwright browser
   path environment where applicable, so native fallback does not spill browser/runtime caches back into global user
   locations.
@@ -326,9 +328,9 @@ language-specific setup where needed.
 
 **Still script-backed:**
 - Recovery tiers remain script-backed for failure cases that still need package-manager or mirror-specific handling:
-  Python dependency fallback when `uv sync --locked` cannot complete, RPM/zypper/unknown Linux Playwright
-  system-library recovery, npm install permission diagnostics, privileged Linux `chrome-sandbox` repair, unsupported or
-  failed Unix package-manager recovery, and messaging-platform SDK recovery if the native targeted pip path fails.
+  Python dependency fallback when `uv sync --locked` cannot complete, unknown Linux Playwright system-library recovery,
+  npm install permission diagnostics, privileged Linux `chrome-sandbox` repair, unsupported or failed Unix
+  package-manager recovery, and messaging-platform SDK recovery if the native targeted pip path fails.
 - Fresh archive installs and archive updates do not require Git. Unix Git acquisition now has a native-first package
   manager path for common Linux/macOS/Termux setups, while unsupported distro handling, macOS CLT dialog recovery, and
   package-manager failures remain shell fallbacks.

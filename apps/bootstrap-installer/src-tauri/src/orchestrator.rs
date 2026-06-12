@@ -2342,6 +2342,30 @@ fn playwright_install_plan(
             playwright_arch_system_packages(),
         )?);
         system_deps = "pacman".to_string();
+    } else if target_os == "linux"
+        && playwright_dnf_distro_supports_deps(distro)
+        && (user_is_root || sudo_available)
+    {
+        system_package_commands.push(unix_privileged_package_install_command(
+            user_is_root,
+            sudo_available,
+            "dnf",
+            &["install", "-y"],
+            playwright_dnf_system_packages(),
+        )?);
+        system_deps = "dnf".to_string();
+    } else if target_os == "linux"
+        && playwright_zypper_distro_supports_deps(distro)
+        && (user_is_root || sudo_available)
+    {
+        system_package_commands.push(unix_privileged_package_install_command(
+            user_is_root,
+            sudo_available,
+            "zypper",
+            &["--non-interactive", "install"],
+            playwright_zypper_system_packages(),
+        )?);
+        system_deps = "zypper".to_string();
     }
     npx_args.push("chromium".to_string());
     Ok(PlaywrightInstallPlan {
@@ -2373,6 +2397,14 @@ fn playwright_arch_distro_supports_pacman_deps(distro: &str) -> bool {
     )
 }
 
+fn playwright_dnf_distro_supports_deps(distro: &str) -> bool {
+    matches!(distro, "fedora" | "rhel" | "centos" | "rocky" | "alma")
+}
+
+fn playwright_zypper_distro_supports_deps(distro: &str) -> bool {
+    distro.starts_with("opensuse") || distro == "sles"
+}
+
 fn playwright_arch_system_packages() -> &'static [&'static str] {
     &[
         "nss",
@@ -2385,6 +2417,36 @@ fn playwright_arch_system_packages() -> &'static [&'static str] {
         "pango",
         "cairo",
         "alsa-lib",
+    ]
+}
+
+fn playwright_dnf_system_packages() -> &'static [&'static str] {
+    &[
+        "nss",
+        "atk",
+        "at-spi2-core",
+        "cups-libs",
+        "libdrm",
+        "libxkbcommon",
+        "mesa-libgbm",
+        "pango",
+        "cairo",
+        "alsa-lib",
+    ]
+}
+
+fn playwright_zypper_system_packages() -> &'static [&'static str] {
+    &[
+        "mozilla-nss",
+        "libatk-1_0-0",
+        "at-spi2-core",
+        "cups-libs",
+        "libdrm2",
+        "libxkbcommon0",
+        "Mesa-libgbm1",
+        "pango",
+        "cairo",
+        "libasound2",
     ]
 }
 
@@ -5431,10 +5493,54 @@ mod tests {
         );
 
         let fedora = playwright_install_plan("linux", "fedora", true, false)
-            .expect("Fedora should keep browser-only install and script/manual recovery");
+            .expect("Fedora should plan dnf system dependencies");
         assert_eq!(fedora.npx_args, vec!["--yes", "playwright", "install", "chromium"]);
-        assert_eq!(fedora.system_package_commands, Vec::new());
-        assert_eq!(fedora.system_deps, "browser-only");
+        assert_eq!(fedora.system_deps, "dnf");
+        assert_eq!(
+            fedora.system_package_commands,
+            vec![UnixPackageInstallCommandPlan {
+                program: "dnf".to_string(),
+                args: vec![
+                    "install".to_string(),
+                    "-y".to_string(),
+                    "nss".to_string(),
+                    "atk".to_string(),
+                    "at-spi2-core".to_string(),
+                    "cups-libs".to_string(),
+                    "libdrm".to_string(),
+                    "libxkbcommon".to_string(),
+                    "mesa-libgbm".to_string(),
+                    "pango".to_string(),
+                    "cairo".to_string(),
+                    "alsa-lib".to_string(),
+                ],
+            }]
+        );
+
+        let opensuse = playwright_install_plan("linux", "opensuse-tumbleweed", true, false)
+            .expect("openSUSE should plan zypper system dependencies");
+        assert_eq!(opensuse.npx_args, vec!["--yes", "playwright", "install", "chromium"]);
+        assert_eq!(opensuse.system_deps, "zypper");
+        assert_eq!(
+            opensuse.system_package_commands,
+            vec![UnixPackageInstallCommandPlan {
+                program: "zypper".to_string(),
+                args: vec![
+                    "--non-interactive".to_string(),
+                    "install".to_string(),
+                    "mozilla-nss".to_string(),
+                    "libatk-1_0-0".to_string(),
+                    "at-spi2-core".to_string(),
+                    "cups-libs".to_string(),
+                    "libdrm2".to_string(),
+                    "libxkbcommon0".to_string(),
+                    "Mesa-libgbm1".to_string(),
+                    "pango".to_string(),
+                    "cairo".to_string(),
+                    "libasound2".to_string(),
+                ],
+            }]
+        );
 
         let macos = playwright_install_plan("macos", "", false, false)
             .expect("macOS should keep browser-only install");
