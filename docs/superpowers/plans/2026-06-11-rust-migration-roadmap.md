@@ -543,6 +543,8 @@ language-specific setup where needed.
   and lite uninstall.
 - Python dependency setup now detects `resources/wheelhouse/` in the installed checkout and tries an offline
   `uv pip install --no-index --find-links` tier before the existing `uv.lock` and PyPI fallback tiers.
+- Installer workflows now prepare and validate a Tauri-bundled Python wheelhouse, including a retained
+  `wheelhouse-manifest.json` with platform, architecture, Python tag, size, and SHA-256 for every wheel.
 - The validate-only gate now also requires every archive record to retain its download URL, keeping the packaged
   runtime archive update path auditable alongside size and SHA-256.
 - Archive URLs in the retained bootstrap-tools manifest must be HTTPS, so release review cannot accidentally accept an

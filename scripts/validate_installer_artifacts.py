@@ -18,6 +18,10 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from prepare_bootstrap_tools import MANIFEST_NAME, sha256_file, validate_manifest
+from prepare_python_wheelhouse import (
+    MANIFEST_NAME as WHEELHOUSE_MANIFEST_NAME,
+    validate_payload as validate_wheelhouse_payload,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -54,6 +58,8 @@ def validate_artifacts(
     patterns: list[str],
     bootstrap_tools_dir: Path | None = None,
     bootstrap_tools_platform: str | None = None,
+    wheelhouse_dir: Path | None = None,
+    wheelhouse_platform: str | None = None,
 ) -> list[Path]:
     """Return matched artifact paths after enforcing non-empty required globs."""
 
@@ -74,6 +80,11 @@ def validate_artifacts(
         validate_bootstrap_tools_payload(bootstrap_tools_dir, bootstrap_tools_platform)
     elif manifest_paths:
         validate_bootstrap_tools_payload(manifest_paths[0].parent, bootstrap_tools_platform)
+    wheelhouse_manifest_paths = [path for path in checked if path.name == WHEELHOUSE_MANIFEST_NAME]
+    if wheelhouse_dir is not None:
+        validate_wheelhouse_payload(wheelhouse_dir, wheelhouse_platform)
+    elif wheelhouse_manifest_paths:
+        validate_wheelhouse_payload(wheelhouse_manifest_paths[0].parent, wheelhouse_platform)
     return checked
 
 
@@ -105,6 +116,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Optional release platform that every bootstrap-tools archive record must target.",
     )
+    parser.add_argument(
+        "--wheelhouse-dir",
+        type=Path,
+        default=None,
+        help="Optional wheelhouse directory whose manifest should be validated.",
+    )
+    parser.add_argument(
+        "--wheelhouse-platform",
+        choices=("windows", "linux", "macos"),
+        default=None,
+        help="Optional release platform that every wheelhouse record must target.",
+    )
     return parser.parse_args(argv)
 
 
@@ -118,6 +141,8 @@ def main(argv: list[str] | None = None) -> int:
             args.artifact,
             args.bootstrap_tools_dir,
             args.bootstrap_tools_platform,
+            args.wheelhouse_dir,
+            args.wheelhouse_platform,
         )
     except Exception as exc:
         print(f"[installer-artifacts] error: {exc}", file=sys.stderr)

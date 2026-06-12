@@ -32,6 +32,9 @@ User-visible behavior:
 - Python dependency setup now has a local wheelhouse entry point: if a release package supplies
   `resources/wheelhouse/`, native bootstrap tries it with `--no-index` before falling back to the existing `uv.lock`
   and PyPI tiers.
+- Installer release workflows now generate a Python wheelhouse with `pip wheel .[all]`, write
+  `wheelhouse-manifest.json`, validate every wheel's platform, architecture, Python tag, size, and SHA-256, and upload
+  the retained wheel payload for release review.
 - Release staging writes a checksummed bundled manifest beside the Rust manager binary and retains a
   `bootstrap-tools-manifest.json` artifact for packaged runtime archives. Installer workflows now run a no-UI binary
   self-check against the just-built setup executable, embedded install scripts, commit pin, and bootstrap-tools manifest.
@@ -45,9 +48,8 @@ Compatibility and fallback:
 - Script fallback is still used for unsupported platforms, denied or interactive privilege escalation, unrecognized
   package managers/distributions, failed package-manager recovery, and cases where both native pip and uv targeted SDK
   installs fail.
-- `ffmpeg`, Python wheels, and Playwright browser downloads when no system browser is available are not bundled by
-  default; they remain download or package-manager work unless the release-size and security-update tradeoff is
-  explicitly accepted later.
+- `ffmpeg` and Playwright browser downloads when no system browser is available are not bundled by default; they remain
+  download or package-manager work unless the release-size and security-update tradeoff is explicitly accepted later.
 
 Operational note:
 

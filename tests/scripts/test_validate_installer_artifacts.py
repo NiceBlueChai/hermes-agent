@@ -210,6 +210,89 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
                     bootstrap_tools_platform="windows",
                 )
 
+    def test_validate_artifacts_accepts_wheelhouse_manifest(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wheelhouse = root / "wheelhouse"
+            wheel = wheelhouse / "demo-0.1-py3-none-any.whl"
+            manifest = wheelhouse / "wheelhouse-manifest.json"
+            wheelhouse.mkdir(parents=True)
+            wheel.write_bytes(b"wheel bytes")
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "wheels": [
+                            {
+                                "arch": "x64",
+                                "platform": "windows",
+                                "python": "cp311",
+                                "name": wheel.name,
+                                "sizeBytes": len(b"wheel bytes"),
+                                "sha256": module.sha256_file(wheel),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            checked = module.validate_artifacts(
+                root,
+                [
+                    "wheelhouse/wheelhouse-manifest.json",
+                ],
+                wheelhouse_dir=wheelhouse,
+                wheelhouse_platform="windows",
+            )
+
+            self.assertEqual(checked, [manifest])
+
+    def test_validate_artifacts_rejects_unmanifested_wheelhouse_payload(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wheelhouse = root / "wheelhouse"
+            wheel = wheelhouse / "demo-0.1-py3-none-any.whl"
+            rogue = wheelhouse / "rogue-0.1-py3-none-any.whl"
+            manifest = wheelhouse / "wheelhouse-manifest.json"
+            wheelhouse.mkdir(parents=True)
+            wheel.write_bytes(b"wheel bytes")
+            rogue.write_bytes(b"rogue")
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "wheels": [
+                            {
+                                "arch": "x64",
+                                "platform": "linux",
+                                "python": "cp311",
+                                "name": wheel.name,
+                                "sizeBytes": len(b"wheel bytes"),
+                                "sha256": module.sha256_file(wheel),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "unmanifested wheelhouse payload"):
+                module.validate_artifacts(
+                    root,
+                    [
+                        "wheelhouse/wheelhouse-manifest.json",
+                    ],
+                    wheelhouse_dir=wheelhouse,
+                    wheelhouse_platform="linux",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

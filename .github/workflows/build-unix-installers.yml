@@ -47,6 +47,8 @@ jobs:
                           apps/bootstrap-installer/src-tauri/target/release/bundle/appimage/*.AppImage
                           apps/bootstrap-installer/src-tauri/bootstrap-tools/*.tar.gz
                           apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json
+                          apps/bootstrap-installer/src-tauri/wheelhouse/*.whl
+                          apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json
                     - name: Hermes-Setup macOS
                       os: macos-latest
                       platform: macos
@@ -56,6 +58,8 @@ jobs:
                           apps/bootstrap-installer/src-tauri/target/release/bundle/macos/*.app
                           apps/bootstrap-installer/src-tauri/bootstrap-tools/*.tar.gz
                           apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json
+                          apps/bootstrap-installer/src-tauri/wheelhouse/*.whl
+                          apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json
 
         steps:
             - name: Checkout code
@@ -66,6 +70,12 @@ jobs:
               with:
                   node-version: 22
                   cache: npm
+
+            - name: Setup Python
+              uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c  # v6
+              with:
+                  python-version: "3.11"
+                  cache: pip
 
             - name: Install npm dependencies
               run: npm ci
@@ -103,6 +113,20 @@ jobs:
             - name: Validate bootstrap tool archives
               run: python scripts/prepare_bootstrap_tools.py --validate-only
 
+            - name: Bundle Python wheelhouse
+              run: >
+                  python scripts/prepare_python_wheelhouse.py
+                  --platform ${{ matrix.platform }}
+                  --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+                  --python python
+                  --force
+
+            - name: Validate Python wheelhouse
+              run: >
+                  python scripts/prepare_python_wheelhouse.py
+                  --validate-only
+                  --platform ${{ matrix.platform }}
+
             - name: Build installer
               env:
                   HERMES_BUILD_PIN_COMMIT: ${{ github.sha }}
@@ -121,8 +145,11 @@ jobs:
                   python scripts/validate_installer_artifacts.py
                   --artifact "apps/bootstrap-installer/src-tauri/target/release/bundle/appimage/*.AppImage"
                   --artifact "apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json"
+                  --artifact "apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json"
                   --bootstrap-tools-dir apps/bootstrap-installer/src-tauri/bootstrap-tools
                   --bootstrap-tools-platform ${{ matrix.platform }}
+                  --wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse
+                  --wheelhouse-platform ${{ matrix.platform }}
 
             - name: Validate macOS installer artifacts
               if: matrix.platform == 'macos'
@@ -131,8 +158,11 @@ jobs:
                   --artifact "apps/bootstrap-installer/src-tauri/target/release/bundle/dmg/*.dmg"
                   --artifact "apps/bootstrap-installer/src-tauri/target/release/bundle/macos/*.app"
                   --artifact "apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json"
+                  --artifact "apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json"
                   --bootstrap-tools-dir apps/bootstrap-installer/src-tauri/bootstrap-tools
                   --bootstrap-tools-platform ${{ matrix.platform }}
+                  --wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse
+                  --wheelhouse-platform ${{ matrix.platform }}
 
             - name: Upload installer artifacts
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
