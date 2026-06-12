@@ -1594,6 +1594,8 @@ function Test-ZipArchiveMembersSafe {
                 $name = [string]$entry.FullName
                 $normalized = $name.Replace('\', '/')
                 if ([string]::IsNullOrWhiteSpace($normalized) `
+                    -or [System.IO.Path]::IsPathRooted($name) `
+                    -or [System.IO.Path]::IsPathRooted($normalized) `
                     -or $normalized.StartsWith("/") `
                     -or $normalized -match '(^|/)\.\.(/|$)') {
                     Write-Warn "Skipping bundled cache archive with unsafe member: $name"

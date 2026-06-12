@@ -46,6 +46,7 @@ class InstallScriptManagedCachesTests(unittest.TestCase):
         self.assertIn("Get-FileHash", script)
         self.assertIn("Test-ZipArchiveMembersSafe", script)
         self.assertIn("[System.IO.Compression.ZipFile]::OpenRead", script)
+        self.assertIn("[System.IO.Path]::IsPathRooted", script)
         self.assertIn("Restore-BundledNpmCacheIfAvailable", script)
         self.assertIn("Restore-BundledPlaywrightBrowsersIfAvailable", script)
         self.assertIn("Restore-BundledElectronCacheIfAvailable", script)
