@@ -84,6 +84,8 @@ User-visible behavior:
   self-check against the just-built setup executable, embedded install scripts, commit pin, and bootstrap-tools manifest.
 - Release artifact validation also checks directory-style artifacts such as macOS `.app` bundles and rejects empty
   placeholder bundles or bundles whose files are all zero bytes before upload.
+- The no-UI lifecycle self-check can now include bootstrap-tools and wheelhouse validation in the same JSON report, and
+  release installer workflows pass those resource arguments before uploading packaged artifacts.
 
 Compatibility and fallback:
 

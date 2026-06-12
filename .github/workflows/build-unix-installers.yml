@@ -172,6 +172,13 @@ jobs:
             - name: Smoke built installer lifecycle
               run: >
                   ./apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup --self-check-lifecycle
+                  --self-check-expect-commit "${{ github.sha }}"
+                  --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
+                  --self-check-bootstrap-tools-platform ${{ matrix.platform }}
+                  --self-check-bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+                  --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse
+                  --self-check-wheelhouse-platform ${{ matrix.platform }}
+                  --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
 
             - name: Validate Linux installer artifacts
               if: matrix.platform == 'linux'

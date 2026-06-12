@@ -745,8 +745,37 @@ fn write_self_check_and_exit(args: &[String]) {
     std::process::exit(if report.ok { 0 } else { 1 });
 }
 
-fn write_lifecycle_self_check_and_exit() {
-    let report = match repo_archive::archive_lifecycle_self_check() {
+fn lifecycle_self_check_report(
+    args: &[String],
+    commit: Option<&str>,
+    branch: Option<&str>,
+) -> serde_json::Value {
+    let should_validate_resources = self_check_bootstrap_tools_dir(args).is_some()
+        || self_check_wheelhouse_dir(args).is_some()
+        || expected_self_check_commit(args).is_some();
+    let resource_report = should_validate_resources.then(|| {
+        let mut report = bootstrap_self_check_report(
+            commit,
+            branch,
+            self_check_bootstrap_tools_dir(args).as_deref(),
+            self_check_bootstrap_tools_platform(args).as_deref(),
+            self_check_bootstrap_tools_arch(args).as_deref(),
+            self_check_wheelhouse_dir(args).as_deref(),
+            self_check_wheelhouse_platform(args).as_deref(),
+            self_check_wheelhouse_arch(args).as_deref(),
+        );
+        if let Some(expected) = expected_self_check_commit(args) {
+            if report.commit.as_deref() != Some(expected.as_str()) {
+                report.ok = false;
+                report.errors.push(format!(
+                    "commit pin mismatch: expected {}, got {:?}",
+                    expected, report.commit
+                ));
+            }
+        }
+        report
+    });
+    let lifecycle = match repo_archive::archive_lifecycle_self_check() {
         Ok(details) => serde_json::json!({
             "ok": true,
             "details": details,
@@ -758,6 +787,36 @@ fn write_lifecycle_self_check_and_exit() {
             "errors": [format!("{err:#}")],
         }),
     };
+    let resource_ok = resource_report.as_ref().map(|report| report.ok).unwrap_or(true);
+    let lifecycle_ok = lifecycle["ok"].as_bool().unwrap_or(false);
+    let mut errors = Vec::new();
+    if let Some(report) = &resource_report {
+        errors.extend(report.errors.clone());
+    }
+    if let Some(items) = lifecycle["errors"].as_array() {
+        errors.extend(
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .map(str::to_string),
+        );
+    }
+    serde_json::json!({
+        "ok": resource_ok && lifecycle_ok,
+        "details": {
+            "resources": resource_report,
+            "lifecycle": lifecycle["details"].clone(),
+        },
+        "errors": errors,
+    })
+}
+
+fn write_lifecycle_self_check_and_exit(args: &[String]) {
+    let report = lifecycle_self_check_report(
+        args,
+        option_env!("BUILD_PIN_COMMIT"),
+        option_env!("BUILD_PIN_BRANCH"),
+    );
     println!(
         "{}",
         serde_json::to_string_pretty(&report).expect("lifecycle self-check report serializes")
@@ -800,7 +859,7 @@ fn get_mode(state: tauri::State<'_, Arc<AppState>>) -> AppMode {
 pub fn run() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "--self-check-lifecycle") {
-        write_lifecycle_self_check_and_exit();
+        write_lifecycle_self_check_and_exit(&args);
     }
     if args.iter().any(|arg| arg == "--self-check") {
         write_self_check_and_exit(&args);
@@ -904,8 +963,9 @@ pub fn run() {
 mod tests {
     use super::{
         bootstrap_self_check_report, bootstrap_tool_archive_kind, bootstrap_tool_archive_target,
-        expected_self_check_commit, force_setup_from_args, required_bootstrap_tool_kinds,
-        self_check_bootstrap_tools_arch, self_check_bootstrap_tools_platform,
+        expected_self_check_commit, force_setup_from_args, lifecycle_self_check_report,
+        required_bootstrap_tool_kinds, self_check_bootstrap_tools_arch,
+        self_check_bootstrap_tools_platform,
         self_check_wheelhouse_arch, self_check_wheelhouse_dir, self_check_wheelhouse_platform,
         validate_tauri_bundle_resources_config_for_self_check, AppMode,
     };
@@ -1137,6 +1197,33 @@ mod tests {
             .errors
             .iter()
             .any(|err| err.contains("unmanifested wheelhouse payload")));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn lifecycle_self_check_includes_resource_validation_errors() {
+        let root = unique_tmp_dir("lifecycle-resources");
+        let tools = root.join("bootstrap-tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        let args = vec![
+            "--self-check-lifecycle".to_string(),
+            "--self-check-expect-commit".to_string(),
+            "abcdef1234567890".to_string(),
+            "--self-check-bootstrap-tools".to_string(),
+            tools.display().to_string(),
+        ];
+
+        let report = lifecycle_self_check_report(&args, Some("abcdef1234567890"), Some("main"));
+
+        assert_eq!(report["ok"], false);
+        let errors = report["errors"].as_array().expect("errors should be an array");
+        assert!(errors.iter().any(|err| {
+            err.as_str()
+                .is_some_and(|text| text.contains("bootstrap tools manifest"))
+        }));
+        assert!(report["details"]["resources"].is_object());
+        assert!(report["details"]["lifecycle"].is_object());
 
         let _ = std::fs::remove_dir_all(&root);
     }

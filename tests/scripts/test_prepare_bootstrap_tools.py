@@ -1139,6 +1139,26 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         self.assertIn("Smoke built installer lifecycle", unix_workflow)
         self.assertIn("Hermes-Setup.exe --self-check-lifecycle", windows_workflow)
         self.assertIn("Hermes-Setup --self-check-lifecycle", unix_workflow)
+        self.assertGreaterEqual(
+            windows_workflow.count("--self-check-bootstrap-tools "
+                                   "apps/bootstrap-installer/src-tauri/bootstrap-tools"),
+            2,
+        )
+        self.assertGreaterEqual(
+            unix_workflow.count("--self-check-bootstrap-tools "
+                                "apps/bootstrap-installer/src-tauri/bootstrap-tools"),
+            2,
+        )
+        self.assertGreaterEqual(
+            windows_workflow.count("--self-check-wheelhouse "
+                                   "apps/bootstrap-installer/src-tauri/wheelhouse"),
+            2,
+        )
+        self.assertGreaterEqual(
+            unix_workflow.count("--self-check-wheelhouse "
+                                "apps/bootstrap-installer/src-tauri/wheelhouse"),
+            2,
+        )
         self.assertGreater(
             windows_workflow.index("- name: Smoke built installer binary"),
             windows_workflow.index("- name: Sign Hermes-Setup.exe with Azure Artifact Signing"),

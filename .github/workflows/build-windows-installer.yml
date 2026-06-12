@@ -153,6 +153,13 @@ jobs:
       - name: Smoke built installer lifecycle
         run: >
           .\apps\bootstrap-installer\src-tauri\target\release\Hermes-Setup.exe --self-check-lifecycle
+          --self-check-expect-commit "${{ github.sha }}"
+          --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
+          --self-check-bootstrap-tools-platform windows
+          --self-check-bootstrap-tools-arch x64
+          --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse
+          --self-check-wheelhouse-platform windows
+          --self-check-wheelhouse-arch x64
 
       - name: Validate installer artifacts
         run: >

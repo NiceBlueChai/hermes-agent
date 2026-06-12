@@ -456,6 +456,9 @@ language-specific setup where needed.
   repair-clean, and lite-uninstall smoke through the actual executable in the Windows/Linux/macOS lifecycle matrix.
 - Windows, Linux, and macOS release installer workflows now also run the built `Hermes-Setup --self-check-lifecycle`
   before artifact validation and upload, so manually triggered packaged builds exercise the same lifecycle smoke.
+- Release installer lifecycle smoke now accepts the same bootstrap-tools and wheelhouse self-check arguments as the
+  binary smoke, so packaged Windows/Linux/macOS builds prove resource validation and archive lifecycle behavior in one
+  no-UI report before artifacts are uploaded.
 
 **Still script-backed:**
 - Recovery tiers remain script-backed for failure cases that still need package-manager or mirror-specific handling:
