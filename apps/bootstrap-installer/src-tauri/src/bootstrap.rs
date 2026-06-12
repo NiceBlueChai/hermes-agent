@@ -794,6 +794,7 @@ async fn run_bootstrap(
                 Some(crate::orchestrator::build_desktop_stage(
                     &install_root,
                     &hermes_home,
+                    bundled_tools_dir.as_deref(),
                 ))
             } else if should_try_native_repository_archive(&stage.name, &install_root) {
                 Some(

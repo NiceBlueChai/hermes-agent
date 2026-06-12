@@ -294,6 +294,12 @@ language-specific setup where needed.
 - `prepare_bootstrap_tools.py --bundle-playwright-browsers` now installs Playwright Chromium into a temporary managed
   cache and archives it as `playwright-browsers-<platform>-<arch>`, and the Windows/Linux/macOS installer workflows
   enable that path by default so release artifacts can avoid the browser download during user installation.
+- Native desktop packaging can now consume optional manifest-verified `electron-cache-<platform>-<arch>` archives from
+  `bootstrap-tools/` before running `npm run pack`, so release packages can pre-seed Electron's managed cache without
+  removing the existing Electron download and mirror fallback path.
+- `prepare_bootstrap_tools.py --bundle-electron-cache` now downloads the pinned desktop Electron zip into a temporary
+  managed cache, archives it as `electron-cache-<platform>-<arch>`, and the Windows/Linux/macOS installer workflows
+  enable that path by default so desktop packaging avoids another install-time Electron download when possible.
 - Script fallback for `node-deps` and desktop npm stages now receives the same managed npm cache and Playwright browser
   path environment where applicable, so native fallback does not spill browser/runtime caches back into global user
   locations.
@@ -585,6 +591,8 @@ language-specific setup where needed.
 - Native and script-fallback desktop packaging now set Electron download/build caches to
   `HERMES_HOME/electron-cache`, and `hermes-manager` treats that directory as installer-owned runtime state for repair
   and lite uninstall.
+- Release packaging now bundles the pinned Electron zip as an optional `electron-cache-<platform>-<arch>` archive and
+  the Rust desktop stage extracts it into `HERMES_HOME/electron-cache` before invoking electron-builder.
 - Python dependency setup now detects `resources/wheelhouse/` in the installed checkout and tries an offline
   `uv pip install --no-index --find-links` tier before the existing `uv.lock` and PyPI fallback tiers.
 - Installer workflows now prepare and validate a Tauri-bundled Python wheelhouse, including a retained

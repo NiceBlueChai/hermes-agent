@@ -181,6 +181,23 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         )
         self.assertNotIn("playwright-browsers", module.required_tool_kinds_for_target("linux", "x64"))
 
+    def test_electron_cache_archive_names_have_target_metadata_without_being_required(self):
+        module = _load_script_module()
+
+        self.assertEqual(
+            module.archive_target_from_name("electron-cache-windows-x64.zip"),
+            ("windows", "x64"),
+        )
+        self.assertEqual(
+            module.archive_target_from_name("electron-cache-linux-arm64.tar.gz"),
+            ("linux", "arm64"),
+        )
+        self.assertEqual(
+            module.archive_tool_kind_from_name("electron-cache-macos-x64.tar.gz"),
+            "electron-cache",
+        )
+        self.assertNotIn("electron-cache", module.required_tool_kinds_for_target("windows", "x64"))
+
     def test_prepare_local_archive_copies_optional_ffmpeg_into_manifest(self):
         module = _load_script_module()
         root = Path("tmp-bootstrap-tools-local-archive-test")
@@ -331,6 +348,47 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                 )
         finally:
             module.install_playwright_chromium = original_install
+            for entry in output_dir.glob("*"):
+                entry.unlink()
+            output_dir.rmdir()
+            root.rmdir()
+
+    def test_prepare_electron_cache_archive_downloads_and_wraps_zip(self):
+        module = _load_script_module()
+        root = Path("tmp-bootstrap-tools-electron-cache-test")
+        output_dir = root / "bootstrap-tools"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        original_download = module.download_archive
+
+        def fake_download(spec, output_dir, force):
+            dest = output_dir / spec.name
+            dest.write_bytes(b"electron zip")
+            return dest
+
+        module.download_archive = fake_download
+        try:
+            prepared = module.prepare_electron_cache_archive(
+                output_dir,
+                "windows",
+                "x64",
+                force=False,
+                dry_run=False,
+                electron_version="40.9.3",
+            )
+
+            archive_path = output_dir / "electron-cache-windows-x64.zip"
+            self.assertEqual(len(prepared), 1)
+            self.assertEqual(prepared[0].platform, "windows")
+            self.assertEqual(prepared[0].arch, "x64")
+            self.assertEqual(prepared[0].name, "electron-cache-windows-x64.zip")
+            self.assertTrue(prepared[0].url.endswith("/v40.9.3/electron-v40.9.3-win32-x64.zip"))
+            with zipfile.ZipFile(archive_path) as archive:
+                self.assertIn(
+                    "electron-cache/electron-v40.9.3-win32-x64.zip",
+                    archive.namelist(),
+                )
+        finally:
+            module.download_archive = original_download
             for entry in output_dir.glob("*"):
                 entry.unlink()
             output_dir.rmdir()
@@ -824,6 +882,18 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
 
         self.assertIn('"--bundle-playwright-browsers"', windows_workflow)
         self.assertIn("--bundle-playwright-browsers", unix_workflow)
+
+    def test_installer_workflows_bundle_electron_cache(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('"--bundle-electron-cache"', windows_workflow)
+        self.assertIn("--bundle-electron-cache", unix_workflow)
 
     def test_installer_workflows_pin_bootstrap_builds_to_current_commit(self):
         repo_root = Path(__file__).resolve().parents[2]

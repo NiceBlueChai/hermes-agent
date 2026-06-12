@@ -35,6 +35,7 @@ RIPGREP_VERSION = "15.1.0"
 GIT_TAG = "v2.54.0.windows.1"
 GIT_VERSION = "2.54.0"
 MANIFEST_NAME = "bootstrap-tools-manifest.json"
+ELECTRON_RELEASE_BASE_URL = "https://github.com/electron/electron/releases/download"
 
 UV_ARCHIVE_NAMES = {
     "x64": "uv-x86_64-pc-windows-msvc.zip",
@@ -283,6 +284,13 @@ def archive_target_from_name(name: str) -> tuple[str, str] | None:
         "playwright-browsers-linux-arm64.tar.gz": ("linux", "arm64"),
         "playwright-browsers-macos-x64.tar.gz": ("macos", "x64"),
         "playwright-browsers-macos-arm64.tar.gz": ("macos", "arm64"),
+        "electron-cache-windows-x64.zip": ("windows", "x64"),
+        "electron-cache-windows-arm64.zip": ("windows", "arm64"),
+        "electron-cache-windows-x86.zip": ("windows", "x86"),
+        "electron-cache-linux-x64.tar.gz": ("linux", "x64"),
+        "electron-cache-linux-arm64.tar.gz": ("linux", "arm64"),
+        "electron-cache-macos-x64.tar.gz": ("macos", "x64"),
+        "electron-cache-macos-arm64.tar.gz": ("macos", "arm64"),
     }
     return known_targets.get(name)
 
@@ -302,6 +310,8 @@ def archive_tool_kind_from_name(name: str) -> str | None:
         return "ffmpeg"
     if name.startswith("playwright-browsers-"):
         return "playwright-browsers"
+    if name.startswith("electron-cache-"):
+        return "electron-cache"
     return None
 
 
@@ -525,6 +535,132 @@ def prepare_playwright_browser_archive(
     return [prepared_archive_record(normalized_platform, arch, spec, dest)]
 
 
+def read_desktop_electron_version(package_json: Path | None = None) -> str:
+    """Read the Electron runtime version pinned by the desktop build config."""
+
+    package_json = package_json or REPO_ROOT / "apps" / "desktop" / "package.json"
+    payload = json.loads(package_json.read_text(encoding="utf-8"))
+    build = payload.get("build")
+    if isinstance(build, dict):
+        electron_version = build.get("electronVersion")
+        if isinstance(electron_version, str) and electron_version.strip():
+            return electron_version.strip()
+    raise RuntimeError(f"desktop package.json is missing build.electronVersion: {package_json}")
+
+
+def electron_release_target(platform: str, arch: str) -> tuple[str, str]:
+    """Map one Hermes release target to an official Electron release asset target."""
+
+    normalized_platform = "macos" if platform == "darwin" else platform
+    platform_map = {
+        "windows": "win32",
+        "linux": "linux",
+        "macos": "darwin",
+    }
+    arch_map = {
+        "x64": "x64",
+        "arm64": "arm64",
+        "x86": "ia32",
+    }
+    electron_platform = platform_map.get(normalized_platform)
+    electron_arch = arch_map.get(arch)
+    if electron_platform is None:
+        raise ValueError(f"unsupported Electron cache platform: {platform}")
+    if electron_arch is None:
+        raise ValueError(f"unsupported Electron cache architecture: {arch}")
+    if normalized_platform != "windows" and arch == "x86":
+        raise ValueError(f"unsupported Electron cache archive target: {normalized_platform}-{arch}")
+    return electron_platform, electron_arch
+
+
+def electron_release_asset_name(platform: str, arch: str, electron_version: str) -> str:
+    """Return the official Electron zip filename for one release target."""
+
+    electron_platform, electron_arch = electron_release_target(platform, arch)
+    return f"electron-v{electron_version}-{electron_platform}-{electron_arch}.zip"
+
+
+def electron_release_asset_url(platform: str, arch: str, electron_version: str) -> str:
+    """Return the official Electron release URL for one target asset."""
+
+    asset_name = electron_release_asset_name(platform, arch, electron_version)
+    return f"{ELECTRON_RELEASE_BASE_URL}/v{electron_version}/{asset_name}"
+
+
+def electron_cache_archive_name(platform: str, arch: str) -> str:
+    """Return the portable Electron cache archive name for one release target."""
+
+    normalized_platform = "macos" if platform == "darwin" else platform
+    if normalized_platform == "windows":
+        extension = "zip"
+    elif normalized_platform in {"linux", "macos"}:
+        extension = "tar.gz"
+    else:
+        raise ValueError(f"unsupported Electron cache platform: {platform}")
+    name = f"electron-cache-{normalized_platform}-{arch}.{extension}"
+    if archive_target_from_name(name) is None:
+        raise ValueError(f"unsupported Electron cache archive target: {normalized_platform}-{arch}")
+    return name
+
+
+def write_electron_cache_archive(cache_dir: Path, archive_path: Path) -> None:
+    """Archive one Electron cache directory under a stable electron-cache/ root."""
+
+    members = sorted(path for path in cache_dir.rglob("*") if path.is_file())
+    if not members:
+        raise RuntimeError(f"Electron cache has no files: {cache_dir}")
+    tmp = archive_path.with_name(f"{archive_path.name}.tmp")
+    tmp.unlink(missing_ok=True)
+    if archive_path.name.endswith(".zip"):
+        with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
+            for path in members:
+                rel = path.relative_to(cache_dir).as_posix()
+                archive.write(path, f"electron-cache/{rel}")
+    elif archive_path.name.endswith(".tar.gz"):
+        with tarfile.open(tmp, "w:gz") as archive:
+            for path in members:
+                rel = path.relative_to(cache_dir).as_posix()
+                archive.add(path, arcname=f"electron-cache/{rel}")
+    else:
+        raise RuntimeError(f"unsupported Electron cache archive format: {archive_path.name}")
+    os.replace(tmp, archive_path)
+
+
+def prepare_electron_cache_archive(
+    output_dir: Path,
+    platform: str,
+    arch: str,
+    force: bool,
+    dry_run: bool,
+    electron_version: str | None = None,
+) -> list[PreparedArchive]:
+    """Build a manifest-ready Electron cache archive for one release target."""
+
+    normalized_platform = "macos" if platform == "darwin" else platform
+    electron_version = electron_version or read_desktop_electron_version()
+    archive_name = electron_cache_archive_name(normalized_platform, arch)
+    source_url = electron_release_asset_url(normalized_platform, arch, electron_version)
+    spec = ArchiveSpec(name=archive_name, url=source_url)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    dest = output_dir / archive_name
+    if dry_run:
+        print(f"[bootstrap-tools] would bundle Electron cache as {archive_name} <- {source_url}")
+        return []
+    if dest.is_file() and dest.stat().st_size > 0 and not force:
+        print(f"[bootstrap-tools] keep {dest}")
+        return [prepared_archive_record(normalized_platform, arch, spec, dest)]
+
+    asset_name = electron_release_asset_name(normalized_platform, arch, electron_version)
+    with tempfile.TemporaryDirectory(prefix="hermes-electron-cache-") as tmp:
+        cache_dir = Path(tmp) / "electron-cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        download_archive(ArchiveSpec(name=asset_name, url=source_url), cache_dir, force)
+        if not (cache_dir / asset_name).is_file():
+            raise RuntimeError(f"Electron cache download did not produce {asset_name}")
+        write_electron_cache_archive(cache_dir, dest)
+    return [prepared_archive_record(normalized_platform, arch, spec, dest)]
+
+
 def write_manifest(output_dir: Path, archives: list[PreparedArchive]) -> Path:
     """Write the bundled tool archive manifest consumed by release reviewers."""
 
@@ -638,6 +774,8 @@ def prepare_archives(
     audited_archives: list[str] | None = None,
     bundle_playwright_browsers: bool = False,
     playwright_browsers_url: str | None = None,
+    bundle_electron_cache: bool = False,
+    electron_version: str | None = None,
 ) -> list[PreparedArchive]:
     """Resolve and optionally download all archives for the requested architectures."""
 
@@ -668,6 +806,18 @@ def prepare_archives(
                     force,
                     dry_run,
                     playwright_browsers_url,
+                )
+            )
+    if bundle_electron_cache:
+        for arch in arches:
+            downloaded.extend(
+                prepare_electron_cache_archive(
+                    output_dir,
+                    normalized_platform,
+                    arch,
+                    force,
+                    dry_run,
+                    electron_version,
                 )
             )
     if downloaded:
@@ -724,6 +874,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="HTTPS source trace URL recorded for generated Playwright browser cache archives.",
     )
+    parser.add_argument(
+        "--bundle-electron-cache",
+        action="store_true",
+        help="Download Electron and bundle its zip into the desktop build cache.",
+    )
+    parser.add_argument(
+        "--electron-version",
+        default=None,
+        help="Electron version to bundle. Defaults to apps/desktop/package.json build.electronVersion.",
+    )
     return parser.parse_args(argv)
 
 
@@ -747,6 +907,8 @@ def main(argv: list[str] | None = None) -> int:
             args.audited_archive,
             args.bundle_playwright_browsers,
             args.playwright_browsers_url,
+            args.bundle_electron_cache,
+            args.electron_version,
         )
     except Exception as exc:
         print(f"[bootstrap-tools] error: {exc}", file=sys.stderr)

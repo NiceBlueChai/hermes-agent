@@ -603,6 +603,9 @@ fn bootstrap_tool_archive_target(name: &str) -> Option<(&'static str, &'static s
         "playwright-browsers-windows-x64.zip" => Some(("windows", "x64")),
         "playwright-browsers-windows-arm64.zip" => Some(("windows", "arm64")),
         "playwright-browsers-windows-x86.zip" => Some(("windows", "x86")),
+        "electron-cache-windows-x64.zip" => Some(("windows", "x64")),
+        "electron-cache-windows-arm64.zip" => Some(("windows", "arm64")),
+        "electron-cache-windows-x86.zip" => Some(("windows", "x86")),
         "uv-x86_64-unknown-linux-gnu.tar.gz"
         | "ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz" => Some(("linux", "x64")),
         "uv-aarch64-unknown-linux-gnu.tar.gz"
@@ -615,10 +618,14 @@ fn bootstrap_tool_archive_target(name: &str) -> Option<(&'static str, &'static s
         "ffmpeg-linux-arm64.tar.gz" => Some(("linux", "arm64")),
         "playwright-browsers-linux-x64.tar.gz" => Some(("linux", "x64")),
         "playwright-browsers-linux-arm64.tar.gz" => Some(("linux", "arm64")),
+        "electron-cache-linux-x64.tar.gz" => Some(("linux", "x64")),
+        "electron-cache-linux-arm64.tar.gz" => Some(("linux", "arm64")),
         "ffmpeg-macos-x64.tar.gz" => Some(("macos", "x64")),
         "ffmpeg-macos-arm64.tar.gz" => Some(("macos", "arm64")),
         "playwright-browsers-macos-x64.tar.gz" => Some(("macos", "x64")),
         "playwright-browsers-macos-arm64.tar.gz" => Some(("macos", "arm64")),
+        "electron-cache-macos-x64.tar.gz" => Some(("macos", "x64")),
+        "electron-cache-macos-arm64.tar.gz" => Some(("macos", "arm64")),
         _ => None,
     }
 }
@@ -642,6 +649,9 @@ fn bootstrap_tool_archive_kind(name: &str) -> Option<&'static str> {
     }
     if name.starts_with("playwright-browsers-") {
         return Some("playwright-browsers");
+    }
+    if name.starts_with("electron-cache-") {
+        return Some("electron-cache");
     }
     None
 }
@@ -1582,6 +1592,27 @@ mod tests {
             Some("playwright-browsers")
         );
         assert!(!required_bootstrap_tool_kinds("linux", "x64").contains("playwright-browsers"));
+    }
+
+    #[test]
+    fn self_check_knows_optional_electron_cache_bootstrap_archive_targets() {
+        assert_eq!(
+            bootstrap_tool_archive_target("electron-cache-windows-x64.zip"),
+            Some(("windows", "x64"))
+        );
+        assert_eq!(
+            bootstrap_tool_archive_target("electron-cache-linux-arm64.tar.gz"),
+            Some(("linux", "arm64"))
+        );
+        assert_eq!(
+            bootstrap_tool_archive_target("electron-cache-macos-x64.tar.gz"),
+            Some(("macos", "x64"))
+        );
+        assert_eq!(
+            bootstrap_tool_archive_kind("electron-cache-macos-x64.tar.gz"),
+            Some("electron-cache")
+        );
+        assert!(!required_bootstrap_tool_kinds("linux", "x64").contains("electron-cache"));
     }
 
     #[test]

@@ -260,6 +260,13 @@ pub struct PlaywrightBrowsersRuntimeStagePlan {
     pub install_dir: PathBuf,
 }
 
+/// Native Electron cache installation plan for bundled release archives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ElectronCacheRuntimeStagePlan {
+    pub archive_name: String,
+    pub install_dir: PathBuf,
+}
+
 /// Native Unix Node runtime installation plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnixNodeRuntimeStagePlan {
@@ -2142,6 +2149,55 @@ fn install_bundled_playwright_browsers_if_available(
     Ok(Some((plan.archive_name, archive_source.kind)))
 }
 
+/// Build an Electron cache plan for a bundled release archive.
+pub fn electron_cache_runtime_stage_plan(
+    hermes_home: &Path,
+    target_os: &str,
+    arch: &str,
+) -> Result<ElectronCacheRuntimeStagePlan> {
+    let platform = match target_os {
+        "windows" => "windows",
+        "darwin" | "macos" => "macos",
+        "linux" => "linux",
+        other => return Err(anyhow!("unsupported Electron cache platform: {other}")),
+    };
+    match (platform, arch) {
+        ("windows", "arm64" | "x64" | "x86")
+        | ("linux", "arm64" | "x64")
+        | ("macos", "arm64" | "x64") => {}
+        (_, other) => {
+            return Err(anyhow!(
+                "unsupported Electron cache architecture for {platform}: {other}"
+            ));
+        }
+    }
+    let extension = if platform == "windows" {
+        "zip"
+    } else {
+        "tar.gz"
+    };
+    Ok(ElectronCacheRuntimeStagePlan {
+        archive_name: format!("electron-cache-{platform}-{arch}.{extension}"),
+        install_dir: hermes_home.join("electron-cache"),
+    })
+}
+
+fn install_bundled_electron_cache_if_available(
+    hermes_home: &Path,
+    bundled_tools_dir: Option<&Path>,
+    target_os: &str,
+    arch: &str,
+) -> Result<Option<(String, BootstrapArchiveSourceKind)>> {
+    let plan = electron_cache_runtime_stage_plan(hermes_home, target_os, arch)?;
+    let archive_source =
+        resolve_bootstrap_archive_source(hermes_home, bundled_tools_dir, &plan.archive_name);
+    if archive_source.kind != BootstrapArchiveSourceKind::Bundled {
+        return Ok(None);
+    }
+    extract_electron_cache_archive(&archive_source.path, &plan.install_dir)?;
+    Ok(Some((plan.archive_name, archive_source.kind)))
+}
+
 /// Install Windows ripgrep natively and prefer bundled ffmpeg before package-manager recovery.
 pub async fn install_windows_system_packages_stage(
     hermes_home: &Path,
@@ -3661,10 +3717,20 @@ where
 pub fn build_desktop_stage(
     install_root: &Path,
     hermes_home: &Path,
+    bundled_tools_dir: Option<&Path>,
 ) -> Result<serde_json::Value> {
     let path_env = std::env::var_os("PATH").unwrap_or_default();
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
     let plan = desktop_build_stage_plan(install_root, hermes_home, path_env, &pathext)?;
+    let arch = current_wheelhouse_arch()
+        .ok_or_else(|| anyhow!("unsupported Electron cache architecture: {}", std::env::consts::ARCH))?;
+    let electron_cache_archive =
+        install_bundled_electron_cache_if_available(
+            hermes_home,
+            bundled_tools_dir,
+            current_wheelhouse_platform(),
+            arch,
+        )?;
     if run_node_dependency_command(
         &plan.npm,
         ["ci", "--prefer-offline", "--no-audit", "--fund=false"],
@@ -3698,6 +3764,8 @@ pub fn build_desktop_stage(
         "npm": plan.npm,
         "npmCacheDir": plan.npm_cache_dir,
         "electronCacheDir": plan.electron_cache_dir,
+        "electronCacheArchive": electron_cache_archive.as_ref().map(|(name, _)| name),
+        "electronCacheArchiveSource": electron_cache_archive.as_ref().map(|(_, source)| source.as_str()),
         "desktopDir": plan.desktop_dir,
         "desktopApp": &desktop_app,
     });
@@ -4433,6 +4501,18 @@ fn bootstrap_archive_target_from_name(name: &str) -> Option<BootstrapArchiveTarg
             platform: "windows",
             arch: "x86",
         }),
+        "electron-cache-windows-x64.zip" => Some(BootstrapArchiveTarget {
+            platform: "windows",
+            arch: "x64",
+        }),
+        "electron-cache-windows-arm64.zip" => Some(BootstrapArchiveTarget {
+            platform: "windows",
+            arch: "arm64",
+        }),
+        "electron-cache-windows-x86.zip" => Some(BootstrapArchiveTarget {
+            platform: "windows",
+            arch: "x86",
+        }),
         "uv-x86_64-unknown-linux-gnu.tar.gz"
         | "ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz" => Some(BootstrapArchiveTarget {
             platform: "linux",
@@ -4469,6 +4549,14 @@ fn bootstrap_archive_target_from_name(name: &str) -> Option<BootstrapArchiveTarg
             platform: "linux",
             arch: "arm64",
         }),
+        "electron-cache-linux-x64.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "linux",
+            arch: "x64",
+        }),
+        "electron-cache-linux-arm64.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "linux",
+            arch: "arm64",
+        }),
         "ffmpeg-macos-x64.tar.gz" => Some(BootstrapArchiveTarget {
             platform: "macos",
             arch: "x64",
@@ -4482,6 +4570,14 @@ fn bootstrap_archive_target_from_name(name: &str) -> Option<BootstrapArchiveTarg
             arch: "x64",
         }),
         "playwright-browsers-macos-arm64.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "macos",
+            arch: "arm64",
+        }),
+        "electron-cache-macos-x64.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "macos",
+            arch: "x64",
+        }),
+        "electron-cache-macos-arm64.tar.gz" => Some(BootstrapArchiveTarget {
             platform: "macos",
             arch: "arm64",
         }),
@@ -4974,6 +5070,90 @@ fn playwright_browsers_dir_has_chromium(path: &Path) -> Result<bool> {
         let name = name.to_string_lossy();
         if name.starts_with("chromium-") || name.starts_with("chromium_headless_shell-") {
             return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn extract_electron_cache_archive(archive_path: &Path, install_dir: &Path) -> Result<()> {
+    let parent = install_dir.parent().ok_or_else(|| {
+        anyhow!(
+            "Electron cache install directory has no parent: {}",
+            install_dir.display()
+        )
+    })?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("creating Electron cache parent {}", parent.display()))?;
+    let tmp_dir = parent.join("electron-cache-extracting");
+    remove_path_if_exists(&tmp_dir)?;
+    fs::create_dir_all(&tmp_dir).with_context(|| {
+        format!(
+            "creating Electron cache extraction directory {}",
+            tmp_dir.display()
+        )
+    })?;
+
+    let result: Result<()> = (|| {
+        let archive_name = archive_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if archive_name.ends_with(".zip") {
+            crate::artifact::extract_zip_archive(archive_path, &tmp_dir)?;
+        } else if archive_name.ends_with(".tar.gz") {
+            extract_tar_gz_archive(archive_path, &tmp_dir, "Electron cache")?;
+        } else {
+            return Err(anyhow!(
+                "unsupported Electron cache archive format: {}",
+                archive_path.display()
+            ));
+        }
+        let cache_root = if tmp_dir.join("electron-cache").is_dir() {
+            tmp_dir.join("electron-cache")
+        } else {
+            tmp_dir.clone()
+        };
+        if !electron_cache_dir_has_zip(&cache_root)? {
+            return Err(anyhow!("Electron cache archive did not contain Electron zip files"));
+        }
+        remove_path_if_exists(install_dir)?;
+        fs::create_dir_all(install_dir).with_context(|| {
+            format!("creating Electron cache install dir {}", install_dir.display())
+        })?;
+        copy_dir_contents(&cache_root, install_dir)?;
+        if !electron_cache_dir_has_zip(install_dir)? {
+            return Err(anyhow!(
+                "Electron cache extraction did not produce Electron zip files"
+            ));
+        }
+        Ok(())
+    })();
+    let cleanup = remove_path_if_exists(&tmp_dir);
+    result?;
+    cleanup
+}
+
+fn electron_cache_dir_has_zip(path: &Path) -> Result<bool> {
+    if !path.is_dir() {
+        return Ok(false);
+    }
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
+            let entry = entry.with_context(|| format!("reading entry under {}", dir.display()))?;
+            let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .with_context(|| format!("reading file type for {}", path.display()))?;
+            if file_type.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if file_type.is_file()
+                && electron_zip_file_name(path.file_name().and_then(OsStr::to_str))
+            {
+                return Ok(true);
+            }
         }
     }
     Ok(false)
@@ -6661,6 +6841,120 @@ mod tests {
             )
             .unwrap(),
             b"chrome"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn electron_cache_runtime_stage_plan_matches_bundled_archive_contract() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-electron-cache-runtime-plan-test-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+
+        let windows = electron_cache_runtime_stage_plan(&hermes_home, "windows", "x64")
+            .expect("Windows x64 Electron cache archive should be supported");
+        assert_eq!(windows.archive_name, "electron-cache-windows-x64.zip");
+        assert_eq!(windows.install_dir, hermes_home.join("electron-cache"));
+
+        let linux = electron_cache_runtime_stage_plan(&hermes_home, "linux", "arm64")
+            .expect("Linux arm64 Electron cache archive should be supported");
+        assert_eq!(linux.archive_name, "electron-cache-linux-arm64.tar.gz");
+
+        let macos = electron_cache_runtime_stage_plan(&hermes_home, "darwin", "x64")
+            .expect("macOS x64 Electron cache archive should be supported");
+        assert_eq!(macos.archive_name, "electron-cache-macos-x64.tar.gz");
+        assert!(electron_cache_runtime_stage_plan(&hermes_home, "freebsd", "x64").is_err());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_electron_cache_archive_copies_nested_zip_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-electron-cache-zip-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive = root.join("electron-cache.zip");
+        write_test_zip(
+            &archive,
+            &[("electron-cache/electron-v40.9.3-win32-x64.zip", b"electron zip")],
+        );
+        let install_dir = root.join("home").join("electron-cache");
+
+        extract_electron_cache_archive(&archive, &install_dir).unwrap();
+
+        assert_eq!(
+            std::fs::read(install_dir.join("electron-v40.9.3-win32-x64.zip")).unwrap(),
+            b"electron zip"
+        );
+        assert!(!install_dir.parent().unwrap().join("electron-cache-extracting").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_electron_cache_archive_copies_nested_tar_gz_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-electron-cache-tar-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive = root.join("electron-cache.tar.gz");
+        write_test_tar_gz(
+            &archive,
+            &[("electron-cache/electron-v40.9.3-linux-arm64.zip", b"electron zip")],
+        );
+        let install_dir = root.join("home").join("electron-cache");
+
+        extract_electron_cache_archive(&archive, &install_dir).unwrap();
+
+        assert_eq!(
+            std::fs::read(install_dir.join("electron-v40.9.3-linux-arm64.zip")).unwrap(),
+            b"electron zip"
+        );
+        assert!(!install_dir.parent().unwrap().join("electron-cache-extracting").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn bundled_electron_cache_archive_installs_before_desktop_pack() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-electron-cache-bundled-test-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+        let bundled = root.join("resources").join("bootstrap-tools");
+        std::fs::create_dir_all(&bundled).unwrap();
+        write_test_zip(
+            &bundled.join("electron-cache-windows-x64.zip"),
+            &[("electron-cache/electron-v40.9.3-win32-x64.zip", b"electron zip")],
+        );
+
+        let source = install_bundled_electron_cache_if_available(
+            &hermes_home,
+            Some(&bundled),
+            "windows",
+            "x64",
+        )
+        .unwrap();
+
+        assert_eq!(
+            source,
+            Some((
+                "electron-cache-windows-x64.zip".to_string(),
+                BootstrapArchiveSourceKind::Bundled,
+            ))
+        );
+        assert_eq!(
+            std::fs::read(
+                hermes_home
+                    .join("electron-cache")
+                    .join("electron-v40.9.3-win32-x64.zip")
+            )
+            .unwrap(),
+            b"electron zip"
         );
         let _ = std::fs::remove_dir_all(&root);
     }

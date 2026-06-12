@@ -130,6 +130,7 @@ jobs:
                       --platform "${{ matrix.platform }}"
                       --arch "${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}"
                       --bundle-playwright-browsers
+                      --bundle-electron-cache
                   )
                   if [ -n "${HERMES_AUDITED_ARCHIVE}" ]; then
                       args+=(--audited-archive "${HERMES_AUDITED_ARCHIVE}")
