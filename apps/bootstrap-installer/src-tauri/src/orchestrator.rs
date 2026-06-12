@@ -237,6 +237,22 @@ pub struct UnixRipgrepRuntimeStagePlan {
     pub rg_bin: PathBuf,
 }
 
+/// Native Windows ffmpeg runtime installation plan for bundled release archives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowsFfmpegRuntimeStagePlan {
+    pub archive_name: String,
+    pub install_dir: PathBuf,
+    pub ffmpeg_exe: PathBuf,
+}
+
+/// Native Unix ffmpeg runtime installation plan for bundled release archives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnixFfmpegRuntimeStagePlan {
+    pub archive_name: String,
+    pub install_dir: PathBuf,
+    pub ffmpeg_bin: PathBuf,
+}
+
 /// Native Unix Node runtime installation plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnixNodeRuntimeStagePlan {
@@ -2026,7 +2042,51 @@ pub fn unix_ripgrep_runtime_stage_plan(
     })
 }
 
-/// Install Windows ripgrep natively and leave ffmpeg to script fallback if needed.
+/// Build a Windows ffmpeg runtime plan for a bundled release archive.
+pub fn windows_ffmpeg_runtime_stage_plan(
+    hermes_home: &Path,
+    arch: &str,
+) -> Result<WindowsFfmpegRuntimeStagePlan> {
+    match arch {
+        "arm64" | "x64" | "x86" => {}
+        other => return Err(anyhow!("unsupported Windows architecture for ffmpeg: {other}")),
+    }
+    let archive_name = format!("ffmpeg-windows-{arch}.zip");
+    let install_dir = hermes_home.join("bin");
+    let ffmpeg_exe = install_dir.join("ffmpeg.exe");
+    Ok(WindowsFfmpegRuntimeStagePlan {
+        archive_name,
+        install_dir,
+        ffmpeg_exe,
+    })
+}
+
+/// Build a Unix ffmpeg runtime plan for a bundled release archive.
+pub fn unix_ffmpeg_runtime_stage_plan(
+    hermes_home: &Path,
+    target_os: &str,
+    arch: &str,
+) -> Result<UnixFfmpegRuntimeStagePlan> {
+    let platform = match target_os {
+        "darwin" | "macos" => "macos",
+        "linux" => "linux",
+        other => return Err(anyhow!("unsupported Unix ffmpeg platform: {other}")),
+    };
+    match arch {
+        "arm64" | "x64" => {}
+        other => return Err(anyhow!("unsupported Unix architecture for ffmpeg: {other}")),
+    }
+    let archive_name = format!("ffmpeg-{platform}-{arch}.tar.gz");
+    let install_dir = hermes_home.join("bin");
+    let ffmpeg_bin = install_dir.join("ffmpeg");
+    Ok(UnixFfmpegRuntimeStagePlan {
+        archive_name,
+        install_dir,
+        ffmpeg_bin,
+    })
+}
+
+/// Install Windows ripgrep natively and prefer bundled ffmpeg before package-manager recovery.
 pub async fn install_windows_system_packages_stage(
     hermes_home: &Path,
     bundled_tools_dir: Option<&Path>,
@@ -2091,8 +2151,38 @@ pub async fn install_windows_system_packages_stage(
     }
 
     let mut refreshed_path = std::env::var_os("PATH").unwrap_or_default();
-    let mut ffmpeg = find_executable_on_path("ffmpeg", &refreshed_path, &pathext);
+    let managed_ffmpeg = managed_tool_path(hermes_home, "ffmpeg");
+    let mut ffmpeg = find_executable_on_path("ffmpeg", &refreshed_path, &pathext)
+        .or_else(|| managed_ffmpeg.is_file().then_some(managed_ffmpeg.clone()));
     let mut ffmpeg_commands = Vec::new();
+    let mut ffmpeg_archive_name = None;
+    let mut ffmpeg_archive_source_kind = None;
+    if ffmpeg.is_none() {
+        let arch = windows_node_arch_slug();
+        let plan = windows_ffmpeg_runtime_stage_plan(hermes_home, &arch)?;
+        let archive_source =
+            resolve_bootstrap_archive_source(hermes_home, bundled_tools_dir, &plan.archive_name);
+        if archive_source.kind == BootstrapArchiveSourceKind::Bundled {
+            install_windows_ffmpeg_archive(&archive_source.path, &plan.install_dir)?;
+            if !plan.ffmpeg_exe.is_file() {
+                return Err(anyhow!(
+                    "ffmpeg extraction did not produce {}",
+                    plan.ffmpeg_exe.display()
+                ));
+            }
+            prepend_process_path(&plan.install_dir);
+            persist_windows_path_entries(&[plan.install_dir.clone()])?;
+            refreshed_path = std::env::var_os("PATH").unwrap_or_default();
+            ffmpeg = Some(plan.ffmpeg_exe);
+            ffmpeg_archive_name = Some(plan.archive_name);
+            ffmpeg_archive_source_kind = Some(archive_source.kind.as_str().to_string());
+        }
+    } else if ffmpeg.as_deref() == Some(managed_ffmpeg.as_path()) {
+        let bin_dir = hermes_home.join("bin");
+        prepend_process_path(&bin_dir);
+        persist_windows_path_entries(&[bin_dir])?;
+        refreshed_path = std::env::var_os("PATH").unwrap_or_default();
+    }
     if ffmpeg.is_none() {
         let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
         let commands = windows_system_package_install_command_plan(
@@ -2140,12 +2230,14 @@ pub async fn install_windows_system_packages_stage(
         "ripgrep": find_executable_on_path("rg", &refreshed_path, &pathext),
         "ffmpeg": ffmpeg,
         "ffmpegCommands": ffmpeg_commands,
+        "ffmpegArchive": ffmpeg_archive_name,
+        "ffmpegArchiveSource": ffmpeg_archive_source_kind,
         "archive": archive_name,
         "archiveSource": archive_source_kind,
     }))
 }
 
-/// Install Unix ripgrep natively and leave ffmpeg to shell fallback if needed.
+/// Install Unix ripgrep natively and prefer bundled ffmpeg before package-manager recovery.
 pub async fn install_unix_system_packages_stage(
     hermes_home: &Path,
     bundled_tools_dir: Option<&Path>,
@@ -2206,8 +2298,35 @@ pub async fn install_unix_system_packages_stage(
     }
 
     let mut refreshed_path = std::env::var_os("PATH").unwrap_or_default();
-    let mut ffmpeg = find_executable_on_path("ffmpeg", &refreshed_path, "");
+    let managed_ffmpeg = managed_tool_path(hermes_home, "ffmpeg");
+    let mut ffmpeg = find_executable_on_path("ffmpeg", &refreshed_path, "")
+        .or_else(|| managed_ffmpeg.is_file().then_some(managed_ffmpeg.clone()));
     let mut ffmpeg_commands = Vec::new();
+    let mut ffmpeg_archive_name = None;
+    let mut ffmpeg_archive_source_kind = None;
+    if ffmpeg.is_none() {
+        let arch = current_unix_node_arch_slug()?;
+        let plan = unix_ffmpeg_runtime_stage_plan(hermes_home, std::env::consts::OS, &arch)?;
+        let archive_source =
+            resolve_bootstrap_archive_source(hermes_home, bundled_tools_dir, &plan.archive_name);
+        if archive_source.kind == BootstrapArchiveSourceKind::Bundled {
+            extract_unix_ffmpeg_tar_gz(&archive_source.path, &plan.install_dir)?;
+            if !plan.ffmpeg_bin.is_file() {
+                return Err(anyhow!(
+                    "ffmpeg extraction did not produce {}",
+                    plan.ffmpeg_bin.display()
+                ));
+            }
+            prepend_process_path(&plan.install_dir);
+            refreshed_path = std::env::var_os("PATH").unwrap_or_default();
+            ffmpeg = Some(plan.ffmpeg_bin);
+            ffmpeg_archive_name = Some(plan.archive_name);
+            ffmpeg_archive_source_kind = Some(archive_source.kind.as_str().to_string());
+        }
+    } else if ffmpeg.as_deref() == Some(managed_ffmpeg.as_path()) {
+        prepend_process_path(&hermes_home.join("bin"));
+        refreshed_path = std::env::var_os("PATH").unwrap_or_default();
+    }
     if ffmpeg.is_none() {
         let termux = is_termux_environment();
         let target_os = if termux { "android" } else { std::env::consts::OS };
@@ -2246,6 +2365,8 @@ pub async fn install_unix_system_packages_stage(
         "ripgrep": find_executable_on_path("rg", &refreshed_path, ""),
         "ffmpeg": ffmpeg,
         "ffmpegCommands": ffmpeg_commands,
+        "ffmpegArchive": ffmpeg_archive_name,
+        "ffmpegArchiveSource": ffmpeg_archive_source_kind,
         "archive": archive_name,
         "archiveSource": archive_source_kind,
     }))
@@ -4210,6 +4331,18 @@ fn bootstrap_archive_target_from_name(name: &str) -> Option<BootstrapArchiveTarg
             platform: "windows",
             arch: "x86",
         }),
+        "ffmpeg-windows-x64.zip" => Some(BootstrapArchiveTarget {
+            platform: "windows",
+            arch: "x64",
+        }),
+        "ffmpeg-windows-arm64.zip" => Some(BootstrapArchiveTarget {
+            platform: "windows",
+            arch: "arm64",
+        }),
+        "ffmpeg-windows-x86.zip" => Some(BootstrapArchiveTarget {
+            platform: "windows",
+            arch: "x86",
+        }),
         "uv-x86_64-unknown-linux-gnu.tar.gz"
         | "ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz" => Some(BootstrapArchiveTarget {
             platform: "linux",
@@ -4227,6 +4360,22 @@ fn bootstrap_archive_target_from_name(name: &str) -> Option<BootstrapArchiveTarg
         }),
         "uv-aarch64-apple-darwin.tar.gz"
         | "ripgrep-15.1.0-aarch64-apple-darwin.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "macos",
+            arch: "arm64",
+        }),
+        "ffmpeg-linux-x64.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "linux",
+            arch: "x64",
+        }),
+        "ffmpeg-linux-arm64.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "linux",
+            arch: "arm64",
+        }),
+        "ffmpeg-macos-x64.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "macos",
+            arch: "x64",
+        }),
+        "ffmpeg-macos-arm64.tar.gz" => Some(BootstrapArchiveTarget {
             platform: "macos",
             arch: "arm64",
         }),
@@ -4560,6 +4709,31 @@ fn install_windows_ripgrep_archive(archive_path: &Path, install_dir: &Path) -> R
     cleanup
 }
 
+fn install_windows_ffmpeg_archive(archive_path: &Path, install_dir: &Path) -> Result<()> {
+    fs::create_dir_all(install_dir)
+        .with_context(|| format!("creating ffmpeg install dir {}", install_dir.display()))?;
+    let tmp_dir = install_dir.join("ffmpeg-extracting");
+    remove_path_if_exists(&tmp_dir)?;
+    fs::create_dir_all(&tmp_dir)
+        .with_context(|| format!("creating ffmpeg extraction directory {}", tmp_dir.display()))?;
+
+    let result = (|| -> Result<()> {
+        crate::artifact::extract_zip_archive(archive_path, &tmp_dir)?;
+        let extracted_ffmpeg = find_file_named(&tmp_dir, "ffmpeg.exe")?;
+        fs::copy(&extracted_ffmpeg, install_dir.join("ffmpeg.exe")).with_context(|| {
+            format!(
+                "copying ffmpeg binary {} to {}",
+                extracted_ffmpeg.display(),
+                install_dir.display()
+            )
+        })?;
+        Ok(())
+    })();
+    let cleanup = remove_path_if_exists(&tmp_dir);
+    result?;
+    cleanup
+}
+
 fn install_unix_ripgrep_archive(archive_path: &Path, install_dir: &Path) -> Result<()> {
     extract_unix_ripgrep_tar_gz(archive_path, install_dir)
 }
@@ -4584,6 +4758,33 @@ fn extract_unix_ripgrep_tar_gz(archive_path: &Path, install_dir: &Path) -> Resul
             )
         })?;
         make_executable(&rg_dest)?;
+        Ok(())
+    })();
+    let cleanup = remove_path_if_exists(&tmp_dir);
+    result?;
+    cleanup
+}
+
+fn extract_unix_ffmpeg_tar_gz(archive_path: &Path, install_dir: &Path) -> Result<()> {
+    fs::create_dir_all(install_dir)
+        .with_context(|| format!("creating ffmpeg install dir {}", install_dir.display()))?;
+    let tmp_dir = install_dir.join("ffmpeg-extracting");
+    remove_path_if_exists(&tmp_dir)?;
+    fs::create_dir_all(&tmp_dir)
+        .with_context(|| format!("creating ffmpeg extraction directory {}", tmp_dir.display()))?;
+
+    let result: Result<()> = (|| {
+        extract_tar_gz_archive(archive_path, &tmp_dir, "ffmpeg")?;
+        let ffmpeg = find_file_named(&tmp_dir, "ffmpeg")?;
+        let ffmpeg_dest = install_dir.join("ffmpeg");
+        fs::copy(&ffmpeg, &ffmpeg_dest).with_context(|| {
+            format!(
+                "copying ffmpeg binary {} to {}",
+                ffmpeg.display(),
+                ffmpeg_dest.display()
+            )
+        })?;
+        make_executable(&ffmpeg_dest)?;
         Ok(())
     })();
     let cleanup = remove_path_if_exists(&tmp_dir);
@@ -6068,6 +6269,86 @@ mod tests {
         );
         assert!(unix_ripgrep_runtime_stage_plan(&hermes_home, "freebsd", "x64").is_err());
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn windows_ffmpeg_runtime_stage_plan_matches_bundled_archive_contract() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-windows-ffmpeg-runtime-plan-test-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+
+        let plan = windows_ffmpeg_runtime_stage_plan(&hermes_home, "x64").unwrap();
+
+        assert_eq!(plan.archive_name, "ffmpeg-windows-x64.zip");
+        assert_eq!(plan.install_dir, hermes_home.join("bin"));
+        assert_eq!(plan.ffmpeg_exe, hermes_home.join("bin").join("ffmpeg.exe"));
+        assert!(windows_ffmpeg_runtime_stage_plan(&hermes_home, "mips").is_err());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn install_windows_ffmpeg_archive_copies_ffmpeg_exe_from_nested_zip() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-windows-ffmpeg-archive-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive = root.join("ffmpeg.zip");
+        let install_dir = root.join("bin");
+        write_test_zip(&archive, &[("ffmpeg/bin/ffmpeg.exe", b"fake ffmpeg")]);
+
+        install_windows_ffmpeg_archive(&archive, &install_dir).unwrap();
+
+        assert_eq!(
+            std::fs::read(install_dir.join("ffmpeg.exe")).unwrap(),
+            b"fake ffmpeg"
+        );
+        assert!(!install_dir.join("ffmpeg-extracting").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unix_ffmpeg_runtime_stage_plan_matches_bundled_archive_contract() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-unix-ffmpeg-runtime-plan-test-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+
+        let linux = unix_ffmpeg_runtime_stage_plan(&hermes_home, "linux", "x64").unwrap();
+        assert_eq!(linux.archive_name, "ffmpeg-linux-x64.tar.gz");
+        assert_eq!(linux.install_dir, hermes_home.join("bin"));
+        assert_eq!(linux.ffmpeg_bin, hermes_home.join("bin").join("ffmpeg"));
+
+        let macos = unix_ffmpeg_runtime_stage_plan(&hermes_home, "macos", "arm64").unwrap();
+        assert_eq!(macos.archive_name, "ffmpeg-macos-arm64.tar.gz");
+        assert!(unix_ffmpeg_runtime_stage_plan(&hermes_home, "freebsd", "x64").is_err());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_unix_ffmpeg_archive_copies_ffmpeg_from_nested_tar_gz() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-unix-ffmpeg-archive-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive = root.join("ffmpeg.tar.gz");
+        write_test_tar_gz(&archive, &[("ffmpeg/bin/ffmpeg", b"fake ffmpeg")]);
+        let install_dir = root.join("bin");
+
+        extract_unix_ffmpeg_tar_gz(&archive, &install_dir).unwrap();
+
+        assert_eq!(
+            std::fs::read(install_dir.join("ffmpeg")).unwrap(),
+            b"fake ffmpeg"
+        );
+        assert!(!install_dir.join("ffmpeg-extracting").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 

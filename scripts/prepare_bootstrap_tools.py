@@ -265,6 +265,13 @@ def archive_target_from_name(name: str) -> tuple[str, str] | None:
         "PortableGit-2.54.0-64-bit.7z.exe": ("windows", "x64"),
         "PortableGit-2.54.0-arm64.7z.exe": ("windows", "arm64"),
         "MinGit-2.54.0-32-bit.zip": ("windows", "x86"),
+        "ffmpeg-windows-x64.zip": ("windows", "x64"),
+        "ffmpeg-windows-arm64.zip": ("windows", "arm64"),
+        "ffmpeg-windows-x86.zip": ("windows", "x86"),
+        "ffmpeg-linux-x64.tar.gz": ("linux", "x64"),
+        "ffmpeg-linux-arm64.tar.gz": ("linux", "arm64"),
+        "ffmpeg-macos-x64.tar.gz": ("macos", "x64"),
+        "ffmpeg-macos-arm64.tar.gz": ("macos", "arm64"),
     }
     return known_targets.get(name)
 
@@ -280,6 +287,8 @@ def archive_tool_kind_from_name(name: str) -> str | None:
         return "ripgrep"
     if name.startswith(("PortableGit-", "MinGit-")):
         return "git"
+    if name.startswith("ffmpeg-"):
+        return "ffmpeg"
     return None
 
 

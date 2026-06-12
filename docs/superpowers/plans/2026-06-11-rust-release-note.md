@@ -30,6 +30,8 @@ User-visible behavior:
   The installer validates their manifest schema, HTTPS URLs, target platform and architecture labels, size, and SHA-256
   before use; release validation rejects platform or architecture labels that do not match the archive name or the
   installer platform being uploaded.
+- Optional reviewed ffmpeg archives can now use `ffmpeg-<platform>-<arch>` names under `bootstrap-tools/`; native
+  setup installs them before package-manager recovery when present and manifest-verified.
 - Native bootstrap diagnostics now preserve npm and Unix package-manager failure output, including permission hints for
   Hermes-managed npm cache and `node_modules` paths.
 - Native and script-fallback desktop packaging now direct Electron download/build caches into
@@ -60,8 +62,9 @@ Compatibility and fallback:
 - Script fallback is still used for unsupported platforms, denied or interactive privilege escalation, unrecognized
   package managers/distributions, failed package-manager recovery, and cases where both native pip and uv targeted SDK
   installs fail.
-- `ffmpeg` and Playwright browser downloads when no system browser is available are not bundled by default; they remain
-  download or package-manager work unless the release-size and security-update tradeoff is explicitly accepted later.
+- `ffmpeg` and Playwright browser downloads when no system browser is available are not bundled by default; ffmpeg now
+  has an optional audited archive path, while automatic bundling still waits for an explicit release-size and
+  security-update decision.
 
 Operational note:
 

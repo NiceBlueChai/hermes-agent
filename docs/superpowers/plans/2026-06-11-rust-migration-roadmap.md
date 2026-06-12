@@ -346,6 +346,9 @@ language-specific setup where needed.
 - Unix `system-packages` now installs missing `ffmpeg` through Rust-planned package-manager commands on common
   Linux/macOS/Termux targets after the native ripgrep archive path runs, preserving shell fallback for unsupported
   distributions, denied privileges, and package-manager failures.
+- Native Windows/Linux/macOS `system-packages` can now consume optional manifest-verified `ffmpeg-<platform>-<arch>`
+  archives from `bootstrap-tools/` before package-manager recovery, so a later release can bundle ffmpeg without
+  changing the installer control flow or dropping existing fallback behavior.
 - Linux distro detection now uses both `ID` and `ID_LIKE` from `/etc/os-release`, so derivative distributions can use
   the native apt/dnf/pacman/zypper recovery paths for Git, ffmpeg, and Playwright system libraries.
 - Native Unix Git and package-manager recovery failures now capture stdout/stderr in the Rust error message, so GUI

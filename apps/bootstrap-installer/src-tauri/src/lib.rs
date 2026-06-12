@@ -597,6 +597,9 @@ fn bootstrap_tool_archive_target(name: &str) -> Option<(&'static str, &'static s
         "uv-i686-pc-windows-msvc.zip"
         | "ripgrep-15.1.0-i686-pc-windows-msvc.zip"
         | "MinGit-2.54.0-32-bit.zip" => Some(("windows", "x86")),
+        "ffmpeg-windows-x64.zip" => Some(("windows", "x64")),
+        "ffmpeg-windows-arm64.zip" => Some(("windows", "arm64")),
+        "ffmpeg-windows-x86.zip" => Some(("windows", "x86")),
         "uv-x86_64-unknown-linux-gnu.tar.gz"
         | "ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz" => Some(("linux", "x64")),
         "uv-aarch64-unknown-linux-gnu.tar.gz"
@@ -605,6 +608,10 @@ fn bootstrap_tool_archive_target(name: &str) -> Option<(&'static str, &'static s
         | "ripgrep-15.1.0-x86_64-apple-darwin.tar.gz" => Some(("macos", "x64")),
         "uv-aarch64-apple-darwin.tar.gz"
         | "ripgrep-15.1.0-aarch64-apple-darwin.tar.gz" => Some(("macos", "arm64")),
+        "ffmpeg-linux-x64.tar.gz" => Some(("linux", "x64")),
+        "ffmpeg-linux-arm64.tar.gz" => Some(("linux", "arm64")),
+        "ffmpeg-macos-x64.tar.gz" => Some(("macos", "x64")),
+        "ffmpeg-macos-arm64.tar.gz" => Some(("macos", "arm64")),
         _ => None,
     }
 }
@@ -622,6 +629,9 @@ fn bootstrap_tool_archive_kind(name: &str) -> Option<&'static str> {
     }
     if name.starts_with("PortableGit-") || name.starts_with("MinGit-") {
         return Some("git");
+    }
+    if name.starts_with("ffmpeg-") {
+        return Some("ffmpeg");
     }
     None
 }
@@ -831,10 +841,10 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        bootstrap_self_check_report, expected_self_check_commit, force_setup_from_args,
+        bootstrap_self_check_report, bootstrap_tool_archive_kind, bootstrap_tool_archive_target,
+        expected_self_check_commit, force_setup_from_args, required_bootstrap_tool_kinds,
         self_check_bootstrap_tools_arch, self_check_bootstrap_tools_platform,
-        self_check_wheelhouse_arch, self_check_wheelhouse_dir, self_check_wheelhouse_platform,
-        AppMode,
+        self_check_wheelhouse_arch, self_check_wheelhouse_dir, self_check_wheelhouse_platform, AppMode,
     };
     use std::path::PathBuf;
 
@@ -1520,6 +1530,27 @@ mod tests {
             .any(|err| err.contains("missing required bootstrap tool archive: git")));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn self_check_knows_optional_ffmpeg_bootstrap_archive_targets() {
+        assert_eq!(
+            bootstrap_tool_archive_target("ffmpeg-windows-x64.zip"),
+            Some(("windows", "x64"))
+        );
+        assert_eq!(
+            bootstrap_tool_archive_target("ffmpeg-linux-arm64.tar.gz"),
+            Some(("linux", "arm64"))
+        );
+        assert_eq!(
+            bootstrap_tool_archive_target("ffmpeg-macos-x64.tar.gz"),
+            Some(("macos", "x64"))
+        );
+        assert_eq!(
+            bootstrap_tool_archive_kind("ffmpeg-macos-x64.tar.gz"),
+            Some("ffmpeg")
+        );
+        assert!(!required_bootstrap_tool_kinds("linux", "x64").contains("ffmpeg"));
     }
 
     #[test]

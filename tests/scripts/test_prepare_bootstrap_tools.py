@@ -148,6 +148,20 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             {"node", "ripgrep", "uv"},
         )
 
+    def test_ffmpeg_archive_names_have_target_metadata_without_being_required(self):
+        module = _load_script_module()
+
+        self.assertEqual(
+            module.archive_target_from_name("ffmpeg-windows-x64.zip"),
+            ("windows", "x64"),
+        )
+        self.assertEqual(
+            module.archive_target_from_name("ffmpeg-linux-arm64.tar.gz"),
+            ("linux", "arm64"),
+        )
+        self.assertEqual(module.archive_tool_kind_from_name("ffmpeg-macos-x64.tar.gz"), "ffmpeg")
+        self.assertNotIn("ffmpeg", module.required_tool_kinds_for_target("macos", "x64"))
+
     def test_manifest_records_archive_platform_size_and_sha256(self):
         module = _load_script_module()
         root = Path("tmp-bootstrap-tools-test")
