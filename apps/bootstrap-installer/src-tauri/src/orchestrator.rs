@@ -94,6 +94,13 @@ pub struct NodeDependenciesStagePlan {
     pub tui_dir: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlaywrightInstallPlan {
+    npx_args: Vec<String>,
+    system_package_commands: Vec<UnixPackageInstallCommandPlan>,
+    system_deps: String,
+}
+
 /// Native desktop build stage execution plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopBuildStagePlan {
@@ -1893,7 +1900,7 @@ pub async fn install_unix_system_packages_stage(
             &distro,
             &["ffmpeg"],
             current_process_is_root(),
-            find_executable_on_path("sudo", &refreshed_path, "").is_some(),
+            noninteractive_sudo_available(&refreshed_path),
             find_executable_on_path("brew", &refreshed_path, "").is_some(),
         )?;
         for command in &commands {
@@ -2004,7 +2011,7 @@ pub async fn install_unix_git_runtime_stage() -> Result<serde_json::Value> {
         target_os,
         &distro,
         current_process_is_root(),
-        find_executable_on_path("sudo", &path_env, "").is_some(),
+        noninteractive_sudo_available(&path_env),
         find_executable_on_path("brew", &path_env, "").is_some(),
     )?;
     for command in &commands {
@@ -2083,6 +2090,22 @@ fn unix_package_command_display(command: &UnixPackageInstallCommandPlan) -> Stri
         return command.program.clone();
     }
     format!("{} {}", command.program, command.args.join(" "))
+}
+
+fn noninteractive_sudo_available<P>(path_env: P) -> bool
+where
+    P: AsRef<OsStr>,
+{
+    let Some(sudo) = find_executable_on_path("sudo", path_env, "") else {
+        return false;
+    };
+    Command::new(sudo)
+        .args(["-n", "true"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 fn current_linux_distro_id() -> Option<String> {
@@ -2282,14 +2305,92 @@ where
     })
 }
 
-/// Install Node dependencies natively for platforms with no OS package-manager browser fallback.
+fn playwright_install_plan(
+    target_os: &str,
+    distro: &str,
+    user_is_root: bool,
+    sudo_available: bool,
+) -> Result<PlaywrightInstallPlan> {
+    let mut npx_args = vec![
+        "--yes".to_string(),
+        "playwright".to_string(),
+        "install".to_string(),
+    ];
+    let mut system_package_commands = Vec::new();
+    let mut system_deps = "browser-only".to_string();
+    if target_os == "linux" && playwright_apt_distro_supports_with_deps(distro) {
+        if user_is_root || sudo_available {
+            npx_args.push("--with-deps".to_string());
+            system_deps = "playwright-with-deps".to_string();
+        }
+    } else if target_os == "linux"
+        && playwright_arch_distro_supports_pacman_deps(distro)
+        && (user_is_root || sudo_available)
+    {
+        system_package_commands.push(unix_privileged_package_install_command(
+            user_is_root,
+            sudo_available,
+            "pacman",
+            &["-S", "--noconfirm", "--needed"],
+            playwright_arch_system_packages(),
+        )?);
+        system_deps = "pacman".to_string();
+    }
+    npx_args.push("chromium".to_string());
+    Ok(PlaywrightInstallPlan {
+        npx_args,
+        system_package_commands,
+        system_deps,
+    })
+}
+
+fn playwright_apt_distro_supports_with_deps(distro: &str) -> bool {
+    matches!(
+        distro,
+        "ubuntu"
+            | "debian"
+            | "raspbian"
+            | "pop"
+            | "linuxmint"
+            | "elementary"
+            | "zorin"
+            | "kali"
+            | "parrot"
+    )
+}
+
+fn playwright_arch_distro_supports_pacman_deps(distro: &str) -> bool {
+    matches!(
+        distro,
+        "arch" | "manjaro" | "cachyos" | "endeavouros" | "garuda"
+    )
+}
+
+fn playwright_arch_system_packages() -> &'static [&'static str] {
+    &[
+        "nss",
+        "atk",
+        "at-spi2-core",
+        "cups",
+        "libdrm",
+        "libxkbcommon",
+        "mesa",
+        "pango",
+        "cairo",
+        "alsa-lib",
+    ]
+}
+
+/// Install Node dependencies natively with platform-specific browser dependency recovery.
 pub fn install_node_dependencies_stage(
     install_root: &Path,
     hermes_home: &Path,
 ) -> Result<serde_json::Value> {
     let path_env = std::env::var_os("PATH").unwrap_or_default();
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
-    let plan = node_dependencies_stage_plan(install_root, hermes_home, path_env, &pathext)?;
+    let plan = node_dependencies_stage_plan(install_root, hermes_home, &path_env, &pathext)?;
+    let mut playwright_system_deps = "skipped".to_string();
+    let mut playwright_system_commands = Vec::new();
     if plan.browser_tools {
         run_node_dependency_command(
             &plan.npm,
@@ -2303,9 +2404,30 @@ pub fn install_node_dependencies_stage(
             .npx
             .as_ref()
             .ok_or_else(|| anyhow!("npx is not available"))?;
-        run_node_dependency_command(
+        let distro = if std::env::consts::OS == "linux" {
+            current_linux_distro_id().unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let playwright_plan = playwright_install_plan(
+            std::env::consts::OS,
+            &distro,
+            current_process_is_root(),
+            noninteractive_sudo_available(&path_env),
+        )?;
+        for command in &playwright_plan.system_package_commands {
+            run_unix_system_package_install_command(command)
+                .context("installing Playwright system dependencies")?;
+        }
+        playwright_system_deps = playwright_plan.system_deps.clone();
+        playwright_system_commands = playwright_plan
+            .system_package_commands
+            .iter()
+            .map(unix_package_command_display)
+            .collect::<Vec<_>>();
+        run_node_dependency_command_args(
             npx,
-            ["--yes", "playwright", "install", "chromium"],
+            &playwright_plan.npx_args,
             &plan.cwd,
             &plan.npm_cache_dir,
             Some(&plan.playwright_browsers_dir),
@@ -2327,6 +2449,8 @@ pub fn install_node_dependencies_stage(
         "npx": plan.npx,
         "npmCacheDir": plan.npm_cache_dir,
         "playwrightBrowsersDir": plan.playwright_browsers_dir,
+        "playwrightSystemDeps": playwright_system_deps,
+        "playwrightSystemCommands": playwright_system_commands,
         "browserTools": plan.browser_tools,
         "tui": plan.tui_dir.is_some(),
     }))
@@ -3643,6 +3767,23 @@ where
 fn run_node_dependency_command<const N: usize>(
     command: &Path,
     args: [&str; N],
+    cwd: &Path,
+    npm_cache_dir: &Path,
+    playwright_browsers_dir: Option<&Path>,
+) -> Result<()> {
+    let args = args.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();
+    run_node_dependency_command_args(
+        command,
+        &args,
+        cwd,
+        npm_cache_dir,
+        playwright_browsers_dir,
+    )
+}
+
+fn run_node_dependency_command_args(
+    command: &Path,
+    args: &[String],
     cwd: &Path,
     npm_cache_dir: &Path,
     playwright_browsers_dir: Option<&Path>,
@@ -5040,6 +5181,64 @@ mod tests {
         assert!(err.to_string().contains("install root does not exist"));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn playwright_install_plan_matches_linux_system_dependency_recovery() {
+        let debian = playwright_install_plan("linux", "debian", false, true)
+            .expect("Debian with sudo should use Playwright with-deps");
+        assert_eq!(
+            debian.npx_args,
+            vec!["--yes", "playwright", "install", "--with-deps", "chromium"]
+        );
+        assert_eq!(debian.system_package_commands, Vec::new());
+        assert_eq!(debian.system_deps, "playwright-with-deps");
+
+        let debian_without_sudo = playwright_install_plan("linux", "ubuntu", false, false)
+            .expect("Ubuntu without sudo should keep browser-only install");
+        assert_eq!(
+            debian_without_sudo.npx_args,
+            vec!["--yes", "playwright", "install", "chromium"]
+        );
+        assert_eq!(debian_without_sudo.system_package_commands, Vec::new());
+        assert_eq!(debian_without_sudo.system_deps, "browser-only");
+
+        let arch = playwright_install_plan("linux", "arch", true, false)
+            .expect("Arch root install should plan pacman system dependencies");
+        assert_eq!(arch.npx_args, vec!["--yes", "playwright", "install", "chromium"]);
+        assert_eq!(arch.system_deps, "pacman");
+        assert_eq!(
+            arch.system_package_commands,
+            vec![UnixPackageInstallCommandPlan {
+                program: "pacman".to_string(),
+                args: vec![
+                    "-S".to_string(),
+                    "--noconfirm".to_string(),
+                    "--needed".to_string(),
+                    "nss".to_string(),
+                    "atk".to_string(),
+                    "at-spi2-core".to_string(),
+                    "cups".to_string(),
+                    "libdrm".to_string(),
+                    "libxkbcommon".to_string(),
+                    "mesa".to_string(),
+                    "pango".to_string(),
+                    "cairo".to_string(),
+                    "alsa-lib".to_string(),
+                ],
+            }]
+        );
+
+        let fedora = playwright_install_plan("linux", "fedora", true, false)
+            .expect("Fedora should keep browser-only install and script/manual recovery");
+        assert_eq!(fedora.npx_args, vec!["--yes", "playwright", "install", "chromium"]);
+        assert_eq!(fedora.system_package_commands, Vec::new());
+        assert_eq!(fedora.system_deps, "browser-only");
+
+        let macos = playwright_install_plan("macos", "", false, false)
+            .expect("macOS should keep browser-only install");
+        assert_eq!(macos.npx_args, vec!["--yes", "playwright", "install", "chromium"]);
+        assert_eq!(macos.system_package_commands, Vec::new());
     }
 
     #[test]

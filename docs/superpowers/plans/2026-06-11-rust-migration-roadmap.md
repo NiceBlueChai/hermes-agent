@@ -270,6 +270,9 @@ language-specific setup where needed.
   npm's install cache under Hermes-managed repair/uninstall roots instead of the user's global npm cache.
 - Native Playwright Chromium install now sets `PLAYWRIGHT_BROWSERS_PATH=$HERMES_HOME/playwright-browsers`, and the
   browser tool uses the same managed path by default when no explicit Playwright browser path is configured.
+- Native Playwright Chromium install now mirrors the Linux shell recovery for apt-family distributions by using
+  Playwright's `--with-deps` path when root or non-interactive sudo is available, and mirrors the Arch-family recovery
+  by installing the same pacman system libraries before the browser download.
 - Script fallback for `node-deps` and desktop npm stages now receives the same managed npm cache and Playwright browser
   path environment where applicable, so native fallback does not spill browser/runtime caches back into global user
   locations.
@@ -284,8 +287,8 @@ language-specific setup where needed.
 - Windows `node-deps` now has a Rust native-first path for root npm dependencies, Playwright Chromium, and TUI npm
   dependencies, while preserving the PowerShell stage as fallback for missing `npx` or failed npm/Playwright commands.
 - macOS `node-deps` now uses the same Rust native-first npm/Playwright/TUI dependency path as Windows, while Linux
-  now uses the same native-first path; Linux keeps script fallback so distribution-specific Playwright system-library
-  recovery remains intact when the native npm/Playwright path fails.
+  now uses the same native-first path; Linux keeps script fallback for failed npm/Playwright commands and for RPM,
+  zypper, or unknown distribution Playwright system-library recovery.
 - `desktop` now uses a Rust no-op skip when `apps/desktop/package.json` is absent, matching the existing script
   behavior without starting PowerShell or bash for a stage that can only skip.
 - Windows `desktop` now has a Rust native-first build path for workspace npm install and `npm run pack`, verifies the
@@ -319,9 +322,10 @@ language-specific setup where needed.
 
 **Still script-backed:**
 - Recovery tiers remain script-backed for failure cases that still need package-manager or mirror-specific handling:
-  Python dependency fallback when `uv sync --locked` cannot complete, Linux Playwright system-library recovery,
-  Electron/npm cache purge and mirror recovery, privileged Linux `chrome-sandbox` repair, unsupported or failed Unix
-  package-manager recovery, and messaging-platform SDK recovery if the native targeted pip path fails.
+  Python dependency fallback when `uv sync --locked` cannot complete, RPM/zypper/unknown Linux Playwright
+  system-library recovery, Electron/npm cache purge and mirror recovery, privileged Linux `chrome-sandbox` repair,
+  unsupported or failed Unix package-manager recovery, and messaging-platform SDK recovery if the native targeted pip
+  path fails.
 - Fresh archive installs and archive updates do not require Git. Unix Git acquisition now has a native-first package
   manager path for common Linux/macOS/Termux setups, while unsupported distro handling, macOS CLT dialog recovery, and
   package-manager failures remain shell fallbacks.
