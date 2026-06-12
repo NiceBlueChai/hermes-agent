@@ -556,6 +556,9 @@ language-specific setup where needed.
   manifest the complete allow-list for bundled archives while allowing repository metadata files such as README/.gitignore.
 - Bootstrap-tools release validation now requires each target platform/architecture manifest to include every expected
   runtime tool kind: Node, uv, ripgrep, and Git on Windows; Node, uv, and ripgrep on Linux/macOS.
+- The no-UI installer self-check now enforces the same required bootstrap-tool kind set when release workflows pass a
+  target platform and architecture, so a packaged binary fails before upload if Node, uv, ripgrep, or Windows Git is
+  missing from `bootstrap-tools/`.
 - Native and script-fallback desktop packaging now set Electron download/build caches to
   `HERMES_HOME/electron-cache`, and `hermes-manager` treats that directory as installer-owned runtime state for repair
   and lite uninstall.

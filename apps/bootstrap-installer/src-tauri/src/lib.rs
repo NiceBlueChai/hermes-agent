@@ -294,6 +294,7 @@ fn validate_bootstrap_tools_for_self_check(
     for name in ALLOWED_BOOTSTRAP_TOOLS_METADATA {
         expected.insert(name.to_string());
     }
+    let mut seen_tool_kinds = std::collections::BTreeSet::new();
     for archive in archives {
         let name = archive
             .get("name")
@@ -337,6 +338,9 @@ fn validate_bootstrap_tools_for_self_check(
             if platform != expected_platform || arch != expected_arch {
                 return Err(format!("bootstrap tool archive target mismatch: {name}"));
             }
+        }
+        if let Some(tool_kind) = bootstrap_tool_archive_kind(name) {
+            seen_tool_kinds.insert(tool_kind);
         }
         let url = archive
             .get("url")
@@ -391,6 +395,18 @@ fn validate_bootstrap_tools_for_self_check(
         }
         if !entry.path().is_file() {
             return Err(format!("bootstrap tool payload is not a file: {name}"));
+        }
+    }
+    if let (Some(expected_platform), Some(expected_arch)) = (expected_platform, expected_arch) {
+        let missing_kinds: Vec<_> = required_bootstrap_tool_kinds(expected_platform, expected_arch)
+            .difference(&seen_tool_kinds)
+            .copied()
+            .collect();
+        if !missing_kinds.is_empty() {
+            return Err(format!(
+                "missing required bootstrap tool archive: {}",
+                missing_kinds.join(", ")
+            ));
         }
     }
     Ok(archives.len())
@@ -591,6 +607,35 @@ fn bootstrap_tool_archive_target(name: &str) -> Option<(&'static str, &'static s
         | "ripgrep-15.1.0-aarch64-apple-darwin.tar.gz" => Some(("macos", "arm64")),
         _ => None,
     }
+}
+
+/// Infers the runtime tool provided by a bootstrap archive name.
+fn bootstrap_tool_archive_kind(name: &str) -> Option<&'static str> {
+    if name.starts_with("node-v") {
+        return Some("node");
+    }
+    if name.starts_with("uv-") {
+        return Some("uv");
+    }
+    if name.starts_with("ripgrep-15.1.0-") {
+        return Some("ripgrep");
+    }
+    if name.starts_with("PortableGit-") || name.starts_with("MinGit-") {
+        return Some("git");
+    }
+    None
+}
+
+/// Returns the runtime tools that a release target must carry in bootstrap-tools.
+fn required_bootstrap_tool_kinds(
+    platform: &str,
+    _arch: &str,
+) -> std::collections::BTreeSet<&'static str> {
+    let mut kinds = std::collections::BTreeSet::from(["node", "uv", "ripgrep"]);
+    if platform == "windows" {
+        kinds.insert("git");
+    }
+    kinds
 }
 
 fn bootstrap_tool_name_is_plain_file(name: &str) -> bool {
@@ -1398,6 +1443,81 @@ mod tests {
             .errors
             .iter()
             .any(|err| err.contains("unexpected bootstrap tool platform")));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn self_check_bootstrap_tools_rejects_missing_required_release_tool() {
+        let root = unique_tmp_dir("tools-required");
+        let tools = root.join("bootstrap-tools");
+        std::fs::create_dir_all(&tools).unwrap();
+
+        let node_name = "node-v22.0.0-win-x64.zip";
+        let uv_name = "uv-x86_64-pc-windows-msvc.zip";
+        let ripgrep_name = "ripgrep-15.1.0-x86_64-pc-windows-msvc.zip";
+        let node_bytes = b"node archive";
+        let uv_bytes = b"uv archive";
+        let ripgrep_bytes = b"ripgrep archive";
+        std::fs::write(tools.join(node_name), node_bytes).unwrap();
+        std::fs::write(tools.join(uv_name), uv_bytes).unwrap();
+        std::fs::write(tools.join(ripgrep_name), ripgrep_bytes).unwrap();
+
+        let node_sha256 = crate::artifact::sha256_hex(node_bytes);
+        let uv_sha256 = crate::artifact::sha256_hex(uv_bytes);
+        let ripgrep_sha256 = crate::artifact::sha256_hex(ripgrep_bytes);
+        std::fs::write(
+            tools.join("bootstrap-tools-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "archives": [
+    {{
+      "arch": "x64",
+      "platform": "windows",
+      "name": "{node_name}",
+      "url": "https://example.invalid/node.zip",
+      "sizeBytes": 12,
+      "sha256": "{node_sha256}"
+    }},
+    {{
+      "arch": "x64",
+      "platform": "windows",
+      "name": "{uv_name}",
+      "url": "https://example.invalid/uv.zip",
+      "sizeBytes": 10,
+      "sha256": "{uv_sha256}"
+    }},
+    {{
+      "arch": "x64",
+      "platform": "windows",
+      "name": "{ripgrep_name}",
+      "url": "https://example.invalid/ripgrep.zip",
+      "sizeBytes": 15,
+      "sha256": "{ripgrep_sha256}"
+    }}
+  ]
+}}
+"#
+            ),
+        )
+        .unwrap();
+
+        let report = bootstrap_self_check_report(
+            Some("abcdef1234567890"),
+            Some("main"),
+            Some(&tools),
+            Some("windows"),
+            Some("x64"),
+            None,
+            None,
+            None,
+        );
+        assert!(!report.ok);
+        assert!(report
+            .errors
+            .iter()
+            .any(|err| err.contains("missing required bootstrap tool archive: git")));
 
         let _ = std::fs::remove_dir_all(&root);
     }
