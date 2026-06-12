@@ -321,6 +321,7 @@ struct BootstrapToolsManifestArchive {
     name: String,
     platform: Option<String>,
     arch: Option<String>,
+    url: Option<String>,
     #[serde(rename = "sizeBytes", default)]
     size_bytes: Option<u64>,
     sha256: String,
@@ -4143,6 +4144,10 @@ fn bootstrap_tools_manifest_archive(
         .and_then(|record| {
             let valid = record.sha256.len() == 64
                 && record.sha256.chars().all(|ch| ch.is_ascii_hexdigit())
+                && record
+                    .url
+                    .as_deref()
+                    .is_some_and(|url| url.starts_with("https://"))
                 && bootstrap_tools_manifest_archive_matches_target(&record, archive_name);
             valid.then_some(record)
         })
@@ -6247,6 +6252,7 @@ mod tests {
                         "arch": "x64",
                         "platform": "windows",
                         "name": "uv-x86_64-pc-windows-msvc.zip",
+                        "url": "https://example.invalid/uv.zip",
                         "sha256": "e6184ce10e266134fdcfa401e8f1a95005bcd4f18d16b62b757323e2833fe9a9"
                     }
                 ]
@@ -6286,6 +6292,7 @@ mod tests {
                         "arch": "x64",
                         "platform": "windows",
                         "name": "uv-x86_64-pc-windows-msvc.zip",
+                        "url": "https://example.invalid/uv.zip",
                         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                     }
                 ]
@@ -6374,6 +6381,42 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_archive_source_rejects_manifest_insecure_url() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-bootstrap-archive-insecure-url-test-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+        let bundled = root.join("resources").join("bootstrap-tools");
+        let archive_name = "uv-x86_64-pc-windows-msvc.zip";
+        std::fs::create_dir_all(&bundled).unwrap();
+        std::fs::write(bundled.join(archive_name), b"uv").unwrap();
+        std::fs::write(
+            bundled.join("bootstrap-tools-manifest.json"),
+            r#"{
+                "schemaVersion": 1,
+                "archives": [
+                    {
+                        "arch": "x64",
+                        "platform": "windows",
+                        "name": "uv-x86_64-pc-windows-msvc.zip",
+                        "url": "http://example.invalid/uv.zip",
+                        "sha256": "e6184ce10e266134fdcfa401e8f1a95005bcd4f18d16b62b757323e2833fe9a9"
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let source = resolve_bootstrap_archive_source(&hermes_home, Some(&bundled), archive_name);
+
+        assert_eq!(source.kind, BootstrapArchiveSourceKind::Cache);
+        assert_eq!(source.expected_sha256, None);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn bootstrap_archive_source_rejects_unsupported_tools_manifest_schema() {
         let root = std::env::temp_dir().join(format!(
             "hermes-bootstrap-archive-schema-source-test-{}",
@@ -6426,6 +6469,7 @@ mod tests {
                         "arch": "x64",
                         "platform": "windows",
                         "name": "uv-x86_64-pc-windows-msvc.zip",
+                        "url": "https://example.invalid/uv.zip",
                         "sizeBytes": 99,
                         "sha256": "e6184ce10e266134fdcfa401e8f1a95005bcd4f18d16b62b757323e2833fe9a9"
                     }

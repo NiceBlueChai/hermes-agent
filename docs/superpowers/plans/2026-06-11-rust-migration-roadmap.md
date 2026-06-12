@@ -601,6 +601,8 @@ language-specific setup where needed.
   runtime archive update path auditable alongside size and SHA-256.
 - Archive URLs in the retained bootstrap-tools manifest must be HTTPS, so release review cannot accidentally accept an
   insecure update source for a packaged runtime archive.
+- Runtime bootstrap archive selection now also requires each manifest archive URL to be HTTPS before trusting a bundled
+  payload, preserving the release audit contract even if a local manifest is hand-edited.
 - The same gate requires every archive record to retain its target architecture label, preserving review visibility for
   mixed Windows/Linux/macOS bootstrap-tool bundles.
 - Bootstrap-tools manifests now also retain an explicit target platform per archive, and both the release helper and
