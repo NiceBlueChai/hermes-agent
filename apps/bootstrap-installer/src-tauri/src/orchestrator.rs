@@ -4558,16 +4558,7 @@ fn bootstrap_tools_manifest_archive_matches_target(
     archive_name: &str,
 ) -> bool {
     let Some(target) = bootstrap_archive_target_from_name(archive_name) else {
-        return record
-            .platform
-            .as_deref()
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false)
-            && record
-                .arch
-                .as_deref()
-                .map(|value| !value.trim().is_empty())
-                .unwrap_or(false);
+        return false;
     };
     record.platform.as_deref() == Some(target.platform)
         && record.arch.as_deref() == Some(target.arch)
@@ -7684,6 +7675,43 @@ mod tests {
                         "platform": "linux",
                         "name": "uv-x86_64-pc-windows-msvc.zip",
                         "sha256": "e6184ce10e266134fdcfa401e8f1a95005bcd4f18d16b62b757323e2833fe9a9"
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let source = resolve_bootstrap_archive_source(&hermes_home, Some(&bundled), archive_name);
+
+        assert_eq!(source.kind, BootstrapArchiveSourceKind::Cache);
+        assert_eq!(source.expected_sha256, None);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn bootstrap_archive_source_rejects_manifest_unknown_archive_kind() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-bootstrap-archive-unknown-source-test-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+        let bundled = root.join("resources").join("bootstrap-tools");
+        let archive_name = "mystery-cache-windows-x64.zip";
+        std::fs::create_dir_all(&bundled).unwrap();
+        std::fs::write(bundled.join(archive_name), b"mystery").unwrap();
+        std::fs::write(
+            bundled.join("bootstrap-tools-manifest.json"),
+            r#"{
+                "schemaVersion": 1,
+                "archives": [
+                    {
+                        "arch": "x64",
+                        "platform": "windows",
+                        "name": "mystery-cache-windows-x64.zip",
+                        "url": "https://example.invalid/mystery.zip",
+                        "sizeBytes": 7,
+                        "sha256": "3a9b4d1fbcde9f49222bc6e7b643acbb81db499b7cb4f17a1f2a1720141e56c9"
                     }
                 ]
             }"#,

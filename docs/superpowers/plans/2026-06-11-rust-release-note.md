@@ -32,6 +32,8 @@ User-visible behavior:
   installer platform being uploaded.
 - Release validation now also rejects unknown bootstrap-tool archive names, so every bundled payload must be one of the
   registered runtime tools or optional cache archives before it can ship.
+- The installer applies the same known-archive-name rule at runtime before trusting bundled bootstrap-tool archives or
+  their manifest-sourced checksum metadata.
 - Rust bootstrap archive resolution now requires a complete manifest record, including `sizeBytes`, before trusting
   bundled files or cache checksum metadata, matching the stricter script recovery path.
 - Bundled Node.js archive selection now also ignores unmanifested files, so stray resource-directory archives cannot
