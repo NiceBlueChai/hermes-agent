@@ -77,7 +77,12 @@ jobs:
         env:
           HERMES_AUDITED_ARCHIVE: ${{ inputs['audited-archive'] }}
         run: |
-          $args = @("scripts/prepare_bootstrap_tools.py", "--arch", "x64")
+          $args = @(
+            "scripts/prepare_bootstrap_tools.py",
+            "--arch",
+            "x64",
+            "--bundle-playwright-browsers"
+          )
           if ($env:HERMES_AUDITED_ARCHIVE) {
             $args += @("--audited-archive", "$env:HERMES_AUDITED_ARCHIVE")
           }

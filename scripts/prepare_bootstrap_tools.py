@@ -15,8 +15,12 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
+import tarfile
+import tempfile
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -410,6 +414,117 @@ def prepare_audited_archives(
     return prepared
 
 
+def playwright_browser_archive_name(platform: str, arch: str) -> str:
+    """Return the portable Playwright browser cache archive name for one target."""
+
+    normalized_platform = "macos" if platform == "darwin" else platform
+    if normalized_platform == "windows":
+        extension = "zip"
+    elif normalized_platform in {"linux", "macos"}:
+        extension = "tar.gz"
+    else:
+        raise ValueError(f"unsupported Playwright browser platform: {platform}")
+    name = f"playwright-browsers-{normalized_platform}-{arch}.{extension}"
+    if archive_target_from_name(name) is None:
+        raise ValueError(f"unsupported Playwright browser archive target: {normalized_platform}-{arch}")
+    return name
+
+
+def default_playwright_browser_source_url() -> str:
+    """Return an HTTPS source trace URL for locally generated Playwright browser archives."""
+
+    server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+    repository = os.environ.get("GITHUB_REPOSITORY")
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    if repository and run_id:
+        return f"{server_url}/{repository}/actions/runs/{run_id}"
+    if repository:
+        return f"{server_url}/{repository}"
+    return "https://github.com/NousResearch/Hermes-Agent"
+
+
+def install_playwright_chromium(cache_dir: Path, cwd: Path) -> None:
+    """Install Playwright Chromium into the supplied browser cache directory."""
+
+    env = os.environ.copy()
+    env["PLAYWRIGHT_BROWSERS_PATH"] = str(cache_dir)
+    subprocess.run(
+        ["npx", "--yes", "playwright", "install", "chromium"],
+        cwd=cwd,
+        env=env,
+        check=True,
+    )
+
+
+def playwright_cache_has_chromium(cache_dir: Path) -> bool:
+    """Return true when a Playwright browser cache contains Chromium payloads."""
+
+    if not cache_dir.is_dir():
+        return False
+    return any(
+        path.is_dir()
+        and (path.name.startswith("chromium-") or path.name.startswith("chromium_headless_shell-"))
+        for path in cache_dir.iterdir()
+    )
+
+
+def write_playwright_browser_archive(cache_dir: Path, archive_path: Path) -> None:
+    """Archive one Playwright browser cache under a stable playwright-browsers/ root."""
+
+    members = sorted(path for path in cache_dir.rglob("*") if path.is_file())
+    if not members:
+        raise RuntimeError(f"Playwright browser cache has no files: {cache_dir}")
+    tmp = archive_path.with_name(f"{archive_path.name}.tmp")
+    tmp.unlink(missing_ok=True)
+    if archive_path.name.endswith(".zip"):
+        with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
+            for path in members:
+                rel = path.relative_to(cache_dir).as_posix()
+                archive.write(path, f"playwright-browsers/{rel}")
+    elif archive_path.name.endswith(".tar.gz"):
+        with tarfile.open(tmp, "w:gz") as archive:
+            for path in members:
+                rel = path.relative_to(cache_dir).as_posix()
+                archive.add(path, arcname=f"playwright-browsers/{rel}")
+    else:
+        raise RuntimeError(f"unsupported Playwright browser archive format: {archive_path.name}")
+    os.replace(tmp, archive_path)
+
+
+def prepare_playwright_browser_archive(
+    output_dir: Path,
+    platform: str,
+    arch: str,
+    force: bool,
+    dry_run: bool,
+    source_url: str | None = None,
+) -> list[PreparedArchive]:
+    """Build a manifest-ready Playwright browser cache archive for one release target."""
+
+    normalized_platform = "macos" if platform == "darwin" else platform
+    archive_name = playwright_browser_archive_name(normalized_platform, arch)
+    source_url = source_url or default_playwright_browser_source_url()
+    if not source_url.startswith("https://"):
+        raise ValueError("Playwright browser archive source URL must be HTTPS")
+    spec = ArchiveSpec(name=archive_name, url=source_url)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    dest = output_dir / archive_name
+    if dry_run:
+        print(f"[bootstrap-tools] would bundle Playwright browsers as {archive_name}")
+        return []
+    if dest.is_file() and dest.stat().st_size > 0 and not force:
+        print(f"[bootstrap-tools] keep {dest}")
+        return [prepared_archive_record(normalized_platform, arch, spec, dest)]
+
+    with tempfile.TemporaryDirectory(prefix="hermes-playwright-browsers-") as tmp:
+        cache_dir = Path(tmp) / "playwright-browsers"
+        install_playwright_chromium(cache_dir, REPO_ROOT)
+        if not playwright_cache_has_chromium(cache_dir):
+            raise RuntimeError("Playwright Chromium install did not create a Chromium browser cache")
+        write_playwright_browser_archive(cache_dir, dest)
+    return [prepared_archive_record(normalized_platform, arch, spec, dest)]
+
+
 def write_manifest(output_dir: Path, archives: list[PreparedArchive]) -> Path:
     """Write the bundled tool archive manifest consumed by release reviewers."""
 
@@ -521,6 +636,8 @@ def prepare_archives(
     platform: str = "windows",
     local_archives: list[str] | None = None,
     audited_archives: list[str] | None = None,
+    bundle_playwright_browsers: bool = False,
+    playwright_browsers_url: str | None = None,
 ) -> list[PreparedArchive]:
     """Resolve and optionally download all archives for the requested architectures."""
 
@@ -541,6 +658,18 @@ def prepare_archives(
                 downloaded.append(prepared_archive_record(normalized_platform, arch, spec, path))
     downloaded.extend(prepare_local_archives(output_dir, local_archives or [], dry_run))
     downloaded.extend(prepare_audited_archives(output_dir, audited_archives or [], force, dry_run))
+    if bundle_playwright_browsers:
+        for arch in arches:
+            downloaded.extend(
+                prepare_playwright_browser_archive(
+                    output_dir,
+                    normalized_platform,
+                    arch,
+                    force,
+                    dry_run,
+                    playwright_browsers_url,
+                )
+            )
     if downloaded:
         manifest_path = write_manifest(output_dir, downloaded)
         print(f"[bootstrap-tools] wrote manifest {manifest_path}")
@@ -585,6 +714,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Download an explicitly checksummed archive into the manifest, in NAME=HTTPS_URL=SHA256 form.",
     )
+    parser.add_argument(
+        "--bundle-playwright-browsers",
+        action="store_true",
+        help="Install Playwright Chromium and bundle its browser cache as an optional archive.",
+    )
+    parser.add_argument(
+        "--playwright-browsers-url",
+        default=None,
+        help="HTTPS source trace URL recorded for generated Playwright browser cache archives.",
+    )
     return parser.parse_args(argv)
 
 
@@ -606,6 +745,8 @@ def main(argv: list[str] | None = None) -> int:
             args.platform,
             args.local_archive,
             args.audited_archive,
+            args.bundle_playwright_browsers,
+            args.playwright_browsers_url,
         )
     except Exception as exc:
         print(f"[bootstrap-tools] error: {exc}", file=sys.stderr)

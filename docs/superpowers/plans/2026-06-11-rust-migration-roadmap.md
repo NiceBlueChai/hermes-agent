@@ -291,6 +291,9 @@ language-specific setup where needed.
   `playwright-browsers-<platform>-<arch>` archives from `bootstrap-tools/` before running
   `npx playwright install chromium`, so release packages can pre-seed the managed browser cache while keeping the
   existing system-browser and Playwright download fallbacks.
+- `prepare_bootstrap_tools.py --bundle-playwright-browsers` now installs Playwright Chromium into a temporary managed
+  cache and archives it as `playwright-browsers-<platform>-<arch>`, and the Windows/Linux/macOS installer workflows
+  enable that path by default so release artifacts can avoid the browser download during user installation.
 - Script fallback for `node-deps` and desktop npm stages now receives the same managed npm cache and Playwright browser
   path environment where applicable, so native fallback does not spill browser/runtime caches back into global user
   locations.

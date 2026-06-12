@@ -129,6 +129,7 @@ jobs:
                       scripts/prepare_bootstrap_tools.py
                       --platform "${{ matrix.platform }}"
                       --arch "${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}"
+                      --bundle-playwright-browsers
                   )
                   if [ -n "${HERMES_AUDITED_ARCHIVE}" ]; then
                       args+=(--audited-archive "${HERMES_AUDITED_ARCHIVE}")

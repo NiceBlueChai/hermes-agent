@@ -5,7 +5,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import tarfile
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -246,6 +248,89 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             self.assertEqual(module.validate_manifest(output_dir), 1)
         finally:
             module.download_archive = original_download
+            for entry in output_dir.glob("*"):
+                entry.unlink()
+            output_dir.rmdir()
+            root.rmdir()
+
+    def test_prepare_playwright_browser_archive_runs_install_and_manifests_cache(self):
+        module = _load_script_module()
+        root = Path("tmp-bootstrap-tools-playwright-cache-test")
+        output_dir = root / "bootstrap-tools"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        calls = []
+
+        def fake_install(cache_dir, cwd):
+            calls.append((cache_dir, cwd))
+            browser = cache_dir / "chromium-1208" / "chrome-win"
+            browser.mkdir(parents=True)
+            (browser / "chrome.exe").write_bytes(b"chrome")
+
+        original_install = module.install_playwright_chromium
+        module.install_playwright_chromium = fake_install
+        try:
+            prepared = module.prepare_playwright_browser_archive(
+                output_dir,
+                "windows",
+                "x64",
+                force=False,
+                dry_run=False,
+                source_url="https://example.invalid/playwright-cache",
+            )
+            module.write_manifest(output_dir, prepared)
+
+            archive_path = output_dir / "playwright-browsers-windows-x64.zip"
+            self.assertEqual(len(prepared), 1)
+            self.assertEqual(prepared[0].platform, "windows")
+            self.assertEqual(prepared[0].arch, "x64")
+            self.assertEqual(prepared[0].name, "playwright-browsers-windows-x64.zip")
+            self.assertEqual(prepared[0].url, "https://example.invalid/playwright-cache")
+            self.assertTrue(calls)
+            with zipfile.ZipFile(archive_path) as archive:
+                self.assertIn(
+                    "playwright-browsers/chromium-1208/chrome-win/chrome.exe",
+                    archive.namelist(),
+                )
+            self.assertEqual(module.validate_manifest(output_dir), 1)
+        finally:
+            module.install_playwright_chromium = original_install
+            for entry in output_dir.glob("*"):
+                entry.unlink()
+            output_dir.rmdir()
+            root.rmdir()
+
+    def test_prepare_playwright_browser_archive_uses_tar_gz_on_unix(self):
+        module = _load_script_module()
+        root = Path("tmp-bootstrap-tools-playwright-tar-test")
+        output_dir = root / "bootstrap-tools"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        def fake_install(cache_dir, cwd):
+            browser = cache_dir / "chromium_headless_shell-1208"
+            browser.mkdir(parents=True)
+            (browser / "headless_shell").write_bytes(b"shell")
+
+        original_install = module.install_playwright_chromium
+        module.install_playwright_chromium = fake_install
+        try:
+            prepared = module.prepare_playwright_browser_archive(
+                output_dir,
+                "linux",
+                "arm64",
+                force=False,
+                dry_run=False,
+                source_url="https://example.invalid/playwright-cache",
+            )
+
+            archive_path = output_dir / "playwright-browsers-linux-arm64.tar.gz"
+            self.assertEqual(prepared[0].name, "playwright-browsers-linux-arm64.tar.gz")
+            with tarfile.open(archive_path, "r:gz") as archive:
+                self.assertIn(
+                    "playwright-browsers/chromium_headless_shell-1208/headless_shell",
+                    archive.getnames(),
+                )
+        finally:
+            module.install_playwright_chromium = original_install
             for entry in output_dir.glob("*"):
                 entry.unlink()
             output_dir.rmdir()
@@ -727,6 +812,18 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         self.assertNotIn("inputs.linux-audited-archive", unix_workflow)
         self.assertNotIn("inputs.macos-audited-archive", unix_workflow)
         self.assertIn("--audited-archive \"${HERMES_AUDITED_ARCHIVE}\"", unix_workflow)
+
+    def test_installer_workflows_bundle_playwright_browser_cache(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('"--bundle-playwright-browsers"', windows_workflow)
+        self.assertIn("--bundle-playwright-browsers", unix_workflow)
 
     def test_installer_workflows_pin_bootstrap_builds_to_current_commit(self):
         repo_root = Path(__file__).resolve().parents[2]
