@@ -57,6 +57,9 @@ enum Command {
         /// Also remove the Electron desktop userData directory.
         #[arg(long)]
         user_data: bool,
+        /// Also remove Linux desktop launcher entries.
+        #[arg(long)]
+        desktop_entries: bool,
     },
     /// Plan PATH changes needed to expose the Hermes command.
     PlanPath {
@@ -269,15 +272,27 @@ fn run() -> hermes_manager::Result<()> {
                 println!("repair_clean=ok");
             }
         }
-        Command::UninstallGuiBuild { dry_run, user_data } => {
+        Command::UninstallGuiBuild {
+            dry_run,
+            user_data,
+            desktop_entries,
+        } => {
             let paths = if dry_run {
-                if user_data {
+                if user_data && desktop_entries {
+                    hermes_manager::commands::uninstall_gui_build_plan_with_gui_state(&home)?
+                } else if user_data {
                     hermes_manager::commands::uninstall_gui_build_plan_with_user_data(&home)?
+                } else if desktop_entries {
+                    hermes_manager::commands::uninstall_gui_build_plan_with_desktop_entries(&home)?
                 } else {
                     hermes_manager::commands::uninstall_gui_build_plan(&home)?
                 }
+            } else if user_data && desktop_entries {
+                hermes_manager::commands::uninstall_gui_build_with_gui_state(&home)?
             } else if user_data {
                 hermes_manager::commands::uninstall_gui_build_with_user_data(&home)?
+            } else if desktop_entries {
+                hermes_manager::commands::uninstall_gui_build_with_desktop_entries(&home)?
             } else {
                 hermes_manager::commands::uninstall_gui_build(&home)?
             };
@@ -579,6 +594,20 @@ mod tests {
 
         match cli.command {
             Command::UninstallGuiBuild { user_data, .. } => assert!(user_data),
+            _ => panic!("expected uninstall-gui-build command"),
+        }
+    }
+
+    #[test]
+    fn uninstall_gui_build_parses_desktop_entries_flag() {
+        let cli =
+            Cli::try_parse_from(["hermes-manager", "uninstall-gui-build", "--desktop-entries"])
+                .expect("GUI desktop entry cleanup flag should parse");
+
+        match cli.command {
+            Command::UninstallGuiBuild {
+                desktop_entries, ..
+            } => assert!(desktop_entries),
             _ => panic!("expected uninstall-gui-build command"),
         }
     }

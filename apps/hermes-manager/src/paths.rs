@@ -213,6 +213,41 @@ fn desktop_user_data_dir_from_env(
     }
 }
 
+/// Return Linux desktop entry files for packaged Hermes launchers.
+pub fn linux_desktop_entry_files() -> Vec<PathBuf> {
+    linux_desktop_entry_files_from_env(
+        current_desktop_platform(),
+        os_home_dir(),
+        std::env::var_os("XDG_DATA_HOME"),
+    )
+}
+
+fn linux_desktop_entry_files_from_env(
+    platform: DesktopPlatform,
+    home: Option<OsString>,
+    xdg_data_home: Option<OsString>,
+) -> Vec<PathBuf> {
+    if platform != DesktopPlatform::Linux {
+        return Vec::new();
+    }
+
+    let Some(data_base) = xdg_data_home
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            home.filter(|value| !value.is_empty())
+                .map(|value| PathBuf::from(value).join(".local").join("share"))
+        })
+    else {
+        return Vec::new();
+    };
+    let applications_dir = data_base.join("applications");
+    vec![
+        applications_dir.join("hermes.desktop"),
+        applications_dir.join("Hermes.desktop"),
+    ]
+}
+
 /// Manager metadata directory.
 pub fn manager_state_dir(hermes_home: &std::path::Path) -> PathBuf {
     hermes_home.join("manager")
@@ -327,6 +362,29 @@ mod tests {
                 Some("/tmp/xdg-config".into()),
             ),
             Some(PathBuf::from("/tmp/xdg-config/Hermes"))
+        );
+    }
+
+    #[test]
+    fn linux_desktop_entry_files_match_python_gui_uninstall_locations() {
+        assert_eq!(
+            linux_desktop_entry_files_from_env(
+                DesktopPlatform::Linux,
+                Some("/home/alice".into()),
+                Some("/tmp/xdg-data".into()),
+            ),
+            vec![
+                PathBuf::from("/tmp/xdg-data/applications/hermes.desktop"),
+                PathBuf::from("/tmp/xdg-data/applications/Hermes.desktop"),
+            ]
+        );
+        assert_eq!(
+            linux_desktop_entry_files_from_env(
+                DesktopPlatform::Macos,
+                Some("/Users/alice".into()),
+                None,
+            ),
+            Vec::<PathBuf>::new()
         );
     }
 

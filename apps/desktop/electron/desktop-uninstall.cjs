@@ -75,9 +75,13 @@ function buildManagerCommandForMode({
     return null
   }
   if (mode === 'gui') {
+    const args = ['--hermes-home', hermesHome, 'uninstall-gui-build', '--user-data']
+    if (platform === 'linux') {
+      args.push('--desktop-entries')
+    }
     return {
       command: managerPath,
-      args: ['--hermes-home', hermesHome, 'uninstall-gui-build', '--user-data']
+      args
     }
   }
   if (mode !== 'lite') {
@@ -114,8 +118,7 @@ function modeRequiresPythonUninstaller(mode, managerCommand = null, options = {}
     return !managerCommand
   }
   if (mode === 'gui') {
-    const platform = options.platform || process.platform
-    return !managerCommand || !options.appPath || platform === 'linux'
+    return !managerCommand || !options.appPath
   }
   return true
 }

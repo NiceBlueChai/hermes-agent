@@ -141,17 +141,54 @@ pub fn uninstall_gui_build_plan(hermes_home: &Path) -> Result<Vec<String>> {
 
 /// Remove source-built desktop GUI artifacts and Electron userData.
 pub fn uninstall_gui_build_with_user_data(hermes_home: &Path) -> Result<Vec<String>> {
-    uninstall_gui_build_with_user_data_dir(hermes_home, paths::desktop_user_data_dir())
+    uninstall_gui_build_with_options_paths(hermes_home, paths::desktop_user_data_dir(), Vec::new())
 }
 
 /// Report source-built desktop GUI artifacts and Electron userData that would be removed.
 pub fn uninstall_gui_build_plan_with_user_data(hermes_home: &Path) -> Result<Vec<String>> {
-    uninstall_gui_build_plan_with_user_data_dir(hermes_home, paths::desktop_user_data_dir())
+    uninstall_gui_build_plan_with_options_paths(
+        hermes_home,
+        paths::desktop_user_data_dir(),
+        Vec::new(),
+    )
 }
 
-fn uninstall_gui_build_with_user_data_dir(
+/// Remove source-built desktop GUI artifacts, userData, and Linux desktop entries.
+pub fn uninstall_gui_build_with_gui_state(hermes_home: &Path) -> Result<Vec<String>> {
+    uninstall_gui_build_with_options_paths(
+        hermes_home,
+        paths::desktop_user_data_dir(),
+        paths::linux_desktop_entry_files(),
+    )
+}
+
+/// Report source-built desktop GUI artifacts, userData, and Linux desktop entries.
+pub fn uninstall_gui_build_plan_with_gui_state(hermes_home: &Path) -> Result<Vec<String>> {
+    uninstall_gui_build_plan_with_options_paths(
+        hermes_home,
+        paths::desktop_user_data_dir(),
+        paths::linux_desktop_entry_files(),
+    )
+}
+
+/// Remove source-built desktop GUI artifacts and Linux desktop entries.
+pub fn uninstall_gui_build_with_desktop_entries(hermes_home: &Path) -> Result<Vec<String>> {
+    uninstall_gui_build_with_options_paths(hermes_home, None, paths::linux_desktop_entry_files())
+}
+
+/// Report source-built desktop GUI artifacts and Linux desktop entries.
+pub fn uninstall_gui_build_plan_with_desktop_entries(hermes_home: &Path) -> Result<Vec<String>> {
+    uninstall_gui_build_plan_with_options_paths(
+        hermes_home,
+        None,
+        paths::linux_desktop_entry_files(),
+    )
+}
+
+fn uninstall_gui_build_with_options_paths(
     hermes_home: &Path,
     user_data_dir: Option<PathBuf>,
+    desktop_entry_files: Vec<PathBuf>,
 ) -> Result<Vec<String>> {
     let mut removed = uninstall_gui_build(hermes_home)?;
     if let Some(user_data_dir) = user_data_dir {
@@ -162,18 +199,32 @@ fn uninstall_gui_build_with_user_data_dir(
             removed.push(user_data_dir.display().to_string());
         }
     }
+    for entry in desktop_entry_files {
+        ensure_linux_desktop_entry_file_allowed(&entry)?;
+        if entry.exists() {
+            fs::remove_file(&entry).map_err(|err| ManagerError::io(&entry, err))?;
+            removed.push(entry.display().to_string());
+        }
+    }
     Ok(removed)
 }
 
-fn uninstall_gui_build_plan_with_user_data_dir(
+fn uninstall_gui_build_plan_with_options_paths(
     hermes_home: &Path,
     user_data_dir: Option<PathBuf>,
+    desktop_entry_files: Vec<PathBuf>,
 ) -> Result<Vec<String>> {
     let mut planned = uninstall_gui_build_plan(hermes_home)?;
     if let Some(user_data_dir) = user_data_dir {
         ensure_desktop_user_data_dir_allowed(&user_data_dir)?;
         if user_data_dir.exists() {
             planned.push(user_data_dir.display().to_string());
+        }
+    }
+    for entry in desktop_entry_files {
+        ensure_linux_desktop_entry_file_allowed(&entry)?;
+        if entry.exists() {
+            planned.push(entry.display().to_string());
         }
     }
     Ok(planned)
@@ -186,6 +237,26 @@ fn ensure_desktop_user_data_dir_allowed(path: &Path) -> Result<()> {
 
     Err(ManagerError::InvalidManifest(format!(
         "desktop userData cleanup path is not a Hermes userData directory: {}",
+        path.display()
+    )))
+}
+
+fn ensure_linux_desktop_entry_file_allowed(path: &Path) -> Result<()> {
+    let allowed_name = matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("hermes.desktop" | "Hermes.desktop")
+    );
+    let under_applications = path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+        == Some("applications");
+    if allowed_name && under_applications {
+        return Ok(());
+    }
+
+    Err(ManagerError::InvalidManifest(format!(
+        "desktop entry cleanup path is not a Hermes launcher entry: {}",
         path.display()
     )))
 }
@@ -744,12 +815,36 @@ mod tests {
             .expect("desktop connection state should be created");
         fs::write(&config, "model: test").expect("config should be written");
 
-        let removed =
-            super::uninstall_gui_build_with_user_data_dir(&hermes_home, Some(user_data.clone()))
-                .expect("desktop userData should be removed");
+        let removed = super::uninstall_gui_build_with_options_paths(
+            &hermes_home,
+            Some(user_data.clone()),
+            Vec::new(),
+        )
+        .expect("desktop userData should be removed");
 
         assert!(removed.contains(&user_data.display().to_string()));
         assert!(!user_data.exists());
+        assert!(config.exists());
+    }
+
+    #[test]
+    fn uninstall_gui_build_with_desktop_entries_removes_linux_launchers() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let hermes_home = dir.path().join("hermes");
+        let entry = dir.path().join("applications").join("hermes.desktop");
+        let config = hermes_home.join("config.yaml");
+        fs::create_dir_all(entry.parent().unwrap()).expect("applications dir should be created");
+        fs::create_dir_all(&hermes_home).expect("Hermes home should be created");
+        fs::write(&entry, "[Desktop Entry]\nName=Hermes\n")
+            .expect("desktop entry should be written");
+        fs::write(&config, "model: test").expect("config should be written");
+
+        let removed =
+            super::uninstall_gui_build_with_options_paths(&hermes_home, None, vec![entry.clone()])
+                .expect("desktop entry should be removed");
+
+        assert!(removed.contains(&entry.display().to_string()));
+        assert!(!entry.exists());
         assert!(config.exists());
     }
 

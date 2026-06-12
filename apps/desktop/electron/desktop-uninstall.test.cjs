@@ -72,7 +72,13 @@ test('buildManagerCommandForMode enables available Rust cleanup commands', () =>
     }),
     {
       command: managerPath,
-      args: ['--hermes-home', '/home/x/.hermes', 'uninstall-gui-build', '--user-data']
+      args: [
+        '--hermes-home',
+        '/home/x/.hermes',
+        'uninstall-gui-build',
+        '--user-data',
+        '--desktop-entries'
+      ]
     }
   )
   assert.deepEqual(
@@ -186,7 +192,7 @@ test('modeRequiresPythonUninstaller lets packaged macOS and Windows GUI cleanup 
       appPath: '/home/x/Apps/Hermes.AppImage',
       platform: 'linux'
     }),
-    true
+    false
   )
   assert.equal(
     modeRequiresPythonUninstaller('gui', managerCommand, {
