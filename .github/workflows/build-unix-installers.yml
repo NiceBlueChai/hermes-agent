@@ -180,6 +180,61 @@ jobs:
                   --self-check-wheelhouse-platform ${{ matrix.platform }}
                   --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
 
+            - name: Smoke packaged Linux AppImage lifecycle
+              if: matrix.platform == 'linux'
+              env:
+                  APPIMAGE_EXTRACT_AND_RUN: 1
+              run: |
+                  set -euo pipefail
+                  appimage="$(
+                      find apps/bootstrap-installer/src-tauri/target/release/bundle/appimage \
+                          -maxdepth 1 -name '*.AppImage' -print -quit
+                  )"
+                  test -n "${appimage}"
+                  chmod +x "${appimage}"
+                  "${appimage}" --self-check \
+                      --self-check-expect-commit "${{ github.sha }}" \
+                      --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools \
+                      --self-check-bootstrap-tools-platform ${{ matrix.platform }} \
+                      --self-check-bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
+                      --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse \
+                      --self-check-wheelhouse-platform ${{ matrix.platform }} \
+                      --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+                  "${appimage}" --self-check-lifecycle \
+                      --self-check-expect-commit "${{ github.sha }}" \
+                      --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools \
+                      --self-check-bootstrap-tools-platform ${{ matrix.platform }} \
+                      --self-check-bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
+                      --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse \
+                      --self-check-wheelhouse-platform ${{ matrix.platform }} \
+                      --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
+            - name: Smoke packaged macOS app lifecycle
+              if: matrix.platform == 'macos'
+              run: |
+                  set -euo pipefail
+                  app_bin="$(
+                      find apps/bootstrap-installer/src-tauri/target/release/bundle/macos \
+                          -path '*/Contents/MacOS/Hermes' -type f -print -quit
+                  )"
+                  test -n "${app_bin}"
+                  "${app_bin}" --self-check \
+                      --self-check-expect-commit "${{ github.sha }}" \
+                      --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools \
+                      --self-check-bootstrap-tools-platform ${{ matrix.platform }} \
+                      --self-check-bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
+                      --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse \
+                      --self-check-wheelhouse-platform ${{ matrix.platform }} \
+                      --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+                  "${app_bin}" --self-check-lifecycle \
+                      --self-check-expect-commit "${{ github.sha }}" \
+                      --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools \
+                      --self-check-bootstrap-tools-platform ${{ matrix.platform }} \
+                      --self-check-bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
+                      --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse \
+                      --self-check-wheelhouse-platform ${{ matrix.platform }} \
+                      --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
             - name: Validate Linux installer artifacts
               if: matrix.platform == 'linux'
               run: >

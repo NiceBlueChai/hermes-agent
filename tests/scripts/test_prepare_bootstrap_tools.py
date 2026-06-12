@@ -1262,6 +1262,35 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             unix_workflow.index("- name: Smoke built installer binary"),
         )
 
+    def test_unix_installer_workflow_smokes_packaged_artifacts(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Smoke packaged Linux AppImage lifecycle", workflow)
+        self.assertIn("APPIMAGE_EXTRACT_AND_RUN: 1", workflow)
+        self.assertIn("*.AppImage", workflow)
+        self.assertIn("Smoke packaged macOS app lifecycle", workflow)
+        self.assertIn("Contents/MacOS/Hermes", workflow)
+        self.assertGreaterEqual(workflow.count("--self-check-lifecycle"), 3)
+        self.assertGreater(
+            workflow.index("- name: Smoke packaged Linux AppImage lifecycle"),
+            workflow.index("- name: Smoke built installer lifecycle"),
+        )
+        self.assertGreater(
+            workflow.index("- name: Smoke packaged macOS app lifecycle"),
+            workflow.index("- name: Smoke built installer lifecycle"),
+        )
+        self.assertLess(
+            workflow.index("- name: Smoke packaged Linux AppImage lifecycle"),
+            workflow.index("- name: Validate Linux installer artifacts"),
+        )
+        self.assertLess(
+            workflow.index("- name: Smoke packaged macOS app lifecycle"),
+            workflow.index("- name: Validate macOS installer artifacts"),
+        )
+
     def test_tauri_bundle_declares_self_contained_resources(self):
         repo_root = Path(__file__).resolve().parents[2]
         config_path = repo_root / "apps" / "bootstrap-installer" / "src-tauri" / "tauri.conf.json"
