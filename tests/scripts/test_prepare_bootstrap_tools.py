@@ -465,6 +465,19 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             windows_workflow.index("- name: Sign Hermes-Setup.exe with Azure Artifact Signing"),
         )
 
+    def test_lifecycle_workflow_smokes_bootstrap_release_binary(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        workflow = (repo_root / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+
+        self.assertIn("Build bootstrap release binary", workflow)
+        self.assertIn("cargo build --release --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml", workflow)
+        self.assertIn("Run bootstrap release binary self-check", workflow)
+        self.assertIn("--self-check-expect-commit \"${{ github.sha }}\"", workflow)
+        self.assertGreater(
+            workflow.index("- name: Run bootstrap release binary self-check"),
+            workflow.index("- name: Build bootstrap release binary"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

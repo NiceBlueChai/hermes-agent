@@ -341,6 +341,8 @@ language-specific setup where needed.
   archive refresh, manager metadata recording, repair cleanup, and lite uninstall without network access.
 - CI runs bootstrap-installer Rust unit tests in addition to the manager and desktop platform tests, and a dedicated
   Windows/Linux/macOS installer lifecycle smoke matrix runs the manager and archive lifecycle smoke tests on each OS.
+- The same lifecycle smoke matrix now builds the bootstrap installer release binary and runs `Hermes-Setup --self-check`
+  against it, extending coverage from library tests toward the actual release executable entry point.
 
 **Still script-backed:**
 - Recovery tiers remain script-backed for failure cases that still need package-manager or mirror-specific handling:

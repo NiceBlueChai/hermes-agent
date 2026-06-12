@@ -182,6 +182,21 @@ jobs:
           cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml
           archive_lifecycle_smoke_covers_update_repair_and_lite_uninstall
 
+      - name: Build bootstrap release binary
+        env:
+          HERMES_BUILD_PIN_COMMIT: ${{ github.sha }}
+        run: cargo build --release --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml
+
+      - name: Run bootstrap release binary self-check
+        shell: bash
+        run: |
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+              setup_bin="apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup.exe"
+          else
+              setup_bin="apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup"
+          fi
+          "$setup_bin" --self-check --self-check-expect-commit "${{ github.sha }}"
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
