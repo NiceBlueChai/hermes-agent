@@ -363,6 +363,8 @@ language-specific setup where needed.
 - `hermes-manager repair-clean` now removes the same Hermes-managed runtime roots as repairable install state, so
   broken managed Node/Python/uv/pip/Git/bootstrap-cache directories and staged updater binaries are recreated by the
   next bootstrap while user config and data stay intact.
+- `hermes-manager uninstall-lite` and `repair-clean` now also plan and remove Unix `node`, `npm`, and `npx` symlinks
+  only when those links still point into `$HERMES_HOME/node`, preserving user-managed Node installations.
 - `hermes-manager` now has a CLI smoke test that runs `install-metadata`, `uninstall-lite`, and `repair-clean` against
   an isolated Hermes home, proving the command surface preserves user config while cleaning every current
   Hermes-managed runtime directory and staged installer file.

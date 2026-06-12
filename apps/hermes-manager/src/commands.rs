@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use crate::installed_manifest::{InstalledKind, InstalledManifest};
 use crate::ownership::ensure_safe_to_delete;
@@ -48,7 +48,7 @@ pub fn uninstall_lite(hermes_home: &Path) -> Result<Vec<String>> {
     validate_manifest_home(hermes_home, &manifest)?;
     preflight_uninstall_lite_entries(hermes_home, &manifest)?;
 
-    let mut removed = Vec::new();
+    let mut removed = remove_managed_node_symlinks(hermes_home)?;
 
     for entry in manifest.entries.iter().rev() {
         if !entry.path.exists() {
@@ -76,7 +76,10 @@ pub fn uninstall_lite_plan(hermes_home: &Path) -> Result<Vec<String>> {
     validate_manifest_home(hermes_home, &manifest)?;
     preflight_uninstall_lite_entries(hermes_home, &manifest)?;
 
-    let mut planned = Vec::new();
+    let mut planned = managed_node_symlink_plan(hermes_home)?
+        .into_iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
     for entry in manifest.entries.iter().rev() {
         if !entry.path.exists() {
             continue;
@@ -152,7 +155,7 @@ fn ensure_lite_uninstall_entry_allowed(hermes_home: &Path, candidate: &Path) -> 
 
 /// Remove the runtime checkout and bootstrap marker so the next launch repairs it.
 pub fn repair_clean(hermes_home: &Path) -> Result<Vec<String>> {
-    let mut removed = Vec::new();
+    let mut removed = remove_managed_node_symlinks(hermes_home)?;
     for runtime_root in paths::managed_runtime_roots(hermes_home) {
         ensure_safe_to_delete(hermes_home, &runtime_root)?;
         if runtime_root.exists() {
@@ -181,7 +184,10 @@ pub fn repair_clean(hermes_home: &Path) -> Result<Vec<String>> {
 
 /// Report runtime checkout paths that repair cleanup would remove.
 pub fn repair_clean_plan(hermes_home: &Path) -> Result<Vec<String>> {
-    let mut planned = Vec::new();
+    let mut planned = managed_node_symlink_plan(hermes_home)?
+        .into_iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
     for runtime_root in paths::managed_runtime_roots(hermes_home) {
         ensure_safe_to_delete(hermes_home, &runtime_root)?;
         if runtime_root.exists() {
@@ -202,6 +208,119 @@ pub fn repair_clean_plan(hermes_home: &Path) -> Result<Vec<String>> {
     }
 
     Ok(planned)
+}
+
+fn remove_managed_node_symlinks(hermes_home: &Path) -> Result<Vec<String>> {
+    let mut removed = Vec::new();
+    for link in managed_node_symlink_plan(hermes_home)? {
+        if fs::remove_file(&link).is_ok() {
+            removed.push(link.display().to_string());
+        }
+    }
+    Ok(removed)
+}
+
+fn managed_node_symlink_plan(hermes_home: &Path) -> Result<Vec<PathBuf>> {
+    managed_node_symlink_plan_in_dirs(hermes_home, node_symlink_candidate_dirs())
+}
+
+fn managed_node_symlink_plan_in_dirs(
+    hermes_home: &Path,
+    candidate_dirs: Vec<PathBuf>,
+) -> Result<Vec<PathBuf>> {
+    let mut links = Vec::new();
+    for dir in candidate_dirs {
+        for name in ["node", "npm", "npx"] {
+            let link = dir.join(name);
+            let metadata = match fs::symlink_metadata(&link) {
+                Ok(metadata) => metadata,
+                Err(err) if err.kind() == ErrorKind::NotFound => continue,
+                Err(_) => continue,
+            };
+            if !metadata.file_type().is_symlink() {
+                continue;
+            }
+            let target = match fs::read_link(&link) {
+                Ok(target) => target,
+                Err(_) => continue,
+            };
+            if node_symlink_target_is_managed(&link, &target, hermes_home) {
+                links.push(link);
+            }
+        }
+    }
+    Ok(links)
+}
+
+fn node_symlink_candidate_dirs() -> Vec<PathBuf> {
+    node_symlink_candidate_dirs_from_env(
+        std::env::var_os("HOME").map(PathBuf::from),
+        std::env::var_os("PREFIX").map(PathBuf::from),
+    )
+}
+
+#[cfg(unix)]
+fn node_symlink_candidate_dirs_from_env(
+    home: Option<PathBuf>,
+    prefix: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    if let Some(home) = home {
+        push_unique_path(&mut dirs, home.join(".local").join("bin"));
+    }
+    if let Some(prefix) = prefix {
+        if prefix.to_string_lossy().contains("com.termux") {
+            push_unique_path(&mut dirs, prefix.join("bin"));
+        }
+    }
+    #[cfg(target_os = "linux")]
+    push_unique_path(&mut dirs, PathBuf::from("/usr/local/bin"));
+
+    dirs
+}
+
+#[cfg(not(unix))]
+fn node_symlink_candidate_dirs_from_env(
+    _home: Option<PathBuf>,
+    _prefix: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    Vec::new()
+}
+
+#[cfg(unix)]
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
+}
+
+fn node_symlink_target_is_managed(link_path: &Path, target: &Path, hermes_home: &Path) -> bool {
+    let resolved = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        link_path
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join(target)
+    };
+    normalize_path_lexically(&resolved)
+        .starts_with(normalize_path_lexically(&hermes_home.join("node")))
+}
+
+fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(value) => normalized.push(value),
+            Component::RootDir | Component::Prefix(_) => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
 }
 
 #[cfg(test)]
@@ -279,6 +398,54 @@ mod tests {
             ]
         );
         assert!(!paths.contains(&user_config));
+    }
+
+    #[test]
+    fn node_symlink_target_filter_only_accepts_hermes_node_targets() {
+        let hermes_home = std::path::PathBuf::from("home/.hermes");
+        let link_path = std::path::PathBuf::from("home/.local/bin/node");
+
+        assert!(super::node_symlink_target_is_managed(
+            &link_path,
+            std::path::Path::new("../../.hermes/node/bin/node"),
+            &hermes_home
+        ));
+        assert!(!super::node_symlink_target_is_managed(
+            &link_path,
+            std::path::Path::new("../../.hermes/python/bin/python"),
+            &hermes_home
+        ));
+        assert!(!super::node_symlink_target_is_managed(
+            &link_path,
+            std::path::Path::new("../../.nvm/versions/node/v22/bin/node"),
+            &hermes_home
+        ));
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn node_symlink_candidate_dirs_are_unix_only() {
+        let dirs = super::node_symlink_candidate_dirs_from_env(
+            Some(std::path::PathBuf::from("C:/Users/tester")),
+            Some(std::path::PathBuf::from(
+                "C:/Users/tester/AppData/Local/Termux/com.termux/files/usr",
+            )),
+        );
+
+        assert!(dirs.is_empty());
+    }
+
+    #[test]
+    fn managed_node_symlink_plan_skips_invalid_candidate_dirs() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let hermes_home = dir.path().join("hermes");
+        let file_as_dir = dir.path().join("not-a-directory");
+        fs::write(&file_as_dir, "plain file").expect("file should be created");
+
+        let planned = super::managed_node_symlink_plan_in_dirs(&hermes_home, vec![file_as_dir])
+            .expect("invalid candidate dirs should not fail cleanup planning");
+
+        assert!(planned.is_empty());
     }
 
     #[test]
