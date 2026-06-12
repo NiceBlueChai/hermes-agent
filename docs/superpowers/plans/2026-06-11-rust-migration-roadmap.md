@@ -70,6 +70,51 @@ scripts should become recovery paths instead of the normal first-run path.
 - Messaging gateway platform behavior unless a low-level helper has a stable API and a clear dependency payoff.
 - Web UI or Electron renderer code.
 
+## Current Highest-Path Plan
+
+This branch is already past the manager foundation work. The remaining path to the highest practical Rust boundary is
+not a broad rewrite; it is a sequence of release-quality closure gates. Each gate must preserve script/Python fallback
+until at least one release has shipped with the native path enabled.
+
+| Track | Target | Current State | Next Gate |
+| --- | --- | --- | --- |
+| Repository source | Fresh installs and archive-created updates avoid Git. | Native archive install and refresh are implemented and covered by local lifecycle smoke. | Audit the actual update handoff so archive-created checkouts cannot regress into Git preparation before dependency finalization. |
+| Runtime tools | Installer owns Node.js, `uv`, ripgrep, optional Git/ffmpeg resources. | Manifest-verified bundled archives are supported across Windows/Linux/macOS. | Keep release workflow validation aligned with every new archive kind and reject any unmanifested payload. |
+| Python dependencies | Use bundled wheelhouse first, then locked `uv`, then network fallback. | Wheelhouse generation, manifest validation, direct scripts, native dependency planning, and platform SDK recovery are wired. | Exercise the packaged-binary self-check and lifecycle path with wheelhouse resources before considering fallback removal. |
+| Node/Electron caches | Avoid first-run npm/Electron download work when release bundles reviewed caches. | Native and script fallback paths restore manifest-verified npm, Playwright, and Electron caches. | Keep cache archives optional and checksum-gated; never let a stale cache become the only install path. |
+| Platform integration | PATH, launchers, shortcuts, metadata, repair, and lite uninstall belong to Rust. | `hermes-manager` owns the common managed paths and bootstrap writes metadata after success. | Expand ownership only when a new runtime root is introduced, then add repair/uninstall tests in the same commit. |
+| Shell fallback | Scripts remain direct-install and one-release recovery entry points. | Packaged bootstrap is native-first for the common path and passes bundled resources to fallback scripts. | Record every script-only fallback reason and reduce the normal desktop/bootstrap path to zero shell stages. |
+| Release confidence | Built packages prove they contain the resources they claim. | Workflows run no-UI self-checks, manifest validators, and local lifecycle smoke. | Promote lifecycle smoke from local helper paths to real packaged installer artifacts on every OS before deleting fallback branches. |
+
+### Execution Slices From Here
+
+1. **Update-path audit.**
+   Verify that archive-created installs update through the Rust archive refresh path on Windows, Linux, and macOS, then
+   call `hermes update --finalize-only` only for dependency refresh. Add a regression test if any path still prepares a
+   Git checkout first.
+
+2. **Packaged artifact lifecycle smoke.**
+   Extend the current `--self-check-lifecycle` coverage so the built installer artifact exercises bundled
+   `bootstrap-tools/` and `wheelhouse/` resources, not only local helper directories.
+
+3. **Normal-path shell budget.**
+   Add or tighten tests around `build_stage_plan()` so every stage is one of `native`, `probe-only`, or
+   `script-fallback:<reason>`. Treat unreasoned script use in the packaged desktop path as a bug.
+
+4. **Fallback parity hardening.**
+   Keep direct `install.ps1` and `install.sh` behavior feature-complete, but require them to consume the same managed
+   caches, wheelhouse, and bootstrap-tool manifests as the Rust bootstrapper when those resources are available.
+
+5. **Release-size decision gate.**
+   Before bundling anything beyond Node.js, `uv`, ripgrep, Git for Windows, reviewed caches, wheelhouse, or optional
+   audited ffmpeg, require a documented size/security/update-cadence decision in this roadmap and a manifest validator
+   update in the same change.
+
+6. **Fallback removal gate.**
+   Remove a script fallback only after one packaged release proves the native path on all supported OSes, the fallback's
+   direct-install behavior is still available elsewhere if users need it, and repair/uninstall can clean every managed
+   artifact without Python.
+
 ## Phase 0: Safety and Inventory
 
 **Purpose:** Know exactly what can be moved before moving it.
