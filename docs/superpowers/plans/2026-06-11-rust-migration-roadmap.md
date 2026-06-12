@@ -277,6 +277,8 @@ language-specific setup where needed.
   recovery or privileged sandbox setup failures.
 - Linux `chrome-sandbox` repair now checks the current effective UID through Rust instead of spawning `id -u`, removing
   another external command assumption from the native desktop stage.
+- When the Linux bootstrap process is already root, `chrome-sandbox` owner/mode repair now uses libc/Rust filesystem
+  calls instead of spawning `chown` and `chmod`; the sudo fallback remains for non-root installs.
 - Windows `platform-sdks` now skips natively when `.env` has no configured messaging platform tokens, and runs
   native-first SDK import checks plus targeted `pip install` recovery when tokens are present, while preserving script
   fallback if the native recovery path fails.

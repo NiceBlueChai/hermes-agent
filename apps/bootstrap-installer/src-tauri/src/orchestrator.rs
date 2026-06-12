@@ -3314,8 +3314,7 @@ fn configure_linux_chrome_sandbox(install_root: &Path) -> Result<()> {
         return Ok(());
     }
     if current_process_is_root() {
-        run_privileged_file_command("chown", ["root:root"], &sandbox)?;
-        run_privileged_file_command("chmod", ["4755"], &sandbox)?;
+        apply_linux_chrome_sandbox_root_permissions(&sandbox)?;
         return Ok(());
     }
     if find_executable_on_path("sudo", std::env::var_os("PATH").unwrap_or_default(), "").is_none() {
@@ -3334,6 +3333,61 @@ fn current_process_is_root() -> bool {
 
 fn process_euid_is_root(euid: u32) -> bool {
     euid == 0
+}
+
+fn linux_chrome_sandbox_mode() -> u32 {
+    0o4755
+}
+
+fn apply_linux_chrome_sandbox_root_permissions(path: &Path) -> Result<()> {
+    set_file_owner_root(path)?;
+    set_file_mode(path, linux_chrome_sandbox_mode())
+}
+
+#[cfg(unix)]
+fn set_file_owner_root(path: &Path) -> Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+        anyhow!(
+            "cannot set owner for path containing interior NUL: {}",
+            path.display()
+        )
+    })?;
+    let status = unsafe { libc::chown(c_path.as_ptr(), 0, 0) };
+    if status == 0 {
+        return Ok(());
+    }
+    Err(std::io::Error::last_os_error())
+        .with_context(|| format!("setting root owner on {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn set_file_owner_root(path: &Path) -> Result<()> {
+    Err(anyhow!(
+        "root owner repair is only supported on Unix: {}",
+        path.display()
+    ))
+}
+
+#[cfg(unix)]
+fn set_file_mode(path: &Path, mode: u32) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = fs::metadata(path)
+        .with_context(|| format!("reading permissions for {}", path.display()))?
+        .permissions();
+    permissions.set_mode(mode);
+    fs::set_permissions(path, permissions)
+        .with_context(|| format!("setting mode {mode:o} on {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn set_file_mode(path: &Path, mode: u32) -> Result<()> {
+    Err(anyhow!(
+        "file mode repair {mode:o} is only supported on Unix: {}",
+        path.display()
+    ))
 }
 
 #[cfg(unix)]
@@ -4729,6 +4783,11 @@ mod tests {
     fn process_euid_root_check_uses_effective_uid_value() {
         assert!(process_euid_is_root(0));
         assert!(!process_euid_is_root(1000));
+    }
+
+    #[test]
+    fn linux_chrome_sandbox_mode_is_setuid_root_executable() {
+        assert_eq!(linux_chrome_sandbox_mode(), 0o4755);
     }
 
     #[test]
