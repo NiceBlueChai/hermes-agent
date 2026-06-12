@@ -3298,20 +3298,31 @@ pub fn install_node_dependencies_stage(
     let mut playwright_system_failures = Vec::new();
     let mut optional_node_failures = Vec::new();
     if plan.browser_tools {
-        run_node_dependency_command(
-            &plan.npm,
-            [
-                "install",
-                "--silent",
-                "--prefer-offline",
-                "--no-audit",
-                "--fund=false",
-            ],
-            &plan.cwd,
-            &plan.npm_cache_dir,
-            Some(&plan.playwright_browsers_dir),
-        )
+        let npm_ci_ok = plan.cwd.join("package-lock.json").is_file()
+            && run_node_dependency_command(
+                &plan.npm,
+                ["ci", "--prefer-offline", "--no-audit", "--fund=false"],
+                &plan.cwd,
+                &plan.npm_cache_dir,
+                Some(&plan.playwright_browsers_dir),
+            )
+            .is_ok();
+        if !npm_ci_ok {
+            run_node_dependency_command(
+                &plan.npm,
+                [
+                    "install",
+                    "--silent",
+                    "--prefer-offline",
+                    "--no-audit",
+                    "--fund=false",
+                ],
+                &plan.cwd,
+                &plan.npm_cache_dir,
+                Some(&plan.playwright_browsers_dir),
+            )
             .context("installing root Node dependencies")?;
+        }
         let distro = if std::env::consts::OS == "linux" {
             current_linux_distro_family()
         } else {

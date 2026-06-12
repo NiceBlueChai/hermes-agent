@@ -2030,9 +2030,22 @@ function Install-NodeDeps {
             # for uv's stderr-emitting installer.  Check success via
             # $LASTEXITCODE, which is reliable regardless of stderr noise.
             $ErrorActionPreference = "Continue"
-            & $npmPath install --silent --prefer-offline --no-audit --fund=false `
-                2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $logPath
-            $code = $LASTEXITCODE
+            $hasLockfile = Test-Path (Join-Path $installDir "package-lock.json")
+            if ($hasLockfile) {
+                & $npmPath ci --prefer-offline --no-audit --fund=false `
+                    2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $logPath
+                $code = $LASTEXITCODE
+                if ($code -ne 0) {
+                    Write-Info "$label npm ci failed (exit $code) -- retrying with npm install..."
+                    & $npmPath install --silent --prefer-offline --no-audit --fund=false `
+                        2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $logPath
+                    $code = $LASTEXITCODE
+                }
+            } else {
+                & $npmPath install --silent --prefer-offline --no-audit --fund=false `
+                    2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $logPath
+                $code = $LASTEXITCODE
+            }
             $ErrorActionPreference = $prevEAP
             if ($code -eq 0) {
                 Write-Success "$label dependencies installed"

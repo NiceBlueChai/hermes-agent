@@ -2107,9 +2107,16 @@ install_node_deps() {
     if [ -f "$INSTALL_DIR/package.json" ]; then
         log_info "Installing Node.js dependencies (browser tools)..."
         cd "$INSTALL_DIR"
-        npm install --silent --prefer-offline --no-audit --fund=false 2>/dev/null || {
-            log_warn "npm install failed (browser tools may not work)"
-        }
+        if [ -f "$INSTALL_DIR/package-lock.json" ]; then
+            npm ci --prefer-offline --no-audit --fund=false 2>/dev/null \
+                || npm install --silent --prefer-offline --no-audit --fund=false 2>/dev/null || {
+                    log_warn "npm install failed (browser tools may not work)"
+                }
+        else
+            npm install --silent --prefer-offline --no-audit --fund=false 2>/dev/null || {
+                log_warn "npm install failed (browser tools may not work)"
+            }
+        fi
         log_success "Node.js dependencies installed"
 
         # Install Playwright browser + system dependencies.
