@@ -733,6 +733,8 @@ language-specific setup where needed.
   packaged payload must map to a registered runtime tool or optional cache kind before upload.
 - The runtime bootstrap-tools manifest reader now applies the same known-archive-name requirement before trusting a
   bundled file or manifest-sourced checksum, keeping installer behavior aligned with release validation.
+- Runtime tar.gz extraction now rejects special entries such as FIFOs or device nodes, so packaged optional cache
+  archives can only install regular files and directories.
 - Installer artifact validation now receives the expected release platform from the Windows/Linux/macOS workflows and
   rejects `bootstrap-tools` manifests whose archive records target a different platform.
 - Duplicate archive names are rejected by the validate-only gate, keeping each bundled runtime archive's ownership,

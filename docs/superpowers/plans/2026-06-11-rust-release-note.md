@@ -94,6 +94,8 @@ User-visible behavior:
   placeholder bundles or bundles whose files are all zero bytes before upload.
 - The no-UI lifecycle self-check can now include bootstrap-tools and wheelhouse validation in the same JSON report, and
   release installer workflows pass those resource arguments before uploading packaged artifacts.
+- Runtime tar.gz extraction now accepts only regular files and directories, rejecting special entries before packaged
+  cache archives can write them into `HERMES_HOME`.
 
 Compatibility and fallback:
 

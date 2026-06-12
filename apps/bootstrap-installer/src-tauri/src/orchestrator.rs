@@ -5401,16 +5401,22 @@ fn extract_tar_gz_archive(archive_path: &Path, destination_dir: &Path, label: &s
         let mut entry =
             entry.with_context(|| format!("reading entry from {}", archive_path.display()))?;
         let entry_type = entry.header().entry_type();
-        if entry_type.is_symlink() || entry_type.is_hard_link() {
-            return Err(anyhow!(
-                "{label} archive contains unsupported link entry: {}",
-                entry.path()?.display()
-            ));
-        }
         let path = entry
             .path()
             .with_context(|| format!("reading entry path from {}", archive_path.display()))?
             .into_owned();
+        if entry_type.is_symlink() || entry_type.is_hard_link() {
+            return Err(anyhow!(
+                "{label} archive contains unsupported link entry: {}",
+                path.display()
+            ));
+        }
+        if !(entry_type.is_file() || entry_type.is_dir()) {
+            return Err(anyhow!(
+                "{label} archive contains unsupported special entry: {}",
+                path.display()
+            ));
+        }
         if !archive_member_path_is_safe(&path) {
             return Err(anyhow!(
                 "{label} archive contains unsafe entry path: {}",
@@ -6345,6 +6351,24 @@ mod tests {
         archive.finish().unwrap();
     }
 
+    fn write_test_tar_gz_special_entry(
+        path: &Path,
+        name: &str,
+        entry_type: tar::EntryType,
+    ) {
+        let file = std::fs::File::create(path).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut archive = tar::Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_path(name).unwrap();
+        header.set_size(0);
+        header.set_mode(0o755);
+        header.set_entry_type(entry_type);
+        header.set_cksum();
+        archive.append(&header, std::io::empty()).unwrap();
+        archive.finish().unwrap();
+    }
+
     #[test]
     fn find_executable_on_path_uses_windows_pathext_candidates() {
         let root = std::env::temp_dir().join(format!(
@@ -7073,6 +7097,28 @@ mod tests {
             .unwrap()
             .join("playwright-browsers-extracting")
             .exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_cache_tar_gz_archive_rejects_special_entries() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-cache-tar-special-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive = root.join("npm-cache.tar.gz");
+        write_test_tar_gz_special_entry(
+            &archive,
+            "npm-cache/_cacache/content-v2/fifo",
+            tar::EntryType::Fifo,
+        );
+        let install_dir = root.join("home").join("npm-cache");
+
+        let err = extract_npm_cache_archive(&archive, &install_dir).unwrap_err();
+
+        assert!(err.to_string().contains("unsupported special entry"));
+        assert!(!install_dir.join("_cacache").join("content-v2").join("fifo").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 
