@@ -58,10 +58,23 @@ test('resolveHermesManagerPath finds the packaged Rust manager per platform', ()
   assert.equal(resolveHermesManagerPath('', 'linux'), null)
 })
 
-test('buildManagerCommandForMode only enables the Rust manager for available lite uninstall', () => {
+test('buildManagerCommandForMode enables available Rust cleanup commands', () => {
   const managerPath = '/opt/hermes/resources/hermes-manager/hermes-manager'
   const exists = file => file === managerPath
 
+  assert.deepEqual(
+    buildManagerCommandForMode({
+      mode: 'gui',
+      managerPath,
+      hermesHome: '/home/x/.hermes',
+      managerExists: exists,
+      platform: 'linux'
+    }),
+    {
+      command: managerPath,
+      args: ['--hermes-home', '/home/x/.hermes', 'uninstall-gui-build']
+    }
+  )
   assert.deepEqual(
     buildManagerCommandForMode({
       mode: 'lite',

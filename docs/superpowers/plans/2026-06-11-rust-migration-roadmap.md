@@ -368,6 +368,8 @@ language-specific setup where needed.
 - `hermes-manager uninstall-gui-build` can now dry-run or remove source-built desktop GUI artifacts under the checkout
   (`dist`, `release`, desktop/workspace `node_modules`, and the build stamp) while preserving the Python agent and user
   config/data.
+- The desktop cleanup script now invokes packaged `hermes-manager uninstall-gui-build` for GUI-only uninstall when the
+  manager is available, while keeping Python GUI uninstall for packaged app and Electron userData parity.
 - `hermes-manager repair-clean` now removes the same Hermes-managed runtime roots as repairable install state, so
   broken managed Node/Python/uv/pip/Git/bootstrap-cache directories and staged updater binaries are recreated by the
   next bootstrap while user config and data stay intact.

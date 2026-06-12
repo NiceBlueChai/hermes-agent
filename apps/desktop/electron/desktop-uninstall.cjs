@@ -57,10 +57,11 @@ function resolveHermesManagerPath(resourcesPath, platform = process.platform) {
 }
 
 /**
- * Build a Rust manager command for modes the manager can safely replace.
+ * Build a Rust manager command for cleanup the packaged manager can safely do.
  *
- * Returns null for unsupported modes or when the packaged manager is absent,
- * preserving the Python uninstaller as the complete fallback path.
+ * GUI mode still runs the Python uninstaller for packaged app/userData parity;
+ * the manager handles source-built desktop build artifacts as an idempotent
+ * residual cleanup. Lite mode can be fully handled by the manager when present.
  */
 function buildManagerCommandForMode({
   mode,
@@ -69,7 +70,16 @@ function buildManagerCommandForMode({
   managerExists = fs.existsSync,
   platform = process.platform
 }) {
-  if (mode !== 'lite' || !managerPath || !managerExists(managerPath)) {
+  if (!managerPath || !managerExists(managerPath)) {
+    return null
+  }
+  if (mode === 'gui') {
+    return {
+      command: managerPath,
+      args: ['--hermes-home', hermesHome, 'uninstall-gui-build']
+    }
+  }
+  if (mode !== 'lite') {
     return null
   }
   const args = ['--hermes-home', hermesHome, 'uninstall-lite']
