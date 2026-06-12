@@ -3329,13 +3329,21 @@ fn configure_linux_chrome_sandbox(install_root: &Path) -> Result<()> {
 }
 
 fn current_process_is_root() -> bool {
-    let output = Command::new("id")
-        .arg("-u")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
-    matches!(output, Ok(output) if output.status.success()
-        && String::from_utf8_lossy(&output.stdout).trim() == "0")
+    current_process_euid().is_some_and(process_euid_is_root)
+}
+
+fn process_euid_is_root(euid: u32) -> bool {
+    euid == 0
+}
+
+#[cfg(unix)]
+fn current_process_euid() -> Option<u32> {
+    Some(unsafe { libc::geteuid() as u32 })
+}
+
+#[cfg(not(unix))]
+fn current_process_euid() -> Option<u32> {
+    None
 }
 
 fn run_privileged_file_command<const N: usize>(
@@ -4715,6 +4723,12 @@ mod tests {
                 .join("linux-unpacked")
                 .join("chrome-sandbox")
         );
+    }
+
+    #[test]
+    fn process_euid_root_check_uses_effective_uid_value() {
+        assert!(process_euid_is_root(0));
+        assert!(!process_euid_is_root(1000));
     }
 
     #[test]

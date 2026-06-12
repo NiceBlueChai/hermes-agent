@@ -275,6 +275,8 @@ language-specific setup where needed.
 - Linux `desktop` now uses the same Rust native-first workspace npm install and `npm run pack` path, verifies the
   produced unpacked app, and configures Electron's `chrome-sandbox` helper while preserving script fallback for build
   recovery or privileged sandbox setup failures.
+- Linux `chrome-sandbox` repair now checks the current effective UID through Rust instead of spawning `id -u`, removing
+  another external command assumption from the native desktop stage.
 - Windows `platform-sdks` now skips natively when `.env` has no configured messaging platform tokens, and runs
   native-first SDK import checks plus targeted `pip install` recovery when tokens are present, while preserving script
   fallback if the native recovery path fails.
