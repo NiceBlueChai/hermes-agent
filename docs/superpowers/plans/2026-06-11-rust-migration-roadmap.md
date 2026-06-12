@@ -365,6 +365,8 @@ language-specific setup where needed.
   next bootstrap while user config and data stay intact.
 - `hermes-manager uninstall-lite` and `repair-clean` now also plan and remove Unix `node`, `npm`, and `npx` symlinks
   only when those links still point into `$HERMES_HOME/node`, preserving user-managed Node installations.
+- `hermes-manager uninstall-lite` and `repair-clean` now also plan and remove legacy Unix `hermes` wrapper scripts
+  from managed command-link directories, but only when the wrapper content still identifies a Hermes launcher.
 - `hermes-manager` now has a CLI smoke test that runs `install-metadata`, `uninstall-lite`, and `repair-clean` against
   an isolated Hermes home, proving the command surface preserves user config while cleaning every current
   Hermes-managed runtime directory and staged installer file.

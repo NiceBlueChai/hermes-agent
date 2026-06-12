@@ -48,7 +48,7 @@ pub fn uninstall_lite(hermes_home: &Path) -> Result<Vec<String>> {
     validate_manifest_home(hermes_home, &manifest)?;
     preflight_uninstall_lite_entries(hermes_home, &manifest)?;
 
-    let mut removed = remove_managed_node_symlinks(hermes_home)?;
+    let mut removed = remove_managed_command_links(hermes_home)?;
 
     for entry in manifest.entries.iter().rev() {
         if !entry.path.exists() {
@@ -76,7 +76,7 @@ pub fn uninstall_lite_plan(hermes_home: &Path) -> Result<Vec<String>> {
     validate_manifest_home(hermes_home, &manifest)?;
     preflight_uninstall_lite_entries(hermes_home, &manifest)?;
 
-    let mut planned = managed_node_symlink_plan(hermes_home)?
+    let mut planned = managed_command_link_plan(hermes_home)?
         .into_iter()
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>();
@@ -155,7 +155,7 @@ fn ensure_lite_uninstall_entry_allowed(hermes_home: &Path, candidate: &Path) -> 
 
 /// Remove the runtime checkout and bootstrap marker so the next launch repairs it.
 pub fn repair_clean(hermes_home: &Path) -> Result<Vec<String>> {
-    let mut removed = remove_managed_node_symlinks(hermes_home)?;
+    let mut removed = remove_managed_command_links(hermes_home)?;
     for runtime_root in paths::managed_runtime_roots(hermes_home) {
         ensure_safe_to_delete(hermes_home, &runtime_root)?;
         if runtime_root.exists() {
@@ -184,7 +184,7 @@ pub fn repair_clean(hermes_home: &Path) -> Result<Vec<String>> {
 
 /// Report runtime checkout paths that repair cleanup would remove.
 pub fn repair_clean_plan(hermes_home: &Path) -> Result<Vec<String>> {
-    let mut planned = managed_node_symlink_plan(hermes_home)?
+    let mut planned = managed_command_link_plan(hermes_home)?
         .into_iter()
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>();
@@ -210,14 +210,51 @@ pub fn repair_clean_plan(hermes_home: &Path) -> Result<Vec<String>> {
     Ok(planned)
 }
 
-fn remove_managed_node_symlinks(hermes_home: &Path) -> Result<Vec<String>> {
+fn remove_managed_command_links(hermes_home: &Path) -> Result<Vec<String>> {
     let mut removed = Vec::new();
-    for link in managed_node_symlink_plan(hermes_home)? {
+    for link in managed_command_link_plan(hermes_home)? {
         if fs::remove_file(&link).is_ok() {
             removed.push(link.display().to_string());
         }
     }
     Ok(removed)
+}
+
+fn managed_command_link_plan(hermes_home: &Path) -> Result<Vec<PathBuf>> {
+    let mut links = managed_hermes_wrapper_plan()?;
+    links.extend(managed_node_symlink_plan(hermes_home)?);
+    Ok(links)
+}
+
+fn managed_hermes_wrapper_plan() -> Result<Vec<PathBuf>> {
+    managed_hermes_wrapper_plan_in_dirs(node_symlink_candidate_dirs())
+}
+
+fn managed_hermes_wrapper_plan_in_dirs(candidate_dirs: Vec<PathBuf>) -> Result<Vec<PathBuf>> {
+    let mut wrappers = Vec::new();
+    for dir in candidate_dirs {
+        let wrapper = dir.join("hermes");
+        let metadata = match fs::symlink_metadata(&wrapper) {
+            Ok(metadata) => metadata,
+            Err(err) if err.kind() == ErrorKind::NotFound => continue,
+            Err(_) => continue,
+        };
+        if metadata.is_dir() {
+            continue;
+        }
+        let content = match fs::read_to_string(&wrapper) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        if hermes_wrapper_content_is_managed(&content) {
+            wrappers.push(wrapper);
+        }
+    }
+    Ok(wrappers)
+}
+
+fn hermes_wrapper_content_is_managed(content: &str) -> bool {
+    content.contains("hermes_cli") || content.contains("hermes-agent")
 }
 
 fn managed_node_symlink_plan(hermes_home: &Path) -> Result<Vec<PathBuf>> {
@@ -445,6 +482,29 @@ mod tests {
         let planned = super::managed_node_symlink_plan_in_dirs(&hermes_home, vec![file_as_dir])
             .expect("invalid candidate dirs should not fail cleanup planning");
 
+        assert!(planned.is_empty());
+    }
+
+    #[test]
+    fn hermes_wrapper_plan_only_accepts_managed_scripts() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("bin dir should be created");
+        let wrapper = bin_dir.join("hermes");
+        fs::write(
+            &wrapper,
+            "#!/usr/bin/env bash\nexec /tmp/hermes-agent/venv/bin/hermes \"$@\"\n",
+        )
+        .expect("managed wrapper should be created");
+
+        let planned = super::managed_hermes_wrapper_plan_in_dirs(vec![bin_dir.clone()])
+            .expect("managed wrapper plan should be created");
+        assert_eq!(planned, vec![wrapper.clone()]);
+
+        fs::write(&wrapper, "#!/usr/bin/env bash\necho user hermes\n")
+            .expect("user wrapper should be created");
+        let planned = super::managed_hermes_wrapper_plan_in_dirs(vec![bin_dir])
+            .expect("user wrapper plan should be created");
         assert!(planned.is_empty());
     }
 
