@@ -42,6 +42,9 @@ User-visible behavior:
   enabling reviewed ffmpeg payloads without making ffmpeg a required bundled dependency.
 - Native bootstrap diagnostics now preserve npm and Unix package-manager failure output, including permission hints for
   Hermes-managed npm cache and `node_modules` paths.
+- If Node dependency or desktop build setup falls back to the install scripts, the Rust bootstrapper now passes its
+  bundled bootstrap-tools path through so script recovery can restore npm-cache, Playwright browser, and Electron cache
+  archives before network downloads.
 - Release npm-cache archive preparation reuses an existing populated workflow npm cache before falling back to
   `npm ci`, reducing release packaging time and avoidable registry traffic.
 - Native Unix PATH setup now updates every existing shell profile relevant to the user's shell, so fresh installs are

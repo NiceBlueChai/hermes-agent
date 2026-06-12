@@ -928,6 +928,7 @@ async fn run_bootstrap(
             &stage.name,
             &install_root,
             Some(&hermes_home),
+            bundled_tools_dir.as_deref(),
             bundled_wheelhouse_dir.as_deref(),
         );
 
@@ -1190,6 +1191,7 @@ fn stage_script_extra_env(
     stage_name: &str,
     install_root: &std::path::Path,
     hermes_home: Option<&std::path::Path>,
+    bundled_tools_dir: Option<&std::path::Path>,
     bundled_wheelhouse_dir: Option<&std::path::Path>,
 ) -> Vec<(String, String)> {
     let mut env = Vec::new();
@@ -1219,6 +1221,14 @@ fn stage_script_extra_env(
             env.push((
                 "PLAYWRIGHT_BROWSERS_PATH".to_string(),
                 home.join("playwright-browsers").display().to_string(),
+            ));
+        }
+    }
+    if stage_name.eq_ignore_ascii_case("node-deps") || stage_name.eq_ignore_ascii_case("desktop") {
+        if let Some(tools_dir) = bundled_tools_dir {
+            env.push((
+                "HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR".to_string(),
+                tools_dir.display().to_string(),
             ));
         }
     }
@@ -1765,7 +1775,7 @@ mod tests {
         let install_root = root.join("hermes-agent");
 
         assert_eq!(
-            stage_script_extra_env("prerequisites", &install_root, None, None),
+            stage_script_extra_env("prerequisites", &install_root, None, None, None),
             vec![
                 ("HERMES_NATIVE_REPOSITORY_ARCHIVE".to_string(), "1".to_string()),
                 ("HERMES_NATIVE_NODE_STAGE".to_string(), "1".to_string()),
@@ -1774,7 +1784,7 @@ mod tests {
                 ("HERMES_NATIVE_UV_STAGE".to_string(), "1".to_string())
             ]
         );
-        assert!(stage_script_extra_env("repository", &install_root, None, None).is_empty());
+        assert!(stage_script_extra_env("repository", &install_root, None, None, None).is_empty());
         assert!(should_try_native_repository_archive(
             "repository",
             &install_root
@@ -1783,7 +1793,7 @@ mod tests {
 
         std::fs::create_dir_all(&install_root).unwrap();
         assert_eq!(
-            stage_script_extra_env("prerequisites", &install_root, None, None),
+            stage_script_extra_env("prerequisites", &install_root, None, None, None),
             vec![
                 ("HERMES_NATIVE_NODE_STAGE".to_string(), "1".to_string()),
                 ("HERMES_NATIVE_PYTHON_STAGE".to_string(), "1".to_string()),
@@ -1805,9 +1815,16 @@ mod tests {
         let root = unique_tmp_dir("node-deps-fallback-env");
         let install_root = root.join("hermes-agent");
         let hermes_home = root.join("home");
+        let bundled_tools = root.join("resources").join("bootstrap-tools");
 
         assert_eq!(
-            stage_script_extra_env("node-deps", &install_root, Some(&hermes_home), None),
+            stage_script_extra_env(
+                "node-deps",
+                &install_root,
+                Some(&hermes_home),
+                Some(&bundled_tools),
+                None,
+            ),
             vec![
                 ("npm_config_cache".to_string(), hermes_home.join("npm-cache").display().to_string()),
                 (
@@ -1825,6 +1842,10 @@ mod tests {
                 (
                     "PLAYWRIGHT_BROWSERS_PATH".to_string(),
                     hermes_home.join("playwright-browsers").display().to_string()
+                ),
+                (
+                    "HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR".to_string(),
+                    bundled_tools.display().to_string()
                 )
             ]
         );
@@ -1844,6 +1865,7 @@ mod tests {
                 "python-deps",
                 &install_root,
                 Some(&hermes_home),
+                None,
                 Some(&bundled_wheelhouse),
             ),
             vec![
@@ -1864,7 +1886,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            stage_script_extra_env("platform-sdks", &install_root, Some(&hermes_home), None),
+            stage_script_extra_env("platform-sdks", &install_root, Some(&hermes_home), None, None),
             vec![("PIP_CACHE_DIR".to_string(), hermes_home.join("pip-cache").display().to_string())]
         );
 

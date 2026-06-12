@@ -1533,6 +1533,75 @@ function Get-LocalWheelhouseDir {
     return $FallbackDir
 }
 
+function Get-BundledBootstrapToolsDir {
+    if ([string]::IsNullOrWhiteSpace($env:HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR)) {
+        return $null
+    }
+    if (-not (Test-Path $env:HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR)) {
+        return $null
+    }
+    return $env:HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR
+}
+
+function Restore-BundledCacheArchive {
+    param(
+        [string]$ArchiveName,
+        [string]$CacheRootName,
+        [string]$Destination
+    )
+    $toolsDir = Get-BundledBootstrapToolsDir
+    if (-not $toolsDir) { return $false }
+    $archive = Join-Path $toolsDir $ArchiveName
+    if (-not (Test-Path $archive)) { return $false }
+
+    $tmpParent = Join-Path $HermesHome "bootstrap-cache"
+    $tmp = Join-Path $tmpParent "extract-$CacheRootName-$([guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+    try {
+        Expand-Archive -LiteralPath $archive -DestinationPath $tmp -Force
+        $source = Join-Path $tmp $CacheRootName
+        if (-not (Test-Path $source)) {
+            $source = $tmp
+        }
+        if (Test-Path $Destination) {
+            Remove-Item -Recurse -Force -LiteralPath $Destination
+        }
+        New-Item -ItemType Directory -Path (Split-Path $Destination -Parent) -Force | Out-Null
+        Move-Item -LiteralPath $source -Destination $Destination -Force
+        Write-Info "Restored $CacheRootName from bundled bootstrap tools"
+        return $true
+    } catch {
+        Write-Warn "Could not restore $CacheRootName from bundled bootstrap tools: $_"
+        return $false
+    } finally {
+        Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
+    }
+}
+
+function Restore-BundledNpmCacheIfAvailable {
+    $arch = Get-WindowsArch
+    Restore-BundledCacheArchive `
+        -ArchiveName "npm-cache-windows-$arch.zip" `
+        -CacheRootName "npm-cache" `
+        -Destination (Join-Path $HermesHome "npm-cache") | Out-Null
+}
+
+function Restore-BundledPlaywrightBrowsersIfAvailable {
+    $arch = Get-WindowsArch
+    return Restore-BundledCacheArchive `
+        -ArchiveName "playwright-browsers-windows-$arch.zip" `
+        -CacheRootName "playwright-browsers" `
+        -Destination (Join-Path $HermesHome "playwright-browsers")
+}
+
+function Restore-BundledElectronCacheIfAvailable {
+    $arch = Get-WindowsArch
+    Restore-BundledCacheArchive `
+        -ArchiveName "electron-cache-windows-$arch.zip" `
+        -CacheRootName "electron-cache" `
+        -Destination (Join-Path $HermesHome "electron-cache") | Out-Null
+}
+
 function Install-LocalWheelhouseTier {
     $fallbackWheelhouseDir = Join-Path $InstallDir "resources\wheelhouse"
     $wheelhouseDir = Get-LocalWheelhouseDir -FallbackDir $fallbackWheelhouseDir
@@ -2033,6 +2102,7 @@ function Install-NodeDeps {
     New-Item -ItemType Directory -Path $browserCacheDir -Force | Out-Null
     $env:npm_config_cache = Join-Path $HermesHome "npm-cache"
     $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $HermesHome "playwright-browsers"
+    Restore-BundledNpmCacheIfAvailable
 
     # Helper: run "npm install" in a given directory and surface the real
     # error when it fails.  Returns $true on success.
@@ -2148,6 +2218,8 @@ function Install-NodeDeps {
             if (-not $npxExe) {
                 Write-Warn "npx not found -- cannot install Playwright Chromium."
                 Write-Info "Run manually later: cd `"$InstallDir`"; npx playwright install chromium"
+            } elseif (Restore-BundledPlaywrightBrowsersIfAvailable) {
+                Write-Success "Browser engine restored from bundled Playwright cache"
             } else {
                 $pwLog = "$env:TEMP\hermes-playwright-install-$(Get-Random).log"
                 Push-Location $InstallDir
@@ -2339,6 +2411,8 @@ function Install-Desktop {
     $env:electron_config_cache = Join-Path $HermesHome "electron-cache"
     $env:ELECTRON_CACHE = Join-Path $HermesHome "electron-cache"
     $env:ELECTRON_BUILDER_CACHE = Join-Path $HermesHome "electron-cache"
+    Restore-BundledNpmCacheIfAvailable
+    Restore-BundledElectronCacheIfAvailable
 
     # 1. Workspace-level install so apps/desktop's deps (Electron, Vite,
     # node-pty prebuilds, etc.) actually land in node_modules. This is

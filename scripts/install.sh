@@ -1388,6 +1388,106 @@ local_wheelhouse_dir() {
     fi
 }
 
+bundled_bootstrap_tools_dir() {
+    if [ -n "${HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR:-}" ] \
+        && [ -d "$HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR" ]; then
+        printf '%s\n' "$HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR"
+    fi
+}
+
+bootstrap_tools_python() {
+    if [ -x "$INSTALL_DIR/venv/bin/python" ]; then
+        printf '%s\n' "$INSTALL_DIR/venv/bin/python"
+    elif command -v python3 >/dev/null 2>&1; then
+        command -v python3
+    elif command -v python >/dev/null 2>&1; then
+        command -v python
+    fi
+}
+
+restore_bundled_cache_archive() {
+    local archive_name="$1"
+    local cache_root_name="$2"
+    local destination="$3"
+    local tools_dir python_path archive
+    tools_dir="$(bundled_bootstrap_tools_dir)"
+    [ -n "$tools_dir" ] || return 1
+    archive="$tools_dir/$archive_name"
+    [ -f "$archive" ] || return 1
+    python_path="$(bootstrap_tools_python)"
+    [ -n "$python_path" ] || return 1
+
+    "$python_path" - "$archive" "$cache_root_name" "$destination" <<'PY'
+import os
+import shutil
+import sys
+import tarfile
+import tempfile
+import zipfile
+from pathlib import Path
+
+archive = Path(sys.argv[1])
+cache_root_name = sys.argv[2]
+destination = Path(sys.argv[3])
+
+def safe_member(name: str) -> bool:
+    path = Path(name)
+    return not path.is_absolute() and ".." not in path.parts
+
+tmp = Path(tempfile.mkdtemp(prefix=f"{cache_root_name}-", dir=str(destination.parent)))
+try:
+    if archive.suffix == ".zip":
+        with zipfile.ZipFile(archive) as zf:
+            for member in zf.infolist():
+                if not safe_member(member.filename):
+                    raise RuntimeError(f"unsafe archive member: {member.filename}")
+            zf.extractall(tmp)
+    else:
+        with tarfile.open(archive, "r:gz") as tf:
+            for member in tf.getmembers():
+                if not safe_member(member.name) or member.issym() or member.islnk():
+                    raise RuntimeError(f"unsafe archive member: {member.name}")
+            tf.extractall(tmp)
+
+    source = tmp / cache_root_name
+    if not source.exists():
+        source = tmp
+    if destination.exists():
+        shutil.rmtree(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(destination))
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)
+PY
+}
+
+restore_bundled_npm_cache_if_available() {
+    local platform arch
+    platform="$(get_wheelhouse_platform)"
+    arch="$(get_wheelhouse_arch)"
+    [ -n "$platform" ] && [ -n "$arch" ] || return 1
+    restore_bundled_cache_archive "npm-cache-$platform-$arch.tar.gz" \
+        "npm-cache" "$HERMES_HOME/npm-cache"
+}
+
+restore_bundled_playwright_browsers_if_available() {
+    local platform arch
+    platform="$(get_wheelhouse_platform)"
+    arch="$(get_wheelhouse_arch)"
+    [ -n "$platform" ] && [ -n "$arch" ] || return 1
+    restore_bundled_cache_archive "playwright-browsers-$platform-$arch.tar.gz" \
+        "playwright-browsers" "$HERMES_HOME/playwright-browsers"
+}
+
+restore_bundled_electron_cache_if_available() {
+    local platform arch
+    platform="$(get_wheelhouse_platform)"
+    arch="$(get_wheelhouse_arch)"
+    [ -n "$platform" ] && [ -n "$arch" ] || return 1
+    restore_bundled_cache_archive "electron-cache-$platform-$arch.tar.gz" \
+        "electron-cache" "$HERMES_HOME/electron-cache"
+}
+
 install_local_wheelhouse_tier() {
     local wheelhouse_dir
     wheelhouse_dir="$(local_wheelhouse_dir "$INSTALL_DIR/resources/wheelhouse")"
@@ -2137,6 +2237,7 @@ install_node_deps() {
     mkdir -p "$HERMES_HOME/npm-cache" "$HERMES_HOME/playwright-browsers"
     export npm_config_cache="$HERMES_HOME/npm-cache"
     export PLAYWRIGHT_BROWSERS_PATH="$HERMES_HOME/playwright-browsers"
+    restore_bundled_npm_cache_if_available || true
 
     if [ -f "$INSTALL_DIR/package.json" ]; then
         log_info "Installing Node.js dependencies (browser tools)..."
@@ -2169,6 +2270,8 @@ install_node_deps() {
         if [ -n "$DETECTED_BROWSER_EXECUTABLE" ]; then
             log_success "Found system Chrome/Chromium at $DETECTED_BROWSER_EXECUTABLE"
             log_info "Skipping Playwright browser download; Hermes will use the system browser."
+        elif restore_bundled_playwright_browsers_if_available; then
+            log_success "Browser engine restored from bundled Playwright cache"
         else
             case "$DISTRO" in
                 ubuntu|debian|raspbian|pop|linuxmint|elementary|zorin|kali|parrot)
@@ -2745,6 +2848,8 @@ install_desktop() {
     export electron_config_cache="$HERMES_HOME/electron-cache"
     export ELECTRON_CACHE="$HERMES_HOME/electron-cache"
     export ELECTRON_BUILDER_CACHE="$HERMES_HOME/electron-cache"
+    restore_bundled_npm_cache_if_available || true
+    restore_bundled_electron_cache_if_available || true
 
     # 1. Root workspace install so apps/desktop's deps (Electron, Vite,
     #    node-pty prebuilds) resolve. The browser-tools install runs in the

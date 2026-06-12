@@ -22,6 +22,10 @@ class InstallScriptManagedCachesTests(unittest.TestCase):
         self.assertIn("${HERMES_BUNDLED_WHEELHOUSE_DIR:-}", script)
         self.assertIn('local_wheelhouse_dir "$INSTALL_DIR/resources/wheelhouse"', script)
         self.assertGreaterEqual(script.count('local_wheelhouse_dir "$INSTALL_DIR/resources/wheelhouse"'), 2)
+        self.assertIn("${HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR:-}", script)
+        self.assertIn("restore_bundled_npm_cache_if_available", script)
+        self.assertIn("restore_bundled_playwright_browsers_if_available", script)
+        self.assertIn("restore_bundled_electron_cache_if_available", script)
 
     def test_install_ps1_exports_managed_python_caches(self):
         """Direct Windows installs should not spill uv or pip caches into user-global directories."""
@@ -33,3 +37,7 @@ class InstallScriptManagedCachesTests(unittest.TestCase):
         self.assertIn("$env:HERMES_BUNDLED_WHEELHOUSE_DIR", script)
         self.assertIn('Get-LocalWheelhouseDir -FallbackDir $fallbackWheelhouseDir', script)
         self.assertGreaterEqual(script.count("Get-LocalWheelhouseDir -FallbackDir"), 2)
+        self.assertIn("$env:HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR", script)
+        self.assertIn("Restore-BundledNpmCacheIfAvailable", script)
+        self.assertIn("Restore-BundledPlaywrightBrowsersIfAvailable", script)
+        self.assertIn("Restore-BundledElectronCacheIfAvailable", script)
