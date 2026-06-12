@@ -1468,7 +1468,12 @@ try:
     else:
         with tarfile.open(archive, "r:gz") as tf:
             for member in tf.getmembers():
-                if not safe_member(member.name) or member.issym() or member.islnk():
+                if (
+                    not safe_member(member.name)
+                    or member.issym()
+                    or member.islnk()
+                    or not (member.isfile() or member.isdir())
+                ):
                     raise RuntimeError(f"unsafe archive member: {member.name}")
             tf.extractall(tmp)
 

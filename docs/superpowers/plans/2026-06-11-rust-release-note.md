@@ -98,6 +98,7 @@ User-visible behavior:
   release installer workflows pass those resource arguments before uploading packaged artifacts.
 - Runtime tar.gz extraction now accepts only regular files and directories, rejecting special entries before packaged
   cache archives can write them into `HERMES_HOME`.
+- Shell-script bundled cache fallback now applies the same tar member type restriction as the Rust installer path.
 
 Compatibility and fallback:
 

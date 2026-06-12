@@ -25,6 +25,8 @@ class InstallScriptManagedCachesTests(unittest.TestCase):
         self.assertIn("${HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR:-}", script)
         self.assertIn("bootstrap-tools-manifest.json", script)
         self.assertIn("hashlib.sha256", script)
+        self.assertIn("member.isfile()", script)
+        self.assertIn("member.isdir()", script)
         self.assertIn("restore_bundled_npm_cache_if_available", script)
         self.assertIn("restore_bundled_playwright_browsers_if_available", script)
         self.assertIn("restore_bundled_electron_cache_if_available", script)

@@ -737,6 +737,8 @@ language-specific setup where needed.
   bundled file or manifest-sourced checksum, keeping installer behavior aligned with release validation.
 - Runtime tar.gz extraction now rejects special entries such as FIFOs or device nodes, so packaged optional cache
   archives can only install regular files and directories.
+- Shell-script cache-archive fallback now applies the same regular-file/directory-only tar extraction rule, keeping
+  fallback behavior aligned with the Rust installer path.
 - Installer artifact validation now receives the expected release platform from the Windows/Linux/macOS workflows and
   rejects `bootstrap-tools` manifests whose archive records target a different platform.
 - Duplicate archive names are rejected by the validate-only gate, keeping each bundled runtime archive's ownership,
