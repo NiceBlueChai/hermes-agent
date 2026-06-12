@@ -190,6 +190,14 @@ source = { registry = "https://pypi.org/simple" }
             self.assertIn("--arch", text)
             self.assertIn("wheelhouse/wheelhouse-manifest.json", text)
             self.assertIn("wheelhouse/*.whl", text)
+            wheelhouse_upload_sections = [
+                section
+                for section in text.split("- name: ")
+                if "Upload Python wheelhouse" in section and "actions/upload-artifact@" in section
+            ]
+            self.assertTrue(wheelhouse_upload_sections)
+            for section in wheelhouse_upload_sections:
+                self.assertIn("if-no-files-found: error", section)
 
 
 if __name__ == "__main__":

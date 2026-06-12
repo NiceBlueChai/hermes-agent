@@ -54,10 +54,6 @@ jobs:
                       artifact-name: Hermes-Setup-linux
                       artifact-path: |
                           apps/bootstrap-installer/src-tauri/target/release/bundle/appimage/*.AppImage
-                          apps/bootstrap-installer/src-tauri/bootstrap-tools/*.tar.gz
-                          apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json
-                          apps/bootstrap-installer/src-tauri/wheelhouse/*.whl
-                          apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json
                     - name: Hermes-Setup macOS
                       os: macos-latest
                       platform: macos
@@ -65,10 +61,6 @@ jobs:
                       artifact-path: |
                           apps/bootstrap-installer/src-tauri/target/release/bundle/dmg/*.dmg
                           apps/bootstrap-installer/src-tauri/target/release/bundle/macos/*.app
-                          apps/bootstrap-installer/src-tauri/bootstrap-tools/*.tar.gz
-                          apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json
-                          apps/bootstrap-installer/src-tauri/wheelhouse/*.whl
-                          apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json
 
         steps:
             - name: Checkout code
@@ -215,4 +207,27 @@ jobs:
               with:
                   name: ${{ matrix.artifact-name }}
                   path: ${{ matrix.artifact-path }}
+                  if-no-files-found: error
+
+            - name: Upload bootstrap tools manifest
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+              with:
+                  name: ${{ matrix.artifact-name }}-bootstrap-tools-manifest
+                  path: apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json
+                  if-no-files-found: error
+
+            - name: Upload bootstrap tool archives
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+              with:
+                  name: ${{ matrix.artifact-name }}-bootstrap-tools
+                  path: apps/bootstrap-installer/src-tauri/bootstrap-tools/*.tar.gz
+                  if-no-files-found: error
+
+            - name: Upload Python wheelhouse
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+              with:
+                  name: ${{ matrix.artifact-name }}-python-wheelhouse
+                  path: |
+                      apps/bootstrap-installer/src-tauri/wheelhouse/*.whl
+                      apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json
                   if-no-files-found: error

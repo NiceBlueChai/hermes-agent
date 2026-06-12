@@ -959,13 +959,36 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         self.assertIn("--bootstrap-tools-platform ${{ matrix.platform }}", unix_workflow)
         self.assertIn("--bootstrap-tools-arch x64", windows_workflow)
         self.assertIn("--bootstrap-tools-arch ${{ runner.arch", unix_workflow)
-        upload_sections = [
+        windows_upload_sections = [
             section
             for section in windows_workflow.split("\n      - name: ")
             if "actions/upload-artifact@" in section
         ]
-        self.assertGreaterEqual(len(upload_sections), 3)
-        for section in upload_sections:
+        unix_upload_sections = [
+            section
+            for section in unix_workflow.split("\n            - name: ")
+            if "actions/upload-artifact@" in section
+        ]
+        self.assertGreaterEqual(len(windows_upload_sections), 3)
+        self.assertGreaterEqual(len(unix_upload_sections), 4)
+        unix_installer_upload = next(
+            section for section in unix_upload_sections if section.startswith("Upload installer artifacts")
+        )
+        self.assertNotIn("bootstrap-tools/", unix_installer_upload)
+        self.assertNotIn("wheelhouse/", unix_installer_upload)
+        self.assertTrue(
+            any(
+                "Upload bootstrap tools manifest" in section and manifest_path in section
+                for section in unix_upload_sections
+            ),
+        )
+        self.assertTrue(
+            any(
+                "Upload bootstrap tool archives" in section and archive_globs[1] in section
+                for section in unix_upload_sections
+            ),
+        )
+        for section in windows_upload_sections + unix_upload_sections:
             self.assertIn("if-no-files-found: error", section)
 
     def test_installer_workflows_accept_optional_audited_archives(self):

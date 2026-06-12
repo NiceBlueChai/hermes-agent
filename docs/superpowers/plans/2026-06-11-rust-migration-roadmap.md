@@ -312,6 +312,8 @@ language-specific setup where needed.
   environment as the native Rust path, keeping retry/recovery installs under Hermes-owned runtime directories.
 - Direct `install.ps1` and `install.sh` runs now also set `UV_CACHE_DIR` and `PIP_CACHE_DIR` under `$HERMES_HOME`,
   aligning one-liner installs with the Rust bootstrap cache layout and lite-uninstall ownership model.
+- Unix installer workflows now upload installer binaries, bootstrap tool manifests/archives, and Python wheelhouse
+  payloads as separate release artifacts, matching Windows and keeping bundled dependency payloads directly auditable.
 - `venv` now runs native-first through Rust by invoking `uv venv venv --python 3.11` in the checkout, with script
   fallback preserved if native venv creation fails.
 - Python dependency installation now has a Rust native-first lockfile path using `uv sync --extra all --locked` with

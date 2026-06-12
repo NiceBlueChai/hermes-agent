@@ -57,6 +57,8 @@ User-visible behavior:
 - Installer release workflows now generate a Python wheelhouse with `pip wheel .[all]`, write
   `wheelhouse-manifest.json`, validate every wheel's platform, architecture, Python tag, size, and SHA-256, and upload
   the retained wheel payload for release review.
+- Linux and macOS installer workflows now upload installer binaries, bootstrap tool payloads, and Python wheelhouse
+  payloads as separate artifacts, matching Windows and making bundled dependency review explicit.
 - The built installer's no-UI self-check now verifies the bundled wheelhouse manifest and rejects missing, mismatched,
   or unmanifested wheel payloads during release smoke tests.
 - At install time, a wheelhouse with a manifest is used only when every listed wheel still matches its recorded size and
