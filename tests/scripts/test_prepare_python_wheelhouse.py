@@ -24,12 +24,13 @@ def _load_script_module():
 class PreparePythonWheelhouseTests(unittest.TestCase):
     """Validate wheelhouse manifest generation and release checks."""
 
-    def test_build_pip_wheel_command_targets_all_extra(self):
+    def test_build_pip_wheel_command_targets_all_extra_with_constraints(self):
         module = _load_script_module()
         repo_root = Path("repo")
         output_dir = Path("wheelhouse")
+        constraints = Path("constraints.txt")
 
-        command = module.build_pip_wheel_command(repo_root, output_dir, "python3")
+        command = module.build_pip_wheel_command(repo_root, output_dir, "python3", constraints)
 
         self.assertEqual(
             command,
@@ -40,9 +41,46 @@ class PreparePythonWheelhouseTests(unittest.TestCase):
                 "wheel",
                 "--wheel-dir",
                 str(output_dir),
+                "--constraint",
+                str(constraints),
                 ".[all]",
             ],
         )
+
+    def test_build_locked_constraint_lines_uses_registry_packages_from_uv_lock(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp) / "repo"
+            repo_root.mkdir()
+            (repo_root / "uv.lock").write_text(
+                """
+version = 1
+
+[[package]]
+name = "hermes-agent"
+version = "0.16.0"
+source = { editable = "." }
+
+[[package]]
+name = "Requests"
+version = "2.33.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "urllib3"
+version = "2.7.0"
+source = { registry = "https://pypi.org/simple" }
+""".lstrip(),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                module.build_locked_constraint_lines(repo_root),
+                [
+                    "Requests==2.33.0",
+                    "urllib3==2.7.0",
+                ],
+            )
 
     def test_manifest_records_wheel_platform_arch_python_size_and_sha256(self):
         module = _load_script_module()

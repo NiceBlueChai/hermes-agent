@@ -569,6 +569,8 @@ language-specific setup where needed.
 - Python wheelhouse manifests now also record dependency input hashes for `pyproject.toml` and `uv.lock`, and the
   release validate-only and final artifact-validation paths reject stale wheelhouse payloads when those inputs no longer
   match the current checkout.
+- Python wheelhouse preparation now derives a temporary pip constraints file from registry packages pinned in `uv.lock`,
+  so release wheel builds stay lock-constrained without requiring an extra `uv export` tool on the CI runner.
 - The no-UI installer self-check now accepts `--self-check-wheelhouse` and validates the bundled wheelhouse manifest,
   every wheel checksum, and unmanifested payloads before release artifacts are accepted.
 - The no-UI installer self-check now also requires wheelhouse `sourceFiles` audit metadata with safe source names and

@@ -16,15 +16,22 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10 CI runners.
+    from pip._vendor import tomli as tomllib
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "apps" / "bootstrap-installer" / "src-tauri" / "wheelhouse"
 MANIFEST_NAME = "wheelhouse-manifest.json"
 ALLOWED_METADATA = {".gitignore", "README.md", MANIFEST_NAME}
+LOCKED_CONSTRAINTS_NAME = "wheelhouse-constraints.txt"
 
 
 @dataclass(frozen=True)
@@ -85,18 +92,63 @@ def python_tag_from_executable(python: str) -> str:
     return output.strip()
 
 
-def build_pip_wheel_command(repo_root: Path, output_dir: Path, python: str) -> list[str]:
+def build_locked_constraint_lines(repo_root: Path) -> list[str]:
+    """Return pip constraints derived from registry packages pinned in uv.lock."""
+
+    lock_path = repo_root / "uv.lock"
+    if not lock_path.is_file():
+        return []
+    payload = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    constraints: dict[str, str] = {}
+    for package in payload.get("package", []):
+        source = package.get("source") or {}
+        if "registry" not in source:
+            continue
+        name = package.get("name")
+        version = package.get("version")
+        if not isinstance(name, str) or not isinstance(version, str):
+            continue
+        key = canonical_package_name(name)
+        line = f"{name}=={version}"
+        existing = constraints.get(key)
+        if existing is not None and existing != line:
+            raise RuntimeError(f"uv.lock contains conflicting versions for {name}")
+        constraints[key] = line
+    return [constraints[key] for key in sorted(constraints)]
+
+
+def canonical_package_name(name: str) -> str:
+    """Normalize a Python package name for duplicate detection."""
+
+    return name.lower().replace("_", "-")
+
+
+def write_locked_constraints(path: Path, constraints: list[str]) -> None:
+    """Write a temporary pip constraints file for lock-driven wheel builds."""
+
+    path.write_text("\n".join(constraints) + "\n", encoding="utf-8")
+
+
+def build_pip_wheel_command(
+    repo_root: Path,
+    output_dir: Path,
+    python: str,
+    constraints_path: Path | None = None,
+) -> list[str]:
     """Build the pip command used to materialize the release wheelhouse."""
 
-    return [
+    command = [
         python,
         "-m",
         "pip",
         "wheel",
         "--wheel-dir",
         str(output_dir),
-        ".[all]",
     ]
+    if constraints_path is not None:
+        command.extend(["--constraint", str(constraints_path)])
+    command.append(".[all]")
+    return command
 
 
 def prepare_wheelhouse(
@@ -113,11 +165,19 @@ def prepare_wheelhouse(
     output_dir.mkdir(parents=True, exist_ok=True)
     if force:
         clean_wheelhouse(output_dir)
-    command = build_pip_wheel_command(repo_root, output_dir, python)
+    constraints = build_locked_constraint_lines(repo_root)
     if dry_run:
+        constraints_path = output_dir / LOCKED_CONSTRAINTS_NAME if constraints else None
+        command = build_pip_wheel_command(repo_root, output_dir, python, constraints_path)
         print("[wheelhouse] would run " + " ".join(command))
         return []
-    subprocess.run(command, cwd=repo_root, check=True)
+    with tempfile.TemporaryDirectory(prefix="hermes-wheelhouse-") as tmp:
+        constraints_path = None
+        if constraints:
+            constraints_path = Path(tmp) / LOCKED_CONSTRAINTS_NAME
+            write_locked_constraints(constraints_path, constraints)
+        command = build_pip_wheel_command(repo_root, output_dir, python, constraints_path)
+        subprocess.run(command, cwd=repo_root, check=True)
     python_tag = python_tag_from_executable(python)
     wheels = sorted(output_dir.glob("*.whl"))
     if not wheels:
