@@ -4740,7 +4740,12 @@ fn bootstrap_archive_target_from_name(name: &str) -> Option<BootstrapArchiveTarg
 }
 
 fn bootstrap_archive_name_is_plain_file(name: &str) -> bool {
-    !name.is_empty() && name != "." && name != ".." && !name.contains('/') && !name.contains('\\')
+    !name.trim().is_empty()
+        && name == name.trim()
+        && name != "."
+        && name != ".."
+        && !name.contains('/')
+        && !name.contains('\\')
 }
 
 fn bundled_archive_is_manifest_listed(bundled_tools_dir: &Path, archive_name: &str) -> bool {
@@ -7813,6 +7818,14 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn bootstrap_archive_name_rejects_blank_or_padded_names() {
+        assert!(!bootstrap_archive_name_is_plain_file(""));
+        assert!(!bootstrap_archive_name_is_plain_file("   "));
+        assert!(!bootstrap_archive_name_is_plain_file(" uv-x86_64-pc-windows-msvc.zip"));
+        assert!(!bootstrap_archive_name_is_plain_file("uv-x86_64-pc-windows-msvc.zip "));
     }
 
     #[test]

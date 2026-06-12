@@ -745,6 +745,8 @@ language-specific setup where needed.
   installer archive path boundary.
 - PowerShell cache-archive fallback now validates ZIP member paths before `Expand-Archive`, keeping Windows script
   fallback aligned with the Rust installer ZIP extraction boundary.
+- Rust bootstrap archive manifest validation now rejects blank or padded resource archive names at the shared
+  plain-file guard, keeping bundled-resource selection strict before target matching.
 - Installer artifact validation now receives the expected release platform from the Windows/Linux/macOS workflows and
   rejects `bootstrap-tools` manifests whose archive records target a different platform.
 - Duplicate archive names are rejected by the validate-only gate, keeping each bundled runtime archive's ownership,

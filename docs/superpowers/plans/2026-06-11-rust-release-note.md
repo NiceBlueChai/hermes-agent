@@ -103,6 +103,7 @@ User-visible behavior:
 - Shell-script bundled cache fallback now applies the same tar member type restriction as the Rust installer path.
 - Shell-script bundled cache fallback now rejects blank archive member names before extraction.
 - PowerShell bundled cache fallback now rejects unsafe ZIP member paths before extraction.
+- Rust bundled-resource manifest validation now rejects blank or padded archive names before target matching.
 
 Compatibility and fallback:
 
