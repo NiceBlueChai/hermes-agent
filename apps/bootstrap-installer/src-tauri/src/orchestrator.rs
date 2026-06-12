@@ -2395,8 +2395,8 @@ fn latest_unix_node_archive_name(
 ) -> Option<String> {
     let xz_suffix = format!("-{node_os}-{arch}.tar.xz");
     let gz_suffix = format!("-{node_os}-{arch}.tar.gz");
-    latest_node_archive_name_with_suffix(index_html, version_major, &xz_suffix).or_else(|| {
-        latest_node_archive_name_with_suffix(index_html, version_major, &gz_suffix)
+    latest_node_archive_name_with_suffix(index_html, version_major, &gz_suffix).or_else(|| {
+        latest_node_archive_name_with_suffix(index_html, version_major, &xz_suffix)
     })
 }
 
@@ -2486,7 +2486,7 @@ fn latest_bundled_unix_node_archive_name(
         version_major,
         node_os,
         arch,
-        "tar.xz",
+        "tar.gz",
     )
     .or_else(|| {
         latest_bundled_unix_node_archive_name_with_extension(
@@ -2494,7 +2494,7 @@ fn latest_bundled_unix_node_archive_name(
             version_major,
             node_os,
             arch,
-            "tar.gz",
+            "tar.xz",
         )
     })
 }
@@ -2715,6 +2715,10 @@ fn install_windows_node_archive(archive_path: &Path, install_dir: &Path) -> Resu
 }
 
 fn install_unix_node_archive(archive_path: &Path, install_dir: &Path) -> Result<()> {
+    extract_unix_node_tar_gz(archive_path, install_dir)
+}
+
+fn extract_unix_node_tar_gz(archive_path: &Path, install_dir: &Path) -> Result<()> {
     let parent = install_dir.parent().ok_or_else(|| {
         anyhow!(
             "Node install directory has no parent: {}",
@@ -2729,21 +2733,7 @@ fn install_unix_node_archive(archive_path: &Path, install_dir: &Path) -> Result<
         .with_context(|| format!("creating Node extraction directory {}", tmp_dir.display()))?;
 
     let result: Result<()> = (|| {
-        let status = Command::new("tar")
-            .args(["-xf"])
-            .arg(archive_path)
-            .arg("-C")
-            .arg(&tmp_dir)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .with_context(|| format!("extracting {}", archive_path.display()))?;
-        if !status.success() {
-            return Err(anyhow!(
-                "Node archive extraction failed with exit {:?}",
-                status.code()
-            ));
-        }
+        extract_tar_gz_archive(archive_path, &tmp_dir, "Node")?;
         let extracted_root = single_child_dir(&tmp_dir)?;
         remove_path_if_exists(install_dir)?;
         fs::rename(&extracted_root, install_dir).with_context(|| {
@@ -4077,11 +4067,11 @@ mod tests {
     }
 
     #[test]
-    fn unix_node_runtime_stage_plan_prefers_latest_xz_tarball() {
+    fn unix_node_runtime_stage_plan_prefers_latest_gz_tarball() {
         let html = r#"
             <a href="node-v22.18.0-linux-x64.tar.xz">node-v22.18.0-linux-x64.tar.xz</a>
             <a href="node-v22.19.1-linux-arm64.tar.xz">node-v22.19.1-linux-arm64.tar.xz</a>
-            <a href="node-v22.19.0-linux-x64.tar.gz">node-v22.19.0-linux-x64.tar.gz</a>
+            <a href="node-v22.19.2-linux-x64.tar.gz">node-v22.19.2-linux-x64.tar.gz</a>
             <a href="node-v22.19.1-linux-x64.tar.xz">node-v22.19.1-linux-x64.tar.xz</a>
         "#;
         let root = std::env::temp_dir().join(format!(
@@ -4099,10 +4089,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(plan.version_major, 22);
-        assert_eq!(plan.archive_name, "node-v22.19.1-linux-x64.tar.xz");
+        assert_eq!(plan.archive_name, "node-v22.19.2-linux-x64.tar.gz");
         assert_eq!(
             plan.download_url,
-            "https://nodejs.org/dist/latest-v22.x/node-v22.19.1-linux-x64.tar.xz"
+            "https://nodejs.org/dist/latest-v22.x/node-v22.19.2-linux-x64.tar.gz"
         );
         assert_eq!(plan.install_dir, hermes_home.join("node"));
         assert_eq!(plan.node_bin, hermes_home.join("node").join("bin").join("node"));
@@ -4140,6 +4130,32 @@ mod tests {
             hermes_home.join("node").join("bin").join("npx")
         );
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_unix_node_archive_moves_single_root_from_nested_tar_gz() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-unix-node-archive-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive = root.join("node.tar.gz");
+        write_test_tar_gz(
+            &archive,
+            &[
+                ("node-v22.19.2-linux-x64/bin/node", b"fake node"),
+                ("node-v22.19.2-linux-x64/bin/npm", b"fake npm"),
+                ("node-v22.19.2-linux-x64/bin/npx", b"fake npx"),
+            ],
+        );
+        let install_dir = root.join("home").join("node");
+
+        extract_unix_node_tar_gz(&archive, &install_dir).unwrap();
+
+        assert_eq!(std::fs::read(install_dir.join("bin").join("node")).unwrap(), b"fake node");
+        assert_eq!(std::fs::read(install_dir.join("bin").join("npm")).unwrap(), b"fake npm");
+        assert!(!install_dir.with_extension("extracting").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -4449,7 +4465,7 @@ mod tests {
     }
 
     #[test]
-    fn bundled_unix_node_archive_picker_prefers_matching_xz() {
+    fn bundled_unix_node_archive_picker_prefers_matching_gz() {
         let root = std::env::temp_dir().join(format!(
             "hermes-bundled-unix-node-archive-test-{}",
             std::process::id()
@@ -4459,7 +4475,7 @@ mod tests {
         for name in [
             "node-v22.18.0-linux-x64.tar.xz",
             "node-v22.20.1-linux-arm64.tar.xz",
-            "node-v22.19.1-linux-x64.tar.gz",
+            "node-v22.19.3-linux-x64.tar.gz",
             "node-v22.19.2-linux-x64.tar.xz",
             "node-v21.7.3-linux-x64.tar.xz",
         ] {
@@ -4469,7 +4485,7 @@ mod tests {
         let picked =
             latest_bundled_unix_node_archive_name(Some(&bundled), 22, "linux", "x64");
 
-        assert_eq!(picked.as_deref(), Some("node-v22.19.2-linux-x64.tar.xz"));
+        assert_eq!(picked.as_deref(), Some("node-v22.19.3-linux-x64.tar.gz"));
 
         let _ = std::fs::remove_dir_all(&root);
     }

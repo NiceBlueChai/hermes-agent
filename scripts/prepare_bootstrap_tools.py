@@ -104,9 +104,9 @@ def select_latest_unix_node_archive(
     arch: str,
     major: int = NODE_MAJOR,
 ) -> str:
-    """Return the newest Node.js Unix tarball name, preferring xz over gzip."""
+    """Return the newest Node.js Unix tarball name, preferring gzip over xz."""
 
-    for extension in ("tar.xz", "tar.gz"):
+    for extension in ("tar.gz", "tar.xz"):
         pattern = re.compile(
             rf"node-v({major})\.(\d+)\.(\d+)-{re.escape(node_os)}-{re.escape(arch)}\.{extension}"
         )

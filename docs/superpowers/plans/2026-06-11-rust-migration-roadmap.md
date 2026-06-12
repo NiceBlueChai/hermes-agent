@@ -198,8 +198,8 @@ language-specific setup where needed.
   voice-message support.
 - Unix `system-packages` now mirrors that native-first ripgrep path with pinned Linux/macOS tarballs, then falls back to
   `install.sh` for ffmpeg/package-manager recovery so voice-message support remains intact.
-- Unix ripgrep and uv `.tar.gz` extraction now run through Rust instead of spawning system `tar`, reducing external
-  tool assumptions in native runtime setup paths.
+- Unix Node, uv, and ripgrep `.tar.gz` extraction now run through Rust instead of spawning system `tar`; Unix Node
+  release preparation prefers `.tar.gz` over `.tar.xz` so packaged native setup no longer assumes system `tar`/`xz`.
 - Unix PATH/profile setup now includes both the Hermes virtualenv command directory and `$HERMES_HOME/bin`, so Rust
   installed tools such as `uv` and `rg` remain available after bootstrap instead of only inside the installer process.
 - Unix PATH/profile setup now detects fish shells and writes Hermes-managed `fish_add_path` entries to
