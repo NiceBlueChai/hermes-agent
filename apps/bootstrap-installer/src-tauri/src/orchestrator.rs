@@ -668,11 +668,18 @@ fn env_has_configured_platform_value(text: &str, env_var: &str) -> bool {
         let Some((key, value)) = trimmed.split_once('=') else {
             return false;
         };
-        if key != env_var {
+        if key.trim() != env_var {
             return false;
         }
-        let value = value.trim();
+        let value = value.trim().trim_matches('"').trim_matches('\'');
+        let disabled = ["0", "false", "no", "off", "none", "null"];
         if value.is_empty() || value.eq_ignore_ascii_case("your-token-here") {
+            return false;
+        }
+        if disabled
+            .iter()
+            .any(|disabled| value.eq_ignore_ascii_case(disabled))
+        {
             return false;
         }
         if env_var == "WHATSAPP_ENABLED" {
@@ -6324,6 +6331,19 @@ mod tests {
                 ("SLACK_BOT_TOKEN", "slack_sdk", "slack-sdk>=3.27.0,<4"),
             ]
         );
+    }
+
+    #[test]
+    fn platform_sdk_requirements_ignore_disabled_token_values() {
+        let env = concat!(
+            "TELEGRAM_BOT_TOKEN=false\n",
+            "DISCORD_BOT_TOKEN=0\n",
+            "SLACK_BOT_TOKEN=no\n",
+            "SLACK_APP_TOKEN=off\n",
+            "WHATSAPP_ENABLED=null\n",
+        );
+
+        assert!(platform_sdk_requirements_from_env(env).is_empty());
     }
 
     #[test]
