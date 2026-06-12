@@ -282,6 +282,8 @@ language-specific setup where needed.
   browser tool uses the same managed path by default when no explicit Playwright browser path is configured.
 - Script fallback for Node dependency and desktop stages now receives the Tauri bundled bootstrap-tools path and can
   restore release-bundled npm-cache, Playwright browser, and Electron cache archives before network downloads.
+- Direct script cache recovery now validates those bundled cache archives against `bootstrap-tools-manifest.json`
+  size and SHA-256 metadata before extracting them, preserving network fallback for missing or mismatched archives.
 - Native Playwright Chromium install now mirrors the Linux shell recovery for apt-family distributions by using
   Playwright's `--with-deps` path when root or non-interactive sudo is available, and mirrors the Arch-family recovery
   by installing the same pacman system libraries before the browser download.

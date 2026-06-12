@@ -1543,6 +1543,47 @@ function Get-BundledBootstrapToolsDir {
     return $env:HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR
 }
 
+function Test-BundledCacheArchiveManifest {
+    param(
+        [string]$ToolsDir,
+        [string]$ArchiveName,
+        [string]$ArchivePath
+    )
+    $manifestPath = Join-Path $ToolsDir "bootstrap-tools-manifest.json"
+    if (-not (Test-Path $manifestPath)) {
+        Write-Warn "Skipping bundled cache archive without manifest: $ArchiveName"
+        return $false
+    }
+
+    try {
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $record = $manifest.archives | Where-Object { $_.name -eq $ArchiveName } | Select-Object -First 1
+        if (-not $record) {
+            Write-Warn "Skipping bundled cache archive not listed in manifest: $ArchiveName"
+            return $false
+        }
+
+        $expectedSize = [int64]$record.sizeBytes
+        $actualSize = (Get-Item -LiteralPath $ArchivePath).Length
+        if ($expectedSize -ne $actualSize) {
+            Write-Warn "Skipping bundled cache archive with size mismatch: $ArchiveName"
+            return $false
+        }
+
+        $expectedHash = [string]$record.sha256
+        $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ArchivePath).Hash.ToLowerInvariant()
+        if ($expectedHash.ToLowerInvariant() -ne $actualHash) {
+            Write-Warn "Skipping bundled cache archive with checksum mismatch: $ArchiveName"
+            return $false
+        }
+
+        return $true
+    } catch {
+        Write-Warn "Skipping bundled cache archive with invalid manifest entry: $ArchiveName"
+        return $false
+    }
+}
+
 function Restore-BundledCacheArchive {
     param(
         [string]$ArchiveName,
@@ -1553,6 +1594,12 @@ function Restore-BundledCacheArchive {
     if (-not $toolsDir) { return $false }
     $archive = Join-Path $toolsDir $ArchiveName
     if (-not (Test-Path $archive)) { return $false }
+    if (-not (Test-BundledCacheArchiveManifest `
+                -ToolsDir $toolsDir `
+                -ArchiveName $ArchiveName `
+                -ArchivePath $archive)) {
+        return $false
+    }
 
     $tmpParent = Join-Path $HermesHome "bootstrap-cache"
     $tmp = Join-Path $tmpParent "extract-$CacheRootName-$([guid]::NewGuid().ToString('N'))"

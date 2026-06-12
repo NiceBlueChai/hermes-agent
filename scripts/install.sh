@@ -1418,6 +1418,8 @@ restore_bundled_cache_archive() {
     [ -n "$python_path" ] || return 1
 
     "$python_path" - "$archive" "$cache_root_name" "$destination" <<'PY'
+import hashlib
+import json
 import os
 import shutil
 import sys
@@ -1429,6 +1431,27 @@ from pathlib import Path
 archive = Path(sys.argv[1])
 cache_root_name = sys.argv[2]
 destination = Path(sys.argv[3])
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+manifest_path = archive.parent / "bootstrap-tools-manifest.json"
+with manifest_path.open("r", encoding="utf-8") as fh:
+    manifest = json.load(fh)
+records = [item for item in manifest.get("archives", []) if item.get("name") == archive.name]
+if not records:
+    raise RuntimeError(f"archive missing from bootstrap tools manifest: {archive.name}")
+record = records[0]
+expected_size = record.get("sizeBytes")
+if not isinstance(expected_size, int) or expected_size != archive.stat().st_size:
+    raise RuntimeError(f"archive size mismatch: {archive.name}")
+expected_hash = str(record.get("sha256", "")).lower()
+if expected_hash != sha256_file(archive).lower():
+    raise RuntimeError(f"archive checksum mismatch: {archive.name}")
 
 def safe_member(name: str) -> bool:
     path = Path(name)

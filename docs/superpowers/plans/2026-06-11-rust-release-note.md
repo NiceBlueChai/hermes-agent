@@ -45,6 +45,8 @@ User-visible behavior:
 - If Node dependency or desktop build setup falls back to the install scripts, the Rust bootstrapper now passes its
   bundled bootstrap-tools path through so script recovery can restore npm-cache, Playwright browser, and Electron cache
   archives before network downloads.
+- Script recovery only extracts those bundled cache archives after their `bootstrap-tools-manifest.json` size and
+  SHA-256 entries match, so a stale or tampered release payload falls back to the existing network path.
 - Release npm-cache archive preparation reuses an existing populated workflow npm cache before falling back to
   `npm ci`, reducing release packaging time and avoidable registry traffic.
 - Native Unix PATH setup now updates every existing shell profile relevant to the user's shell, so fresh installs are
