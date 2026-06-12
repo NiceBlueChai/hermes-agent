@@ -526,6 +526,7 @@ mod tests {
         let gateway_service_dir = hermes_home.join("gateway-service");
         let bootstrap_cache = hermes_home.join("bootstrap-cache");
         let installer = paths::managed_runtime_files(&hermes_home)[0].clone();
+        let desktop_stamp = paths::managed_runtime_files(&hermes_home)[1].clone();
         let user_config = hermes_home.join("config.yaml");
         fs::create_dir_all(&agent_root).expect("agent root should be created");
         fs::create_dir_all(&bin_dir).expect("bin dir should be created");
@@ -537,6 +538,7 @@ mod tests {
         fs::create_dir_all(&gateway_service_dir).expect("gateway-service dir should be created");
         fs::create_dir_all(&bootstrap_cache).expect("bootstrap cache should be created");
         fs::write(&installer, "setup").expect("installer should be created");
+        fs::write(&desktop_stamp, "{}").expect("desktop stamp should be created");
         fs::write(&user_config, "model: test").expect("user config should be created");
 
         super::install_metadata(&hermes_home).expect("install metadata should be created");
@@ -561,6 +563,7 @@ mod tests {
                 gateway_service_dir,
                 bootstrap_cache,
                 installer,
+                desktop_stamp,
             ]
         );
         assert!(!paths.contains(&user_config));

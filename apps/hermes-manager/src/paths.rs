@@ -129,7 +129,10 @@ pub fn managed_runtime_files(hermes_home: &std::path::Path) -> Vec<PathBuf> {
     } else {
         "hermes-setup"
     };
-    vec![hermes_home.join(installer_name)]
+    vec![
+        hermes_home.join(installer_name),
+        hermes_home.join("desktop-build-stamp.json"),
+    ]
 }
 
 /// Manager metadata directory.
@@ -190,7 +193,10 @@ mod tests {
 
         assert_eq!(
             managed_runtime_files(&home),
-            vec![PathBuf::from("/tmp/hermes").join(installer_name)]
+            vec![
+                PathBuf::from("/tmp/hermes").join(installer_name),
+                PathBuf::from("/tmp/hermes/desktop-build-stamp.json"),
+            ]
         );
     }
 
