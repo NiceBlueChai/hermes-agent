@@ -310,6 +310,8 @@ language-specific setup where needed.
   avoiding a second full `npm ci` during release packaging while keeping the registry-backed fallback.
 - Script fallback for Python, venv, dependency, and platform-SDK stages now receives the same managed uv and pip cache
   environment as the native Rust path, keeping retry/recovery installs under Hermes-owned runtime directories.
+- Direct `install.ps1` and `install.sh` runs now also set `UV_CACHE_DIR` and `PIP_CACHE_DIR` under `$HERMES_HOME`,
+  aligning one-liner installs with the Rust bootstrap cache layout and lite-uninstall ownership model.
 - `venv` now runs native-first through Rust by invoking `uv venv venv --python 3.11` in the checkout, with script
   fallback preserved if native venv creation fails.
 - Python dependency installation now has a Rust native-first lockfile path using `uv sync --extra all --locked` with

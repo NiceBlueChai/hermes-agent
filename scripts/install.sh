@@ -202,6 +202,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$HERMES_HOME/uv-cache}"
+export PIP_CACHE_DIR="${PIP_CACHE_DIR:-$HERMES_HOME/pip-cache}"
+
 # ============================================================================
 # Helper functions
 # ============================================================================

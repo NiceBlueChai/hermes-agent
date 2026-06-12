@@ -46,6 +46,8 @@ User-visible behavior:
   `npm ci`, reducing release packaging time and avoidable registry traffic.
 - Native Unix PATH setup now updates every existing shell profile relevant to the user's shell, so fresh installs are
   less likely to need shell-script fallback or manual profile edits before `hermes` is visible.
+- Direct shell and PowerShell installs now keep uv and pip caches under `HERMES_HOME`, matching the packaged bootstrap
+  cleanup model and reducing global cache pollution.
 - Native and script-fallback desktop packaging now direct Electron download/build caches into
   `HERMES_HOME/electron-cache`, so repair and lite uninstall can remove that installer-owned cache without touching
   unrelated user-wide Electron caches.
