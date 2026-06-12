@@ -437,7 +437,11 @@ pub fn build_stage_plan(stages: &[StageInfo], _include_desktop: bool) -> Vec<Pla
     stages
         .iter()
         .map(|stage| {
-            let execution = stage_execution_mode(&stage.name);
+            let execution = if stage.needs_user_input {
+                StageExecutionMode::Native
+            } else {
+                stage_execution_mode(&stage.name)
+            };
             PlannedStage {
                 name: stage.name.clone(),
                 execution,
@@ -6469,9 +6473,11 @@ mod tests {
         ];
         let plan = build_stage_plan(&stages, false);
 
-        assert_eq!(plan[0].execution, StageExecutionMode::Script);
+        assert_eq!(plan[0].execution, StageExecutionMode::Native);
+        assert_eq!(plan[0].script_fallback, false);
+        assert_eq!(plan[0].script_reason.as_deref(), None);
         assert_eq!(
-            plan[0].script_reason.as_deref(),
+            interactive_stage_skip_result(&stages[0]).unwrap().reason.as_deref(),
             Some("requires user input; handled by post-install UI")
         );
         assert_eq!(plan[1].execution, StageExecutionMode::Script);
@@ -6479,6 +6485,30 @@ mod tests {
             plan[1].script_reason.as_deref(),
             Some("not yet ported to Rust; delegated to install script")
         );
+    }
+
+    #[test]
+    fn build_stage_plan_does_not_count_interactive_skips_as_script_fallbacks() {
+        let stages = vec![
+            StageInfo {
+                name: "setup".to_string(),
+                title: "Configure API keys and settings".to_string(),
+                category: "configuration".to_string(),
+                needs_user_input: true,
+            },
+            StageInfo {
+                name: "gateway".to_string(),
+                title: "Configure gateway service".to_string(),
+                category: "configuration".to_string(),
+                needs_user_input: true,
+            },
+        ];
+
+        let plan = build_stage_plan(&stages, false);
+
+        assert!(plan.iter().all(|stage| stage.execution == StageExecutionMode::Native));
+        assert!(plan.iter().all(|stage| !stage.script_fallback));
+        assert!(plan.iter().all(|stage| stage.script_reason.is_none()));
     }
 
     #[test]
@@ -6575,18 +6605,13 @@ mod tests {
     fn summarize_plan_reports_script_only_reasons() {
         let hermes_home = PathBuf::from("C:/Users/example/AppData/Local/hermes");
         let report = install_state_report(&hermes_home, Vec::new());
-        let stages = vec![StageInfo {
-            name: "configure".to_string(),
-            title: "Configure".to_string(),
-            category: "post-install".to_string(),
-            needs_user_input: true,
-        }];
+        let stages = vec![stage("legacy")];
         let plan = build_stage_plan(&stages, false);
 
         let summary = summarize_plan(&report, &plan);
 
         assert!(summary.contains(
-            "script_reasons=[configure=requires user input; handled by post-install UI]"
+            "script_reasons=[legacy=not yet ported to Rust; delegated to install script]"
         ));
     }
 

@@ -51,6 +51,8 @@ User-visible behavior:
   making native-first, probe-then-script, interactive, and unported fallback paths explicit in logs.
 - Bootstrap diagnostics now also report the total number of script-fallback-capable stages separately from pure
   script-only stages, so release review can track shell dependency reduction more accurately.
+- Interactive post-install stages that the Rust bootstrapper already skips for the GUI flow are no longer counted as
+  script fallback stages in the bootstrap plan summary.
 - If Node dependency or desktop build setup falls back to the install scripts, the Rust bootstrapper now passes its
   bundled bootstrap-tools path through so script recovery can restore npm-cache, Playwright browser, and Electron cache
   archives before network downloads.
