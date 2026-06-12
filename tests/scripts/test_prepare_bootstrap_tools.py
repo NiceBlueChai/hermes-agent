@@ -1120,6 +1120,16 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             unix_workflow.index("- name: Smoke built installer binary"),
         )
 
+    def test_tauri_bundle_declares_self_contained_resources(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        config_path = repo_root / "apps" / "bootstrap-installer" / "src-tauri" / "tauri.conf.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        resources = set(config["bundle"]["resources"])
+
+        self.assertIn("bootstrap-tools/", resources)
+        self.assertIn("wheelhouse/", resources)
+
     def test_lifecycle_workflow_smokes_bootstrap_release_binary(self):
         repo_root = Path(__file__).resolve().parents[2]
         workflow = (repo_root / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
