@@ -38,6 +38,7 @@ from typing import Optional, Dict, Any
 from urllib.parse import urljoin
 
 from utils import is_truthy_value
+from tools.managed_binaries import find_binary_on_path_or_hermes_home
 from tools.managed_tool_gateway import resolve_managed_tool_gateway
 from tools.tool_backend_helpers import (
     managed_nous_tools_enabled,
@@ -149,7 +150,7 @@ def _find_binary(binary_name: str) -> Optional[str]:
         candidate = Path(directory) / binary_name
         if candidate.exists() and os.access(candidate, os.X_OK):
             return str(candidate)
-    return shutil.which(binary_name)
+    return find_binary_on_path_or_hermes_home(binary_name)
 
 
 def _find_ffmpeg_binary() -> Optional[str]:
@@ -1230,12 +1231,27 @@ def _transcribe_local_command(file_path: str, model_name: str) -> Dict[str, Any]
                 language=shlex.quote(language),
                 model=shlex.quote(normalized_model),
             )
-            # User-provided templates (env var) may contain shell syntax; auto-detected commands are safe for list mode.
+            # User-provided templates may contain shell syntax; auto-detected commands are safe for list mode.
             use_shell = bool(os.getenv(LOCAL_STT_COMMAND_ENV, "").strip())
             if use_shell:
-                subprocess.run(command, shell=True, check=True, capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+                subprocess.run(
+                    command,
+                    shell=True,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    stdin=subprocess.DEVNULL,
+                )
             else:
-                subprocess.run(shlex.split(command), check=True, capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+                subprocess.run(
+                    shlex.split(command),
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    stdin=subprocess.DEVNULL,
+                )
             
 
             txt_files = sorted(Path(output_dir).glob("*.txt"))

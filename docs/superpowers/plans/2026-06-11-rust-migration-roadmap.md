@@ -329,6 +329,8 @@ language-specific setup where needed.
   Windows, macOS, and Linux, reducing avoidable Playwright Chromium downloads on Chromium-family browser machines.
 - Direct `install.ps1` and `install.sh` browser probing now share the same broader Brave/Edge coverage, so script
   fallback and direct installs preserve the same download-saving behavior.
+- Python TTS and STT runtime paths now resolve `ffmpeg` from PATH first and then from `$HERMES_HOME/bin`, so an
+  installer-managed or bundled ffmpeg remains usable before a fresh shell picks up PATH changes.
 - `desktop` now uses a Rust no-op skip when `apps/desktop/package.json` is absent, matching the existing script
   behavior without starting PowerShell or bash for a stage that can only skip.
 - Windows `desktop` now has a Rust native-first build path for workspace npm install and `npm run pack`, verifies the
@@ -626,6 +628,8 @@ language-specific setup where needed.
 - Direct `install.ps1` and `install.sh` full Node/Desktop install paths now also use Hermes-owned npm,
   Playwright-browser, and Electron cache directories, keeping direct installs and script fallback cleanup-compatible with
   the Rust bootstrap layout.
+- TTS and STT ffmpeg callers now fall back to `$HERMES_HOME/bin/ffmpeg(.exe)` after PATH lookup, aligning runtime media
+  conversion with the installer-managed binary location used by bundled or native ffmpeg recovery.
 - Native and direct Node/Desktop npm install paths now pass `--prefer-offline --no-audit --fund=false`, preferring the
   Hermes-managed npm cache and avoiding audit/funding network calls without removing normal registry fallback.
 - Native and direct root Node dependency installs now try `npm ci` when `package-lock.json` is present, falling back to
