@@ -209,6 +209,11 @@ fn validate_bootstrap_tools_for_self_check(dir: &Path) -> Result<usize, String> 
         if !matches!(platform, "windows" | "linux" | "macos") {
             return Err(format!("bootstrap tool archive is missing platform: {name}"));
         }
+        if let Some((expected_platform, expected_arch)) = bootstrap_tool_archive_target(name) {
+            if platform != expected_platform || arch != expected_arch {
+                return Err(format!("bootstrap tool archive target mismatch: {name}"));
+            }
+        }
         let url = archive
             .get("url")
             .and_then(|value| value.as_str())
@@ -265,6 +270,46 @@ fn validate_bootstrap_tools_for_self_check(dir: &Path) -> Result<usize, String> 
         }
     }
     Ok(archives.len())
+}
+
+fn bootstrap_tool_archive_target(name: &str) -> Option<(&'static str, &'static str)> {
+    for (suffix, platform, arch) in [
+        ("-win-x64.zip", "windows", "x64"),
+        ("-win-arm64.zip", "windows", "arm64"),
+        ("-win-x86.zip", "windows", "x86"),
+        ("-linux-x64.tar.gz", "linux", "x64"),
+        ("-linux-arm64.tar.gz", "linux", "arm64"),
+        ("-linux-x64.tar.xz", "linux", "x64"),
+        ("-linux-arm64.tar.xz", "linux", "arm64"),
+        ("-darwin-x64.tar.gz", "macos", "x64"),
+        ("-darwin-arm64.tar.gz", "macos", "arm64"),
+        ("-darwin-x64.tar.xz", "macos", "x64"),
+        ("-darwin-arm64.tar.xz", "macos", "arm64"),
+    ] {
+        if name.starts_with("node-v") && name.ends_with(suffix) {
+            return Some((platform, arch));
+        }
+    }
+    match name {
+        "uv-x86_64-pc-windows-msvc.zip"
+        | "ripgrep-15.1.0-x86_64-pc-windows-msvc.zip"
+        | "PortableGit-2.54.0-64-bit.7z.exe" => Some(("windows", "x64")),
+        "uv-aarch64-pc-windows-msvc.zip"
+        | "ripgrep-15.1.0-aarch64-pc-windows-msvc.zip"
+        | "PortableGit-2.54.0-arm64.7z.exe" => Some(("windows", "arm64")),
+        "uv-i686-pc-windows-msvc.zip"
+        | "ripgrep-15.1.0-i686-pc-windows-msvc.zip"
+        | "MinGit-2.54.0-32-bit.zip" => Some(("windows", "x86")),
+        "uv-x86_64-unknown-linux-gnu.tar.gz"
+        | "ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz" => Some(("linux", "x64")),
+        "uv-aarch64-unknown-linux-gnu.tar.gz"
+        | "ripgrep-15.1.0-aarch64-unknown-linux-gnu.tar.gz" => Some(("linux", "arm64")),
+        "uv-x86_64-apple-darwin.tar.gz"
+        | "ripgrep-15.1.0-x86_64-apple-darwin.tar.gz" => Some(("macos", "x64")),
+        "uv-aarch64-apple-darwin.tar.gz"
+        | "ripgrep-15.1.0-aarch64-apple-darwin.tar.gz" => Some(("macos", "arm64")),
+        _ => None,
+    }
 }
 
 fn bootstrap_tool_name_is_plain_file(name: &str) -> bool {
@@ -607,6 +652,34 @@ mod tests {
             .errors
             .iter()
             .any(|err| err.contains("missing platform")));
+
+        std::fs::write(
+            tools.join("bootstrap-tools-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "archives": [
+    {{
+      "arch": "x64",
+      "platform": "linux",
+      "name": "uv-x86_64-pc-windows-msvc.zip",
+      "url": "https://example.invalid/uv.zip",
+      "sizeBytes": 10,
+      "sha256": "{sha256}"
+    }}
+  ]
+}}
+"#
+            ),
+        )
+        .unwrap();
+        let report =
+            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools));
+        assert!(!report.ok);
+        assert!(report
+            .errors
+            .iter()
+            .any(|err| err.contains("target mismatch")));
 
         std::fs::write(
             tools.join("bootstrap-tools-manifest.json"),

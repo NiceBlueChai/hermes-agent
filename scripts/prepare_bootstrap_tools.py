@@ -227,6 +227,48 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def archive_target_from_name(name: str) -> tuple[str, str] | None:
+    """Infer the release platform and architecture from a known archive name."""
+
+    node_suffixes = {
+        "-win-x64.zip": ("windows", "x64"),
+        "-win-arm64.zip": ("windows", "arm64"),
+        "-win-x86.zip": ("windows", "x86"),
+        "-linux-x64.tar.gz": ("linux", "x64"),
+        "-linux-arm64.tar.gz": ("linux", "arm64"),
+        "-linux-x64.tar.xz": ("linux", "x64"),
+        "-linux-arm64.tar.xz": ("linux", "arm64"),
+        "-darwin-x64.tar.gz": ("macos", "x64"),
+        "-darwin-arm64.tar.gz": ("macos", "arm64"),
+        "-darwin-x64.tar.xz": ("macos", "x64"),
+        "-darwin-arm64.tar.xz": ("macos", "arm64"),
+    }
+    if name.startswith("node-v"):
+        for suffix, target in node_suffixes.items():
+            if name.endswith(suffix):
+                return target
+    known_targets = {
+        "uv-x86_64-pc-windows-msvc.zip": ("windows", "x64"),
+        "uv-aarch64-pc-windows-msvc.zip": ("windows", "arm64"),
+        "uv-i686-pc-windows-msvc.zip": ("windows", "x86"),
+        "uv-x86_64-unknown-linux-gnu.tar.gz": ("linux", "x64"),
+        "uv-aarch64-unknown-linux-gnu.tar.gz": ("linux", "arm64"),
+        "uv-x86_64-apple-darwin.tar.gz": ("macos", "x64"),
+        "uv-aarch64-apple-darwin.tar.gz": ("macos", "arm64"),
+        f"ripgrep-{RIPGREP_VERSION}-x86_64-pc-windows-msvc.zip": ("windows", "x64"),
+        f"ripgrep-{RIPGREP_VERSION}-aarch64-pc-windows-msvc.zip": ("windows", "arm64"),
+        f"ripgrep-{RIPGREP_VERSION}-i686-pc-windows-msvc.zip": ("windows", "x86"),
+        f"ripgrep-{RIPGREP_VERSION}-x86_64-unknown-linux-musl.tar.gz": ("linux", "x64"),
+        f"ripgrep-{RIPGREP_VERSION}-aarch64-unknown-linux-gnu.tar.gz": ("linux", "arm64"),
+        f"ripgrep-{RIPGREP_VERSION}-x86_64-apple-darwin.tar.gz": ("macos", "x64"),
+        f"ripgrep-{RIPGREP_VERSION}-aarch64-apple-darwin.tar.gz": ("macos", "arm64"),
+        "PortableGit-2.54.0-64-bit.7z.exe": ("windows", "x64"),
+        "PortableGit-2.54.0-arm64.7z.exe": ("windows", "arm64"),
+        "MinGit-2.54.0-32-bit.zip": ("windows", "x86"),
+    }
+    return known_targets.get(name)
+
+
 def prepared_archive_record(platform: str, arch: str, spec: ArchiveSpec, path: Path) -> PreparedArchive:
     """Build manifest metadata for one downloaded archive."""
 
@@ -294,6 +336,9 @@ def validate_manifest(output_dir: Path) -> int:
         platform = archive.get("platform")
         if platform not in {"windows", "linux", "macos"}:
             raise RuntimeError(f"manifest archive is missing platform: {name}")
+        target = archive_target_from_name(name)
+        if target is not None and target != (platform, arch):
+            raise RuntimeError(f"manifest archive target mismatch: {name}")
         url = archive.get("url")
         if not isinstance(url, str) or not url:
             raise RuntimeError(f"manifest archive is missing url: {name}")
