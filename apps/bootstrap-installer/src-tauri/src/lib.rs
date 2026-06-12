@@ -713,7 +713,12 @@ fn required_bootstrap_tool_kinds(
 }
 
 fn bootstrap_tool_name_is_plain_file(name: &str) -> bool {
-    !name.is_empty() && name != "." && name != ".." && !name.contains('/') && !name.contains('\\')
+    !name.trim().is_empty()
+        && name == name.trim()
+        && name != "."
+        && name != ".."
+        && !name.contains('/')
+        && !name.contains('\\')
 }
 
 fn wheel_name_is_plain_file(name: &str) -> bool {
@@ -965,11 +970,11 @@ pub fn run() {
 mod tests {
     use super::{
         bootstrap_self_check_report, bootstrap_tool_archive_kind, bootstrap_tool_archive_target,
-        expected_self_check_commit, force_setup_from_args, lifecycle_self_check_report,
-        required_bootstrap_tool_kinds, self_check_bootstrap_tools_arch,
+        bootstrap_tool_name_is_plain_file, expected_self_check_commit, force_setup_from_args,
+        lifecycle_self_check_report, required_bootstrap_tool_kinds, self_check_bootstrap_tools_arch,
         self_check_bootstrap_tools_platform,
         self_check_wheelhouse_arch, self_check_wheelhouse_dir, self_check_wheelhouse_platform,
-        validate_tauri_bundle_resources_config_for_self_check, AppMode,
+        validate_tauri_bundle_resources_config_for_self_check, wheel_name_is_plain_file, AppMode,
     };
     use std::path::PathBuf;
 
@@ -1069,6 +1074,16 @@ mod tests {
         assert!(errors
             .iter()
             .any(|err| err.contains("wheelhouse/")));
+    }
+
+    #[test]
+    fn self_check_plain_file_guards_reject_blank_or_padded_names() {
+        assert!(!bootstrap_tool_name_is_plain_file(""));
+        assert!(!bootstrap_tool_name_is_plain_file("   "));
+        assert!(!bootstrap_tool_name_is_plain_file(" uv-x86_64-pc-windows-msvc.zip"));
+        assert!(!bootstrap_tool_name_is_plain_file("uv-x86_64-pc-windows-msvc.zip "));
+        assert!(!wheel_name_is_plain_file(" demo-0.1-py3-none-any.whl"));
+        assert!(!wheel_name_is_plain_file("demo-0.1-py3-none-any.whl "));
     }
 
     #[test]

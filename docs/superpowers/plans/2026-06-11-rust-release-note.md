@@ -106,6 +106,7 @@ User-visible behavior:
 - Rust bundled-resource manifest validation now rejects blank or padded archive names before target matching.
 - Release helper validation uses the same blank/padded archive-name rule before uploading bootstrap-tool resources.
 - Python wheelhouse validation now rejects blank or padded wheel names in both release helper and Rust runtime checks.
+- Built-installer self-check now applies the same plain-file name guard to bootstrap-tools and wheelhouse resources.
 
 Compatibility and fallback:
 
