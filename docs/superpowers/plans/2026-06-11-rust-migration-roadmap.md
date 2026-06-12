@@ -484,6 +484,14 @@ language-specific setup where needed.
   so the first run does not need to download the orchestration script from GitHub.
 - Windows/Linux/macOS installer release workflows now build Tauri installers with `HERMES_BUILD_PIN_COMMIT` set to the
   workflow SHA, so manually triggered release artifacts use that commit-pinned embedded script path.
+- The bootstrap installer binary now has a no-UI `--self-check` mode, and release workflows run the just-built
+  `Hermes-Setup` executable to verify its embedded script resources and commit pin before signing or uploading.
+- Windows release workflow runs that smoke after Azure signing, so the final raw exe artifact is checked after signing
+  has modified it; Linux/macOS run the same smoke immediately after the unsigned Tauri build.
+- The same binary smoke now validates the packaged `bootstrap-tools/` manifest directory, including archive
+  existence, size, SHA-256, and unmanifested-payload rejection before installer artifacts are uploaded.
+- Rust binary self-check also enforces bootstrap-tool audit fields (`arch`, HTTPS `url`, unique archive names, and
+  SHA-256 shape), matching the release helper's manifest review gate before upload.
 - Branch-following bootstrap builds still resolve install scripts from GitHub raw, preserving HEAD-tracking behavior
   for development and non-immutable builds.
 - Bootstrap logs now include an embedded install-script resource summary with size and SHA-256 prefix for diagnostics

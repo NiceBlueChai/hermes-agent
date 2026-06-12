@@ -109,6 +109,12 @@ jobs:
               run: npm run tauri:build
               working-directory: apps/bootstrap-installer
 
+            - name: Smoke built installer binary
+              run: >
+                  ./apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup --self-check
+                  --self-check-expect-commit "${{ github.sha }}"
+                  --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
+
             - name: Validate Linux installer artifacts
               if: matrix.platform == 'linux'
               run: >

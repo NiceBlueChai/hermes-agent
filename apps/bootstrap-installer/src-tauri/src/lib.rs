@@ -13,13 +13,28 @@ mod bootstrap;
 mod events;
 mod install_script;
 mod orchestrator;
-mod powershell;
 mod paths;
+mod powershell;
 pub mod repo_archive;
 mod update;
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+const BOOTSTRAP_TOOLS_MANIFEST: &str = "bootstrap-tools-manifest.json";
+const ALLOWED_BOOTSTRAP_TOOLS_METADATA: [&str; 2] = [".gitignore", "README.md"];
+
+/// Machine-readable report emitted by the no-UI bootstrap installer self-check.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BootstrapSelfCheckReport {
+    pub ok: bool,
+    pub commit: Option<String>,
+    pub branch: Option<String>,
+    pub embedded_scripts: Vec<install_script::BundledScriptResource>,
+    pub bootstrap_tools_archives: Option<usize>,
+    pub errors: Vec<String>,
+}
 
 /// How the installer was invoked. Resolved once from the process args in
 /// `run()` and exposed to the frontend via `get_mode` so it can route to the
@@ -67,6 +82,210 @@ where
         .any(|a| a.as_ref() == "--reinstall" || a.as_ref() == "--repair")
 }
 
+/// Build a no-UI self-check report for release-package smoke tests.
+pub fn bootstrap_self_check_report(
+    commit: Option<&str>,
+    branch: Option<&str>,
+    bootstrap_tools_dir: Option<&Path>,
+) -> BootstrapSelfCheckReport {
+    let embedded_scripts = install_script::bundled_script_manifest();
+    let mut errors = Vec::new();
+    let mut bootstrap_tools_archives = None;
+    if commit.map(|value| value.trim().is_empty()).unwrap_or(true) {
+        errors.push("installer was built without a commit pin".to_string());
+    }
+    if embedded_scripts.len() < 2 {
+        errors.push("installer is missing embedded install scripts".to_string());
+    }
+    for script in &embedded_scripts {
+        if script.size_bytes == 0 {
+            errors.push(format!(
+                "embedded install script is empty: {}",
+                script.filename
+            ));
+        }
+        if script.sha256.len() != 64 || !script.sha256.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            errors.push(format!(
+                "embedded install script has invalid sha256: {}",
+                script.filename
+            ));
+        }
+    }
+    if let Some(dir) = bootstrap_tools_dir {
+        match validate_bootstrap_tools_for_self_check(dir) {
+            Ok(count) => bootstrap_tools_archives = Some(count),
+            Err(err) => errors.push(err),
+        }
+    }
+    BootstrapSelfCheckReport {
+        ok: errors.is_empty(),
+        commit: commit.map(str::to_string),
+        branch: branch.map(str::to_string),
+        embedded_scripts,
+        bootstrap_tools_archives,
+        errors,
+    }
+}
+
+fn expected_self_check_commit<I, S>(args: I) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        let arg = arg.as_ref();
+        if let Some(value) = arg.strip_prefix("--self-check-expect-commit=") {
+            return Some(value.to_string());
+        }
+        if arg == "--self-check-expect-commit" {
+            return iter.next().map(|value| value.as_ref().to_string());
+        }
+    }
+    None
+}
+
+fn self_check_bootstrap_tools_dir<I, S>(args: I) -> Option<PathBuf>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        let arg = arg.as_ref();
+        if let Some(value) = arg.strip_prefix("--self-check-bootstrap-tools=") {
+            return Some(PathBuf::from(value));
+        }
+        if arg == "--self-check-bootstrap-tools" {
+            return iter.next().map(|value| PathBuf::from(value.as_ref()));
+        }
+    }
+    None
+}
+
+fn validate_bootstrap_tools_for_self_check(dir: &Path) -> Result<usize, String> {
+    let manifest_path = dir.join(BOOTSTRAP_TOOLS_MANIFEST);
+    let manifest_text = std::fs::read_to_string(&manifest_path)
+        .map_err(|err| format!("reading bootstrap tools manifest failed: {err}"))?;
+    let manifest: serde_json::Value = serde_json::from_str(&manifest_text)
+        .map_err(|err| format!("parsing bootstrap tools manifest failed: {err}"))?;
+    if manifest.get("schemaVersion").and_then(|value| value.as_u64()) != Some(1) {
+        return Err("bootstrap tools manifest has unsupported schema".to_string());
+    }
+    let archives = manifest
+        .get("archives")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "bootstrap tools manifest has no archives".to_string())?;
+    if archives.is_empty() {
+        return Err("bootstrap tools manifest has no archives".to_string());
+    }
+
+    let mut expected = std::collections::BTreeSet::from([BOOTSTRAP_TOOLS_MANIFEST.to_string()]);
+    for name in ALLOWED_BOOTSTRAP_TOOLS_METADATA {
+        expected.insert(name.to_string());
+    }
+    for archive in archives {
+        let name = archive
+            .get("name")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "bootstrap tools manifest archive is missing name".to_string())?;
+        if !bootstrap_tool_name_is_plain_file(name) {
+            return Err(format!("bootstrap tools manifest archive has unsafe name: {name}"));
+        }
+        if !expected.insert(name.to_string()) {
+            return Err(format!("duplicate archive in bootstrap tools manifest: {name}"));
+        }
+        let arch = archive
+            .get("arch")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("bootstrap tool archive is missing arch: {name}"))?;
+        if arch.trim().is_empty() {
+            return Err(format!("bootstrap tool archive is missing arch: {name}"));
+        }
+        let url = archive
+            .get("url")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("bootstrap tool archive is missing url: {name}"))?;
+        if !url.starts_with("https://") {
+            return Err(format!("bootstrap tool archive has invalid url: {name}"));
+        }
+        let path = dir.join(name);
+        let bytes = std::fs::read(&path)
+            .map_err(|err| format!("reading bootstrap tool archive failed: {name}: {err}"))?;
+        let expected_size = archive
+            .get("sizeBytes")
+            .and_then(|value| value.as_u64())
+            .ok_or_else(|| format!("bootstrap tool archive is missing sizeBytes: {name}"))?;
+        if bytes.len() as u64 != expected_size {
+            return Err(format!(
+                "bootstrap tool archive size mismatch: {name}: expected {expected_size}, got {}",
+                bytes.len()
+            ));
+        }
+        let expected_sha256 = archive
+            .get("sha256")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("bootstrap tool archive is missing sha256: {name}"))?;
+        if expected_sha256.len() != 64
+            || !expected_sha256.chars().all(|ch| ch.is_ascii_hexdigit())
+        {
+            return Err(format!("bootstrap tool archive has invalid sha256: {name}"));
+        }
+        let actual_sha256 = crate::artifact::sha256_hex(&bytes);
+        if !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
+            return Err(format!(
+                concat!(
+                    "bootstrap tool archive checksum mismatch: {name}: ",
+                    "expected {expected_sha256}, got {actual_sha256}"
+                ),
+                name = name,
+                expected_sha256 = expected_sha256,
+                actual_sha256 = actual_sha256
+            ));
+        }
+    }
+
+    for entry in std::fs::read_dir(dir)
+        .map_err(|err| format!("reading bootstrap tools directory failed: {err}"))?
+    {
+        let entry = entry.map_err(|err| format!("reading bootstrap tools entry failed: {err}"))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !expected.contains(&name) {
+            return Err(format!("unmanifested bootstrap tool payload: {name}"));
+        }
+        if !entry.path().is_file() {
+            return Err(format!("bootstrap tool payload is not a file: {name}"));
+        }
+    }
+    Ok(archives.len())
+}
+
+fn bootstrap_tool_name_is_plain_file(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains('/') && !name.contains('\\')
+}
+
+fn write_self_check_and_exit(args: &[String]) {
+    let mut report = bootstrap_self_check_report(
+        option_env!("BUILD_PIN_COMMIT"),
+        option_env!("BUILD_PIN_BRANCH"),
+        self_check_bootstrap_tools_dir(args).as_deref(),
+    );
+    if let Some(expected) = expected_self_check_commit(args) {
+        if report.commit.as_deref() != Some(expected.as_str()) {
+            report.ok = false;
+            report.errors.push(format!(
+                "commit pin mismatch: expected {}, got {:?}",
+                expected, report.commit
+            ));
+        }
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report).expect("self-check report serializes")
+    );
+    std::process::exit(if report.ok { 0 } else { 1 });
+}
+
 /// Process-wide install state, shared across Tauri commands.
 ///
 /// The bootstrap is a one-shot, single-tenant process — we only need one
@@ -96,16 +315,21 @@ fn get_mode(state: tauri::State<'_, Arc<AppState>>) -> AppMode {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--self-check") {
+        write_self_check_and_exit(&args);
+    }
+
     // Tracing → bootstrap-installer.log under HERMES_HOME/logs/ so install
     // failures leave a trail for support. Console output also goes here in
     // debug builds.
     let _guard = paths::init_logging();
 
-    let mode = AppMode::from_args(std::env::args().skip(1));
+    let mode = AppMode::from_args(args.iter());
     // Escape hatch: `--reinstall`/`--repair` forces the installer UI even when
     // Hermes is already installed, so users can re-run setup to repair a broken
     // install instead of the launcher fast path silently relaunching the app.
-    let force_setup = force_setup_from_args(std::env::args().skip(1));
+    let force_setup = force_setup_from_args(args.iter());
     tracing::info!(?mode, force_setup, "Hermes installer starting");
 
     tauri::Builder::default()
@@ -163,7 +387,9 @@ pub fn run() {
                     }
                 }
                 None => {
-                    tracing::error!("main installer window not found; installer UI will not appear");
+                    tracing::error!(
+                        "main installer window not found; installer UI will not appear"
+                    );
                 }
             }
             Ok(())
@@ -190,7 +416,19 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{force_setup_from_args, AppMode};
+    use super::{
+        bootstrap_self_check_report, expected_self_check_commit, force_setup_from_args, AppMode,
+    };
+    use std::path::PathBuf;
+
+    fn unique_tmp_dir(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-bootstrap-self-check-{tag}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
 
     #[test]
     fn bare_args_are_install() {
@@ -231,5 +469,184 @@ mod tests {
             AppMode::from_args(["--update", "--reinstall"]),
             AppMode::Update
         );
+    }
+
+    #[test]
+    fn self_check_requires_commit_pin_and_embedded_scripts() {
+        let missing_commit = bootstrap_self_check_report(None, Some("main"), None);
+        assert!(!missing_commit.ok);
+        assert!(missing_commit
+            .errors
+            .iter()
+            .any(|err| err.contains("commit pin")));
+
+        let report = bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), None);
+        assert!(report.ok, "{:?}", report.errors);
+        assert_eq!(report.commit.as_deref(), Some("abcdef1234567890"));
+        assert!(report.embedded_scripts.len() >= 2);
+        assert!(report
+            .embedded_scripts
+            .iter()
+            .all(|script| script.size_bytes > 0));
+        assert!(report
+            .embedded_scripts
+            .iter()
+            .all(|script| script.sha256.len() == 64));
+    }
+
+    #[test]
+    fn self_check_validates_bootstrap_tools_manifest_dir() {
+        let root = unique_tmp_dir("tools");
+        let tools = root.join("bootstrap-tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        let archive = tools.join("uv-x86_64-pc-windows-msvc.zip");
+        std::fs::write(&archive, b"uv archive").unwrap();
+        let sha256 = crate::artifact::sha256_hex(b"uv archive");
+        std::fs::write(
+            tools.join("bootstrap-tools-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "archives": [
+    {{
+      "arch": "x64",
+      "name": "uv-x86_64-pc-windows-msvc.zip",
+      "url": "https://example.invalid/uv.zip",
+      "sizeBytes": 10,
+      "sha256": "{sha256}"
+    }}
+  ]
+}}
+"#
+            ),
+        )
+        .unwrap();
+
+        let report =
+            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools));
+        assert!(report.ok, "{:?}", report.errors);
+        assert_eq!(report.bootstrap_tools_archives, Some(1));
+
+        std::fs::write(tools.join("rogue.zip"), b"rogue").unwrap();
+        let report =
+            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools));
+        assert!(!report.ok);
+        assert!(report
+            .errors
+            .iter()
+            .any(|err| err.contains("unmanifested bootstrap tool payload")));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn self_check_rejects_bootstrap_tools_manifest_audit_gaps() {
+        let root = unique_tmp_dir("tools-audit");
+        let tools = root.join("bootstrap-tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        let archive = tools.join("uv-x86_64-pc-windows-msvc.zip");
+        std::fs::write(&archive, b"uv archive").unwrap();
+        let sha256 = crate::artifact::sha256_hex(b"uv archive");
+        std::fs::write(
+            tools.join("bootstrap-tools-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "archives": [
+    {{
+      "name": "uv-x86_64-pc-windows-msvc.zip",
+      "sizeBytes": 10,
+      "sha256": "{sha256}"
+    }}
+  ]
+}}
+"#
+            ),
+        )
+        .unwrap();
+
+        let report =
+            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools));
+        assert!(!report.ok);
+        assert!(report
+            .errors
+            .iter()
+            .any(|err| err.contains("missing arch")));
+
+        std::fs::write(
+            tools.join("bootstrap-tools-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "archives": [
+    {{
+      "arch": "x64",
+      "name": "uv-x86_64-pc-windows-msvc.zip",
+      "url": "http://example.invalid/uv.zip",
+      "sizeBytes": 10,
+      "sha256": "{sha256}"
+    }}
+  ]
+}}
+"#
+            ),
+        )
+        .unwrap();
+        let report =
+            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools));
+        assert!(!report.ok);
+        assert!(report
+            .errors
+            .iter()
+            .any(|err| err.contains("invalid url")));
+
+        std::fs::write(
+            tools.join("bootstrap-tools-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "archives": [
+    {{
+      "arch": "x64",
+      "name": "uv-x86_64-pc-windows-msvc.zip",
+      "url": "https://example.invalid/uv.zip",
+      "sizeBytes": 10,
+      "sha256": "{sha256}"
+    }},
+    {{
+      "arch": "x64",
+      "name": "uv-x86_64-pc-windows-msvc.zip",
+      "url": "https://example.invalid/uv.zip",
+      "sizeBytes": 10,
+      "sha256": "{sha256}"
+    }}
+  ]
+}}
+"#
+            ),
+        )
+        .unwrap();
+        let report =
+            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools));
+        assert!(!report.ok);
+        assert!(report
+            .errors
+            .iter()
+            .any(|err| err.contains("duplicate archive")));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn self_check_expect_commit_parses_space_or_equals_forms() {
+        assert_eq!(
+            expected_self_check_commit(["--self-check", "--self-check-expect-commit", "abc"]),
+            Some("abc".to_string())
+        );
+        assert_eq!(
+            expected_self_check_commit(["--self-check-expect-commit=def"]),
+            Some("def".to_string())
+        );
+        assert_eq!(expected_self_check_commit(["--self-check"]), None);
     }
 }

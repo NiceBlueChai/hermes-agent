@@ -439,6 +439,32 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         self.assertIn(pin, windows_workflow)
         self.assertIn(pin, unix_workflow)
 
+    def test_installer_workflows_run_built_binary_self_check(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Hermes-Setup.exe --self-check", windows_workflow)
+        self.assertIn("Hermes-Setup --self-check", unix_workflow)
+        self.assertIn("--self-check-expect-commit \"${{ github.sha }}\"", windows_workflow)
+        self.assertIn("--self-check-expect-commit \"${{ github.sha }}\"", unix_workflow)
+        self.assertIn(
+            "--self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools",
+            windows_workflow,
+        )
+        self.assertIn(
+            "--self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools",
+            unix_workflow,
+        )
+        self.assertGreater(
+            windows_workflow.index("- name: Smoke built installer binary"),
+            windows_workflow.index("- name: Sign Hermes-Setup.exe with Azure Artifact Signing"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

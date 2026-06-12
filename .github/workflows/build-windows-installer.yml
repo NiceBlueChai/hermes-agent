@@ -95,6 +95,12 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
+      - name: Smoke built installer binary
+        run: >
+          .\apps\bootstrap-installer\src-tauri\target\release\Hermes-Setup.exe --self-check
+          --self-check-expect-commit "${{ github.sha }}"
+          --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
+
       - name: Validate installer artifacts
         run: >
           python scripts/validate_installer_artifacts.py
