@@ -82,7 +82,8 @@ jobs:
             "--arch",
             "x64",
             "--bundle-playwright-browsers",
-            "--bundle-electron-cache"
+            "--bundle-electron-cache",
+            "--bundle-npm-cache"
           )
           if ($env:HERMES_AUDITED_ARCHIVE) {
             $args += @("--audited-archive", "$env:HERMES_AUDITED_ARCHIVE")

@@ -291,6 +291,13 @@ def archive_target_from_name(name: str) -> tuple[str, str] | None:
         "electron-cache-linux-arm64.tar.gz": ("linux", "arm64"),
         "electron-cache-macos-x64.tar.gz": ("macos", "x64"),
         "electron-cache-macos-arm64.tar.gz": ("macos", "arm64"),
+        "npm-cache-windows-x64.zip": ("windows", "x64"),
+        "npm-cache-windows-arm64.zip": ("windows", "arm64"),
+        "npm-cache-windows-x86.zip": ("windows", "x86"),
+        "npm-cache-linux-x64.tar.gz": ("linux", "x64"),
+        "npm-cache-linux-arm64.tar.gz": ("linux", "arm64"),
+        "npm-cache-macos-x64.tar.gz": ("macos", "x64"),
+        "npm-cache-macos-arm64.tar.gz": ("macos", "arm64"),
     }
     return known_targets.get(name)
 
@@ -312,6 +319,8 @@ def archive_tool_kind_from_name(name: str) -> str | None:
         return "playwright-browsers"
     if name.startswith("electron-cache-"):
         return "electron-cache"
+    if name.startswith("npm-cache-"):
+        return "npm-cache"
     return None
 
 
@@ -661,6 +670,101 @@ def prepare_electron_cache_archive(
     return [prepared_archive_record(normalized_platform, arch, spec, dest)]
 
 
+def npm_cache_archive_name(platform: str, arch: str) -> str:
+    """Return the portable npm cache archive name for one release target."""
+
+    normalized_platform = "macos" if platform == "darwin" else platform
+    if normalized_platform == "windows":
+        extension = "zip"
+    elif normalized_platform in {"linux", "macos"}:
+        extension = "tar.gz"
+    else:
+        raise ValueError(f"unsupported npm cache platform: {platform}")
+    name = f"npm-cache-{normalized_platform}-{arch}.{extension}"
+    if archive_target_from_name(name) is None:
+        raise ValueError(f"unsupported npm cache archive target: {normalized_platform}-{arch}")
+    return name
+
+
+def populate_npm_cache(cache_dir: Path, cwd: Path) -> None:
+    """Populate one npm cache by installing the locked workspace dependencies."""
+
+    env = os.environ.copy()
+    env["npm_config_cache"] = str(cache_dir)
+    subprocess.run(
+        ["npm", "ci", "--cache", str(cache_dir), "--prefer-offline", "--no-audit", "--fund=false"],
+        cwd=cwd,
+        env=env,
+        check=True,
+    )
+
+
+def npm_cache_has_content(cache_dir: Path) -> bool:
+    """Return true when an npm cache directory contains package cache content."""
+
+    if not cache_dir.is_dir():
+        return False
+    cacache = cache_dir / "_cacache"
+    return cacache.is_dir() and any(path.is_file() for path in cacache.rglob("*"))
+
+
+def write_npm_cache_archive(cache_dir: Path, archive_path: Path) -> None:
+    """Archive one npm cache directory under a stable npm-cache/ root."""
+
+    members = sorted(path for path in cache_dir.rglob("*") if path.is_file())
+    if not members:
+        raise RuntimeError(f"npm cache has no files: {cache_dir}")
+    tmp = archive_path.with_name(f"{archive_path.name}.tmp")
+    tmp.unlink(missing_ok=True)
+    if archive_path.name.endswith(".zip"):
+        with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
+            for path in members:
+                rel = path.relative_to(cache_dir).as_posix()
+                archive.write(path, f"npm-cache/{rel}")
+    elif archive_path.name.endswith(".tar.gz"):
+        with tarfile.open(tmp, "w:gz") as archive:
+            for path in members:
+                rel = path.relative_to(cache_dir).as_posix()
+                archive.add(path, arcname=f"npm-cache/{rel}")
+    else:
+        raise RuntimeError(f"unsupported npm cache archive format: {archive_path.name}")
+    os.replace(tmp, archive_path)
+
+
+def prepare_npm_cache_archive(
+    output_dir: Path,
+    platform: str,
+    arch: str,
+    force: bool,
+    dry_run: bool,
+    source_url: str | None = None,
+) -> list[PreparedArchive]:
+    """Build a manifest-ready npm cache archive for one release target."""
+
+    normalized_platform = "macos" if platform == "darwin" else platform
+    archive_name = npm_cache_archive_name(normalized_platform, arch)
+    source_url = source_url or default_playwright_browser_source_url()
+    if not source_url.startswith("https://"):
+        raise ValueError("npm cache archive source URL must be HTTPS")
+    spec = ArchiveSpec(name=archive_name, url=source_url)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    dest = output_dir / archive_name
+    if dry_run:
+        print(f"[bootstrap-tools] would bundle npm cache as {archive_name}")
+        return []
+    if dest.is_file() and dest.stat().st_size > 0 and not force:
+        print(f"[bootstrap-tools] keep {dest}")
+        return [prepared_archive_record(normalized_platform, arch, spec, dest)]
+
+    with tempfile.TemporaryDirectory(prefix="hermes-npm-cache-") as tmp:
+        cache_dir = Path(tmp) / "npm-cache"
+        populate_npm_cache(cache_dir, REPO_ROOT)
+        if not npm_cache_has_content(cache_dir):
+            raise RuntimeError("npm install did not create package cache content")
+        write_npm_cache_archive(cache_dir, dest)
+    return [prepared_archive_record(normalized_platform, arch, spec, dest)]
+
+
 def write_manifest(output_dir: Path, archives: list[PreparedArchive]) -> Path:
     """Write the bundled tool archive manifest consumed by release reviewers."""
 
@@ -776,6 +880,8 @@ def prepare_archives(
     playwright_browsers_url: str | None = None,
     bundle_electron_cache: bool = False,
     electron_version: str | None = None,
+    bundle_npm_cache: bool = False,
+    npm_cache_url: str | None = None,
 ) -> list[PreparedArchive]:
     """Resolve and optionally download all archives for the requested architectures."""
 
@@ -818,6 +924,18 @@ def prepare_archives(
                     force,
                     dry_run,
                     electron_version,
+                )
+            )
+    if bundle_npm_cache:
+        for arch in arches:
+            downloaded.extend(
+                prepare_npm_cache_archive(
+                    output_dir,
+                    normalized_platform,
+                    arch,
+                    force,
+                    dry_run,
+                    npm_cache_url,
                 )
             )
     if downloaded:
@@ -884,6 +1002,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Electron version to bundle. Defaults to apps/desktop/package.json build.electronVersion.",
     )
+    parser.add_argument(
+        "--bundle-npm-cache",
+        action="store_true",
+        help="Install locked npm dependencies and bundle the resulting npm cache.",
+    )
+    parser.add_argument(
+        "--npm-cache-url",
+        default=None,
+        help="HTTPS source trace URL recorded for generated npm cache archives.",
+    )
     return parser.parse_args(argv)
 
 
@@ -909,6 +1037,8 @@ def main(argv: list[str] | None = None) -> int:
             args.playwright_browsers_url,
             args.bundle_electron_cache,
             args.electron_version,
+            args.bundle_npm_cache,
+            args.npm_cache_url,
         )
     except Exception as exc:
         print(f"[bootstrap-tools] error: {exc}", file=sys.stderr)

@@ -267,6 +267,13 @@ pub struct ElectronCacheRuntimeStagePlan {
     pub install_dir: PathBuf,
 }
 
+/// Native npm cache installation plan for bundled release archives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NpmCacheRuntimeStagePlan {
+    pub archive_name: String,
+    pub install_dir: PathBuf,
+}
+
 /// Native Unix Node runtime installation plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnixNodeRuntimeStagePlan {
@@ -2198,6 +2205,55 @@ fn install_bundled_electron_cache_if_available(
     Ok(Some((plan.archive_name, archive_source.kind)))
 }
 
+/// Build an npm cache plan for a bundled release archive.
+pub fn npm_cache_runtime_stage_plan(
+    hermes_home: &Path,
+    target_os: &str,
+    arch: &str,
+) -> Result<NpmCacheRuntimeStagePlan> {
+    let platform = match target_os {
+        "windows" => "windows",
+        "darwin" | "macos" => "macos",
+        "linux" => "linux",
+        other => return Err(anyhow!("unsupported npm cache platform: {other}")),
+    };
+    match (platform, arch) {
+        ("windows", "arm64" | "x64" | "x86")
+        | ("linux", "arm64" | "x64")
+        | ("macos", "arm64" | "x64") => {}
+        (_, other) => {
+            return Err(anyhow!(
+                "unsupported npm cache architecture for {platform}: {other}"
+            ));
+        }
+    }
+    let extension = if platform == "windows" {
+        "zip"
+    } else {
+        "tar.gz"
+    };
+    Ok(NpmCacheRuntimeStagePlan {
+        archive_name: format!("npm-cache-{platform}-{arch}.{extension}"),
+        install_dir: hermes_home.join("npm-cache"),
+    })
+}
+
+fn install_bundled_npm_cache_if_available(
+    hermes_home: &Path,
+    bundled_tools_dir: Option<&Path>,
+    target_os: &str,
+    arch: &str,
+) -> Result<Option<(String, BootstrapArchiveSourceKind)>> {
+    let plan = npm_cache_runtime_stage_plan(hermes_home, target_os, arch)?;
+    let archive_source =
+        resolve_bootstrap_archive_source(hermes_home, bundled_tools_dir, &plan.archive_name);
+    if archive_source.kind != BootstrapArchiveSourceKind::Bundled {
+        return Ok(None);
+    }
+    extract_npm_cache_archive(&archive_source.path, &plan.install_dir)?;
+    Ok(Some((plan.archive_name, archive_source.kind)))
+}
+
 /// Install Windows ripgrep natively and prefer bundled ffmpeg before package-manager recovery.
 pub async fn install_windows_system_packages_stage(
     hermes_home: &Path,
@@ -3573,7 +3629,20 @@ pub fn install_node_dependencies_stage(
     let mut playwright_system_failures = Vec::new();
     let mut playwright_browsers_archive_name = None;
     let mut playwright_browsers_archive_source_kind = None;
+    let mut npm_cache_archive_name = None;
+    let mut npm_cache_archive_source_kind = None;
     let mut optional_node_failures = Vec::new();
+    let arch = current_wheelhouse_arch()
+        .ok_or_else(|| anyhow!("unsupported npm cache architecture: {}", std::env::consts::ARCH))?;
+    if let Some((archive_name, source_kind)) = install_bundled_npm_cache_if_available(
+        hermes_home,
+        bundled_tools_dir,
+        current_wheelhouse_platform(),
+        arch,
+    )? {
+        npm_cache_archive_name = Some(archive_name);
+        npm_cache_archive_source_kind = Some(source_kind.as_str().to_string());
+    }
     if plan.browser_tools {
         let npm_ci_ok = plan.cwd.join("package-lock.json").is_file()
             && run_node_dependency_command(
@@ -3673,6 +3742,8 @@ pub fn install_node_dependencies_stage(
         "npm": plan.npm,
         "npx": plan.npx,
         "npmCacheDir": plan.npm_cache_dir,
+        "npmCacheArchive": npm_cache_archive_name,
+        "npmCacheArchiveSource": npm_cache_archive_source_kind,
         "playwrightBrowsersDir": plan.playwright_browsers_dir,
         "playwrightBrowsersArchive": playwright_browsers_archive_name,
         "playwrightBrowsersArchiveSource": playwright_browsers_archive_source_kind,
@@ -4513,6 +4584,18 @@ fn bootstrap_archive_target_from_name(name: &str) -> Option<BootstrapArchiveTarg
             platform: "windows",
             arch: "x86",
         }),
+        "npm-cache-windows-x64.zip" => Some(BootstrapArchiveTarget {
+            platform: "windows",
+            arch: "x64",
+        }),
+        "npm-cache-windows-arm64.zip" => Some(BootstrapArchiveTarget {
+            platform: "windows",
+            arch: "arm64",
+        }),
+        "npm-cache-windows-x86.zip" => Some(BootstrapArchiveTarget {
+            platform: "windows",
+            arch: "x86",
+        }),
         "uv-x86_64-unknown-linux-gnu.tar.gz"
         | "ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz" => Some(BootstrapArchiveTarget {
             platform: "linux",
@@ -4557,6 +4640,14 @@ fn bootstrap_archive_target_from_name(name: &str) -> Option<BootstrapArchiveTarg
             platform: "linux",
             arch: "arm64",
         }),
+        "npm-cache-linux-x64.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "linux",
+            arch: "x64",
+        }),
+        "npm-cache-linux-arm64.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "linux",
+            arch: "arm64",
+        }),
         "ffmpeg-macos-x64.tar.gz" => Some(BootstrapArchiveTarget {
             platform: "macos",
             arch: "x64",
@@ -4578,6 +4669,14 @@ fn bootstrap_archive_target_from_name(name: &str) -> Option<BootstrapArchiveTarg
             arch: "x64",
         }),
         "electron-cache-macos-arm64.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "macos",
+            arch: "arm64",
+        }),
+        "npm-cache-macos-x64.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "macos",
+            arch: "x64",
+        }),
+        "npm-cache-macos-arm64.tar.gz" => Some(BootstrapArchiveTarget {
             platform: "macos",
             arch: "arm64",
         }),
@@ -5152,6 +5251,84 @@ fn electron_cache_dir_has_zip(path: &Path) -> Result<bool> {
             if file_type.is_file()
                 && electron_zip_file_name(path.file_name().and_then(OsStr::to_str))
             {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn extract_npm_cache_archive(archive_path: &Path, install_dir: &Path) -> Result<()> {
+    let parent = install_dir.parent().ok_or_else(|| {
+        anyhow!(
+            "npm cache install directory has no parent: {}",
+            install_dir.display()
+        )
+    })?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("creating npm cache parent {}", parent.display()))?;
+    let tmp_dir = parent.join("npm-cache-extracting");
+    remove_path_if_exists(&tmp_dir)?;
+    fs::create_dir_all(&tmp_dir).with_context(|| {
+        format!(
+            "creating npm cache extraction directory {}",
+            tmp_dir.display()
+        )
+    })?;
+
+    let result: Result<()> = (|| {
+        let archive_name = archive_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if archive_name.ends_with(".zip") {
+            crate::artifact::extract_zip_archive(archive_path, &tmp_dir)?;
+        } else if archive_name.ends_with(".tar.gz") {
+            extract_tar_gz_archive(archive_path, &tmp_dir, "npm cache")?;
+        } else {
+            return Err(anyhow!(
+                "unsupported npm cache archive format: {}",
+                archive_path.display()
+            ));
+        }
+        let cache_root = if tmp_dir.join("npm-cache").is_dir() {
+            tmp_dir.join("npm-cache")
+        } else {
+            tmp_dir.clone()
+        };
+        if !npm_cache_dir_has_content(&cache_root)? {
+            return Err(anyhow!("npm cache archive did not contain _cacache entries"));
+        }
+        remove_path_if_exists(install_dir)?;
+        fs::create_dir_all(install_dir)
+            .with_context(|| format!("creating npm cache install dir {}", install_dir.display()))?;
+        copy_dir_contents(&cache_root, install_dir)?;
+        if !npm_cache_dir_has_content(install_dir)? {
+            return Err(anyhow!("npm cache extraction did not produce _cacache entries"));
+        }
+        Ok(())
+    })();
+    let cleanup = remove_path_if_exists(&tmp_dir);
+    result?;
+    cleanup
+}
+
+fn npm_cache_dir_has_content(path: &Path) -> Result<bool> {
+    let cacache = path.join("_cacache");
+    if !cacache.is_dir() {
+        return Ok(false);
+    }
+    let mut stack = vec![cacache];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
+            let entry = entry.with_context(|| format!("reading entry under {}", dir.display()))?;
+            let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .with_context(|| format!("reading file type for {}", path.display()))?;
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if file_type.is_file() {
                 return Ok(true);
             }
         }
@@ -6955,6 +7132,139 @@ mod tests {
             )
             .unwrap(),
             b"electron zip"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn npm_cache_runtime_stage_plan_matches_bundled_archive_contract() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-npm-cache-runtime-plan-test-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+
+        let windows = npm_cache_runtime_stage_plan(&hermes_home, "windows", "x64")
+            .expect("Windows x64 npm cache archive should be supported");
+        assert_eq!(windows.archive_name, "npm-cache-windows-x64.zip");
+        assert_eq!(windows.install_dir, hermes_home.join("npm-cache"));
+
+        let linux = npm_cache_runtime_stage_plan(&hermes_home, "linux", "arm64")
+            .expect("Linux arm64 npm cache archive should be supported");
+        assert_eq!(linux.archive_name, "npm-cache-linux-arm64.tar.gz");
+
+        let macos = npm_cache_runtime_stage_plan(&hermes_home, "darwin", "x64")
+            .expect("macOS x64 npm cache archive should be supported");
+        assert_eq!(macos.archive_name, "npm-cache-macos-x64.tar.gz");
+        assert!(npm_cache_runtime_stage_plan(&hermes_home, "freebsd", "x64").is_err());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_npm_cache_archive_copies_nested_zip_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-npm-cache-zip-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive = root.join("npm-cache.zip");
+        write_test_zip(
+            &archive,
+            &[("npm-cache/_cacache/content-v2/sha512/aa/bb", b"cached package")],
+        );
+        let install_dir = root.join("home").join("npm-cache");
+
+        extract_npm_cache_archive(&archive, &install_dir).unwrap();
+
+        assert_eq!(
+            std::fs::read(
+                install_dir
+                    .join("_cacache")
+                    .join("content-v2")
+                    .join("sha512")
+                    .join("aa")
+                    .join("bb")
+            )
+            .unwrap(),
+            b"cached package"
+        );
+        assert!(!install_dir.parent().unwrap().join("npm-cache-extracting").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_npm_cache_archive_copies_nested_tar_gz_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-npm-cache-tar-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive = root.join("npm-cache.tar.gz");
+        write_test_tar_gz(
+            &archive,
+            &[("npm-cache/_cacache/index-v5/aa/bb", b"cached index")],
+        );
+        let install_dir = root.join("home").join("npm-cache");
+
+        extract_npm_cache_archive(&archive, &install_dir).unwrap();
+
+        assert_eq!(
+            std::fs::read(
+                install_dir
+                    .join("_cacache")
+                    .join("index-v5")
+                    .join("aa")
+                    .join("bb")
+            )
+            .unwrap(),
+            b"cached index"
+        );
+        assert!(!install_dir.parent().unwrap().join("npm-cache-extracting").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn bundled_npm_cache_archive_installs_before_npm_commands() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-npm-cache-bundled-test-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+        let bundled = root.join("resources").join("bootstrap-tools");
+        std::fs::create_dir_all(&bundled).unwrap();
+        write_test_zip(
+            &bundled.join("npm-cache-windows-x64.zip"),
+            &[("npm-cache/_cacache/content-v2/sha512/aa/bb", b"cached package")],
+        );
+
+        let source = install_bundled_npm_cache_if_available(
+            &hermes_home,
+            Some(&bundled),
+            "windows",
+            "x64",
+        )
+        .unwrap();
+
+        assert_eq!(
+            source,
+            Some((
+                "npm-cache-windows-x64.zip".to_string(),
+                BootstrapArchiveSourceKind::Bundled,
+            ))
+        );
+        assert_eq!(
+            std::fs::read(
+                hermes_home
+                    .join("npm-cache")
+                    .join("_cacache")
+                    .join("content-v2")
+                    .join("sha512")
+                    .join("aa")
+                    .join("bb")
+            )
+            .unwrap(),
+            b"cached package"
         );
         let _ = std::fs::remove_dir_all(&root);
     }

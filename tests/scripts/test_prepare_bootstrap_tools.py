@@ -198,6 +198,23 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         )
         self.assertNotIn("electron-cache", module.required_tool_kinds_for_target("windows", "x64"))
 
+    def test_npm_cache_archive_names_have_target_metadata_without_being_required(self):
+        module = _load_script_module()
+
+        self.assertEqual(
+            module.archive_target_from_name("npm-cache-windows-x64.zip"),
+            ("windows", "x64"),
+        )
+        self.assertEqual(
+            module.archive_target_from_name("npm-cache-linux-arm64.tar.gz"),
+            ("linux", "arm64"),
+        )
+        self.assertEqual(
+            module.archive_tool_kind_from_name("npm-cache-macos-x64.tar.gz"),
+            "npm-cache",
+        )
+        self.assertNotIn("npm-cache", module.required_tool_kinds_for_target("linux", "x64"))
+
     def test_prepare_local_archive_copies_optional_ffmpeg_into_manifest(self):
         module = _load_script_module()
         root = Path("tmp-bootstrap-tools-local-archive-test")
@@ -389,6 +406,47 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                 )
         finally:
             module.download_archive = original_download
+            for entry in output_dir.glob("*"):
+                entry.unlink()
+            output_dir.rmdir()
+            root.rmdir()
+
+    def test_prepare_npm_cache_archive_populates_and_wraps_cache(self):
+        module = _load_script_module()
+        root = Path("tmp-bootstrap-tools-npm-cache-test")
+        output_dir = root / "bootstrap-tools"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        original_populate = module.populate_npm_cache
+
+        def fake_populate(cache_dir, cwd):
+            cache_file = cache_dir / "_cacache" / "content-v2" / "sha512" / "aa" / "bb"
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_bytes(b"cached package")
+
+        module.populate_npm_cache = fake_populate
+        try:
+            prepared = module.prepare_npm_cache_archive(
+                output_dir,
+                "windows",
+                "x64",
+                force=False,
+                dry_run=False,
+                source_url="https://example.invalid/npm-cache",
+            )
+
+            archive_path = output_dir / "npm-cache-windows-x64.zip"
+            self.assertEqual(len(prepared), 1)
+            self.assertEqual(prepared[0].platform, "windows")
+            self.assertEqual(prepared[0].arch, "x64")
+            self.assertEqual(prepared[0].name, "npm-cache-windows-x64.zip")
+            self.assertEqual(prepared[0].url, "https://example.invalid/npm-cache")
+            with zipfile.ZipFile(archive_path) as archive:
+                self.assertIn(
+                    "npm-cache/_cacache/content-v2/sha512/aa/bb",
+                    archive.namelist(),
+                )
+        finally:
+            module.populate_npm_cache = original_populate
             for entry in output_dir.glob("*"):
                 entry.unlink()
             output_dir.rmdir()
@@ -894,6 +952,18 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
 
         self.assertIn('"--bundle-electron-cache"', windows_workflow)
         self.assertIn("--bundle-electron-cache", unix_workflow)
+
+    def test_installer_workflows_bundle_npm_cache(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('"--bundle-npm-cache"', windows_workflow)
+        self.assertIn("--bundle-npm-cache", unix_workflow)
 
     def test_installer_workflows_pin_bootstrap_builds_to_current_commit(self):
         repo_root = Path(__file__).resolve().parents[2]

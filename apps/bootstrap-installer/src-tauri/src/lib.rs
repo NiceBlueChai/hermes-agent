@@ -606,6 +606,9 @@ fn bootstrap_tool_archive_target(name: &str) -> Option<(&'static str, &'static s
         "electron-cache-windows-x64.zip" => Some(("windows", "x64")),
         "electron-cache-windows-arm64.zip" => Some(("windows", "arm64")),
         "electron-cache-windows-x86.zip" => Some(("windows", "x86")),
+        "npm-cache-windows-x64.zip" => Some(("windows", "x64")),
+        "npm-cache-windows-arm64.zip" => Some(("windows", "arm64")),
+        "npm-cache-windows-x86.zip" => Some(("windows", "x86")),
         "uv-x86_64-unknown-linux-gnu.tar.gz"
         | "ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz" => Some(("linux", "x64")),
         "uv-aarch64-unknown-linux-gnu.tar.gz"
@@ -620,12 +623,16 @@ fn bootstrap_tool_archive_target(name: &str) -> Option<(&'static str, &'static s
         "playwright-browsers-linux-arm64.tar.gz" => Some(("linux", "arm64")),
         "electron-cache-linux-x64.tar.gz" => Some(("linux", "x64")),
         "electron-cache-linux-arm64.tar.gz" => Some(("linux", "arm64")),
+        "npm-cache-linux-x64.tar.gz" => Some(("linux", "x64")),
+        "npm-cache-linux-arm64.tar.gz" => Some(("linux", "arm64")),
         "ffmpeg-macos-x64.tar.gz" => Some(("macos", "x64")),
         "ffmpeg-macos-arm64.tar.gz" => Some(("macos", "arm64")),
         "playwright-browsers-macos-x64.tar.gz" => Some(("macos", "x64")),
         "playwright-browsers-macos-arm64.tar.gz" => Some(("macos", "arm64")),
         "electron-cache-macos-x64.tar.gz" => Some(("macos", "x64")),
         "electron-cache-macos-arm64.tar.gz" => Some(("macos", "arm64")),
+        "npm-cache-macos-x64.tar.gz" => Some(("macos", "x64")),
+        "npm-cache-macos-arm64.tar.gz" => Some(("macos", "arm64")),
         _ => None,
     }
 }
@@ -652,6 +659,9 @@ fn bootstrap_tool_archive_kind(name: &str) -> Option<&'static str> {
     }
     if name.starts_with("electron-cache-") {
         return Some("electron-cache");
+    }
+    if name.starts_with("npm-cache-") {
+        return Some("npm-cache");
     }
     None
 }
@@ -1613,6 +1623,27 @@ mod tests {
             Some("electron-cache")
         );
         assert!(!required_bootstrap_tool_kinds("linux", "x64").contains("electron-cache"));
+    }
+
+    #[test]
+    fn self_check_knows_optional_npm_cache_bootstrap_archive_targets() {
+        assert_eq!(
+            bootstrap_tool_archive_target("npm-cache-windows-x64.zip"),
+            Some(("windows", "x64"))
+        );
+        assert_eq!(
+            bootstrap_tool_archive_target("npm-cache-linux-arm64.tar.gz"),
+            Some(("linux", "arm64"))
+        );
+        assert_eq!(
+            bootstrap_tool_archive_target("npm-cache-macos-x64.tar.gz"),
+            Some(("macos", "x64"))
+        );
+        assert_eq!(
+            bootstrap_tool_archive_kind("npm-cache-macos-x64.tar.gz"),
+            Some("npm-cache")
+        );
+        assert!(!required_bootstrap_tool_kinds("linux", "x64").contains("npm-cache"));
     }
 
     #[test]

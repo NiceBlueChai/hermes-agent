@@ -303,6 +303,9 @@ language-specific setup where needed.
 - Script fallback for `node-deps` and desktop npm stages now receives the same managed npm cache and Playwright browser
   path environment where applicable, so native fallback does not spill browser/runtime caches back into global user
   locations.
+- Native `node-deps` can now consume optional manifest-verified `npm-cache-<platform>-<arch>` archives from
+  `bootstrap-tools/` before running npm commands, so release packages can pre-seed the Hermes-managed npm cache while
+  keeping normal npm registry fallback.
 - Script fallback for Python, venv, dependency, and platform-SDK stages now receives the same managed uv and pip cache
   environment as the native Rust path, keeping retry/recovery installs under Hermes-owned runtime directories.
 - `venv` now runs native-first through Rust by invoking `uv venv venv --python 3.11` in the checkout, with script
@@ -595,6 +598,9 @@ language-specific setup where needed.
   and lite uninstall.
 - Release packaging now bundles the pinned Electron zip as an optional `electron-cache-<platform>-<arch>` archive and
   the Rust desktop stage extracts it into `HERMES_HOME/electron-cache` before invoking electron-builder.
+- Release packaging now bundles a locked-workspace npm cache as an optional `npm-cache-<platform>-<arch>` archive and
+  the Rust `node-deps` stage extracts it into `HERMES_HOME/npm-cache` before root, TUI, Playwright, or desktop npm
+  commands try their normal `--prefer-offline` install path.
 - Python dependency setup now detects `resources/wheelhouse/` in the installed checkout and tries an offline
   `uv pip install --no-index --find-links` tier before the existing `uv.lock` and PyPI fallback tiers.
 - Installer workflows now prepare and validate a Tauri-bundled Python wheelhouse, including a retained
