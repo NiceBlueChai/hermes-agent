@@ -139,6 +139,57 @@ pub fn uninstall_gui_build_plan(hermes_home: &Path) -> Result<Vec<String>> {
     Ok(planned)
 }
 
+/// Remove source-built desktop GUI artifacts and Electron userData.
+pub fn uninstall_gui_build_with_user_data(hermes_home: &Path) -> Result<Vec<String>> {
+    uninstall_gui_build_with_user_data_dir(hermes_home, paths::desktop_user_data_dir())
+}
+
+/// Report source-built desktop GUI artifacts and Electron userData that would be removed.
+pub fn uninstall_gui_build_plan_with_user_data(hermes_home: &Path) -> Result<Vec<String>> {
+    uninstall_gui_build_plan_with_user_data_dir(hermes_home, paths::desktop_user_data_dir())
+}
+
+fn uninstall_gui_build_with_user_data_dir(
+    hermes_home: &Path,
+    user_data_dir: Option<PathBuf>,
+) -> Result<Vec<String>> {
+    let mut removed = uninstall_gui_build(hermes_home)?;
+    if let Some(user_data_dir) = user_data_dir {
+        ensure_desktop_user_data_dir_allowed(&user_data_dir)?;
+        if user_data_dir.exists() {
+            fs::remove_dir_all(&user_data_dir)
+                .map_err(|err| ManagerError::io(&user_data_dir, err))?;
+            removed.push(user_data_dir.display().to_string());
+        }
+    }
+    Ok(removed)
+}
+
+fn uninstall_gui_build_plan_with_user_data_dir(
+    hermes_home: &Path,
+    user_data_dir: Option<PathBuf>,
+) -> Result<Vec<String>> {
+    let mut planned = uninstall_gui_build_plan(hermes_home)?;
+    if let Some(user_data_dir) = user_data_dir {
+        ensure_desktop_user_data_dir_allowed(&user_data_dir)?;
+        if user_data_dir.exists() {
+            planned.push(user_data_dir.display().to_string());
+        }
+    }
+    Ok(planned)
+}
+
+fn ensure_desktop_user_data_dir_allowed(path: &Path) -> Result<()> {
+    if path.file_name().and_then(|name| name.to_str()) == Some("Hermes") {
+        return Ok(());
+    }
+
+    Err(ManagerError::InvalidManifest(format!(
+        "desktop userData cleanup path is not a Hermes userData directory: {}",
+        path.display()
+    )))
+}
+
 fn read_installed_manifest_or_default(
     hermes_home: &Path,
     manifest_path: &Path,
@@ -679,6 +730,27 @@ mod tests {
         assert!(venv_dir.exists());
         assert!(config.exists());
         assert!(sessions.exists());
+    }
+
+    #[test]
+    fn uninstall_gui_build_with_user_data_removes_desktop_userdata() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let hermes_home = dir.path().join("hermes");
+        let user_data = dir.path().join("Hermes-userData").join("Hermes");
+        let config = hermes_home.join("config.yaml");
+        fs::create_dir_all(&user_data).expect("desktop userData should be created");
+        fs::create_dir_all(&hermes_home).expect("Hermes home should be created");
+        fs::write(user_data.join("connection.json"), "{}")
+            .expect("desktop connection state should be created");
+        fs::write(&config, "model: test").expect("config should be written");
+
+        let removed =
+            super::uninstall_gui_build_with_user_data_dir(&hermes_home, Some(user_data.clone()))
+                .expect("desktop userData should be removed");
+
+        assert!(removed.contains(&user_data.display().to_string()));
+        assert!(!user_data.exists());
+        assert!(config.exists());
     }
 
     #[test]

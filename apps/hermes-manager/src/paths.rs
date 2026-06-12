@@ -152,6 +152,67 @@ pub fn source_gui_build_files(hermes_home: &std::path::Path) -> Vec<PathBuf> {
     vec![hermes_home.join("desktop-build-stamp.json")]
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DesktopPlatform {
+    Windows,
+    Macos,
+    Linux,
+}
+
+/// Return the Electron desktop userData directory when it can be resolved.
+pub fn desktop_user_data_dir() -> Option<PathBuf> {
+    desktop_user_data_dir_from_env(
+        current_desktop_platform(),
+        os_home_dir(),
+        std::env::var_os("APPDATA"),
+        std::env::var_os("XDG_CONFIG_HOME"),
+    )
+}
+
+fn current_desktop_platform() -> DesktopPlatform {
+    if cfg!(target_os = "windows") {
+        DesktopPlatform::Windows
+    } else if cfg!(target_os = "macos") {
+        DesktopPlatform::Macos
+    } else {
+        DesktopPlatform::Linux
+    }
+}
+
+fn desktop_user_data_dir_from_env(
+    platform: DesktopPlatform,
+    home: Option<OsString>,
+    appdata: Option<OsString>,
+    xdg_config_home: Option<OsString>,
+) -> Option<PathBuf> {
+    match platform {
+        DesktopPlatform::Windows => appdata
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                home.filter(|value| !value.is_empty())
+                    .map(|value| PathBuf::from(value).join("AppData").join("Roaming"))
+            })
+            .map(|base| base.join("Hermes")),
+        DesktopPlatform::Macos => home
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .map(|base| {
+                base.join("Library")
+                    .join("Application Support")
+                    .join("Hermes")
+            }),
+        DesktopPlatform::Linux => xdg_config_home
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                home.filter(|value| !value.is_empty())
+                    .map(|value| PathBuf::from(value).join(".config"))
+            })
+            .map(|base| base.join("Hermes")),
+    }
+}
+
 /// Manager metadata directory.
 pub fn manager_state_dir(hermes_home: &std::path::Path) -> PathBuf {
     hermes_home.join("manager")
@@ -233,6 +294,39 @@ mod tests {
         assert_eq!(
             source_gui_build_files(&home),
             vec![PathBuf::from("/tmp/hermes/desktop-build-stamp.json")]
+        );
+    }
+
+    #[test]
+    fn desktop_user_data_dir_matches_electron_locations() {
+        assert_eq!(
+            desktop_user_data_dir_from_env(
+                DesktopPlatform::Macos,
+                Some("/Users/alice".into()),
+                None,
+                None,
+            ),
+            Some(PathBuf::from(
+                "/Users/alice/Library/Application Support/Hermes"
+            ))
+        );
+        assert_eq!(
+            desktop_user_data_dir_from_env(
+                DesktopPlatform::Windows,
+                Some("C:/Users/alice".into()),
+                Some("C:/Users/alice/AppData/Roaming".into()),
+                None,
+            ),
+            Some(PathBuf::from("C:/Users/alice/AppData/Roaming/Hermes"))
+        );
+        assert_eq!(
+            desktop_user_data_dir_from_env(
+                DesktopPlatform::Linux,
+                Some("/home/alice".into()),
+                None,
+                Some("/tmp/xdg-config".into()),
+            ),
+            Some(PathBuf::from("/tmp/xdg-config/Hermes"))
         );
     }
 

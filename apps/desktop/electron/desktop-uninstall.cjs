@@ -59,9 +59,10 @@ function resolveHermesManagerPath(resourcesPath, platform = process.platform) {
 /**
  * Build a Rust manager command for cleanup the packaged manager can safely do.
  *
- * GUI mode still runs the Python uninstaller for packaged app/userData parity;
- * the manager handles source-built desktop build artifacts as an idempotent
- * residual cleanup. Lite mode can be fully handled by the manager when present.
+ * GUI mode still runs the Python uninstaller for packaged app parity; the
+ * manager handles source-built desktop build artifacts and Electron userData as
+ * idempotent residual cleanup. Lite mode can be fully handled by the manager
+ * when present.
  */
 function buildManagerCommandForMode({
   mode,
@@ -76,7 +77,7 @@ function buildManagerCommandForMode({
   if (mode === 'gui') {
     return {
       command: managerPath,
-      args: ['--hermes-home', hermesHome, 'uninstall-gui-build']
+      args: ['--hermes-home', hermesHome, 'uninstall-gui-build', '--user-data']
     }
   }
   if (mode !== 'lite') {

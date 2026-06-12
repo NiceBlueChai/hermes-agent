@@ -54,6 +54,9 @@ enum Command {
         /// Report paths that would be removed without deleting them.
         #[arg(long)]
         dry_run: bool,
+        /// Also remove the Electron desktop userData directory.
+        #[arg(long)]
+        user_data: bool,
     },
     /// Plan PATH changes needed to expose the Hermes command.
     PlanPath {
@@ -266,9 +269,15 @@ fn run() -> hermes_manager::Result<()> {
                 println!("repair_clean=ok");
             }
         }
-        Command::UninstallGuiBuild { dry_run } => {
+        Command::UninstallGuiBuild { dry_run, user_data } => {
             let paths = if dry_run {
-                hermes_manager::commands::uninstall_gui_build_plan(&home)?
+                if user_data {
+                    hermes_manager::commands::uninstall_gui_build_plan_with_user_data(&home)?
+                } else {
+                    hermes_manager::commands::uninstall_gui_build_plan(&home)?
+                }
+            } else if user_data {
+                hermes_manager::commands::uninstall_gui_build_with_user_data(&home)?
             } else {
                 hermes_manager::commands::uninstall_gui_build(&home)?
             };
@@ -558,7 +567,18 @@ mod tests {
             .expect("GUI build cleanup flag should parse");
 
         match cli.command {
-            Command::UninstallGuiBuild { dry_run } => assert!(dry_run),
+            Command::UninstallGuiBuild { dry_run, .. } => assert!(dry_run),
+            _ => panic!("expected uninstall-gui-build command"),
+        }
+    }
+
+    #[test]
+    fn uninstall_gui_build_parses_user_data_flag() {
+        let cli = Cli::try_parse_from(["hermes-manager", "uninstall-gui-build", "--user-data"])
+            .expect("GUI userData cleanup flag should parse");
+
+        match cli.command {
+            Command::UninstallGuiBuild { user_data, .. } => assert!(user_data),
             _ => panic!("expected uninstall-gui-build command"),
         }
     }

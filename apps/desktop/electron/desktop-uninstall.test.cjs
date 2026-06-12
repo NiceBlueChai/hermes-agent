@@ -72,7 +72,7 @@ test('buildManagerCommandForMode enables available Rust cleanup commands', () =>
     }),
     {
       command: managerPath,
-      args: ['--hermes-home', '/home/x/.hermes', 'uninstall-gui-build']
+      args: ['--hermes-home', '/home/x/.hermes', 'uninstall-gui-build', '--user-data']
     }
   )
   assert.deepEqual(
