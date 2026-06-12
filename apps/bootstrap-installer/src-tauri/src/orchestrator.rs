@@ -243,8 +243,17 @@ pub struct PlatformSdkRequirement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlatformSdkStagePlan {
     pub python: PathBuf,
+    pub uv: Option<PathBuf>,
     pub pip_cache_dir: PathBuf,
+    pub uv_cache_dir: PathBuf,
     pub requirements: Vec<PlatformSdkRequirement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlatformSdkInstallCommandPlan {
+    program: PathBuf,
+    args: Vec<String>,
+    env: Vec<(String, PathBuf)>,
 }
 
 /// How a bootstrap stage is currently handled by the Rust orchestrator.
@@ -592,9 +601,14 @@ pub fn platform_sdk_stage_plan(
     if !python.is_file() {
         return Err(anyhow!("venv Python not found at {}", python.display()));
     }
+    let path_env = std::env::var_os("PATH").unwrap_or_default();
+    let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+    let uv = uv_tool_path(hermes_home, path_env, &pathext).ok();
     Ok(PlatformSdkStagePlan {
         python,
+        uv,
         pip_cache_dir: hermes_home.join("pip-cache"),
+        uv_cache_dir: hermes_home.join("uv-cache"),
         requirements,
     })
 }
@@ -614,20 +628,29 @@ pub fn install_platform_sdks_stage(
     if missing.is_empty() {
         return Ok(serde_json::json!({
             "python": plan.python,
+            "uv": plan.uv,
             "pipCacheDir": plan.pip_cache_dir,
+            "uvCacheDir": plan.uv_cache_dir,
             "checked": plan.requirements.len(),
             "installed": [],
         }));
     }
-    ensure_pip_available(&plan.python)?;
+    let mut installed_methods = Vec::new();
     for sdk in &missing {
-        install_pip_spec(&plan.python, &plan.pip_cache_dir, sdk.pip_spec)?;
+        let method = install_platform_sdk_requirement(&plan, *sdk)?;
+        installed_methods.push(serde_json::json!({
+            "spec": sdk.pip_spec,
+            "method": method,
+        }));
     }
     Ok(serde_json::json!({
         "python": plan.python,
+        "uv": plan.uv,
         "pipCacheDir": plan.pip_cache_dir,
+        "uvCacheDir": plan.uv_cache_dir,
         "checked": plan.requirements.len(),
         "installed": missing.iter().map(|sdk| sdk.pip_spec).collect::<Vec<_>>(),
+        "installMethods": installed_methods,
     }))
 }
 
@@ -736,18 +759,82 @@ fn ensure_pip_available(python: &Path) -> Result<()> {
     }
 }
 
-fn install_pip_spec(python: &Path, pip_cache_dir: &Path, spec: &str) -> Result<()> {
-    let status = Command::new(python)
-        .args(["-m", "pip", "install", spec])
-        .env("PIP_CACHE_DIR", pip_cache_dir)
+fn install_platform_sdk_requirement(
+    plan: &PlatformSdkStagePlan,
+    sdk: PlatformSdkRequirement,
+) -> Result<&'static str> {
+    let commands = platform_sdk_install_commands(plan, sdk);
+    let mut errors = Vec::new();
+    match ensure_pip_available(&plan.python) {
+        Ok(()) => match run_platform_sdk_install_command(&commands[0]) {
+            Ok(()) => return Ok("pip"),
+            Err(err) => errors.push(err.to_string()),
+        },
+        Err(err) => errors.push(err.to_string()),
+    }
+    for command in commands.iter().skip(1) {
+        match run_platform_sdk_install_command(command) {
+            Ok(()) => return Ok("uv"),
+            Err(err) => errors.push(err.to_string()),
+        }
+    }
+    Err(anyhow!(
+        "failed to install {} through native platform SDK recovery: {}",
+        sdk.pip_spec,
+        errors.join("; ")
+    ))
+}
+
+fn platform_sdk_install_commands(
+    plan: &PlatformSdkStagePlan,
+    sdk: PlatformSdkRequirement,
+) -> Vec<PlatformSdkInstallCommandPlan> {
+    let mut commands = vec![PlatformSdkInstallCommandPlan {
+        program: plan.python.clone(),
+        args: vec![
+            "-m".to_string(),
+            "pip".to_string(),
+            "install".to_string(),
+            sdk.pip_spec.to_string(),
+        ],
+        env: vec![("PIP_CACHE_DIR".to_string(), plan.pip_cache_dir.clone())],
+    }];
+    if let Some(uv) = &plan.uv {
+        commands.push(PlatformSdkInstallCommandPlan {
+            program: uv.clone(),
+            args: vec![
+                "pip".to_string(),
+                "install".to_string(),
+                "--python".to_string(),
+                plan.python.display().to_string(),
+                sdk.pip_spec.to_string(),
+            ],
+            env: vec![("UV_CACHE_DIR".to_string(), plan.uv_cache_dir.clone())],
+        });
+    }
+    commands
+}
+
+fn run_platform_sdk_install_command(command: &PlatformSdkInstallCommandPlan) -> Result<()> {
+    let mut child = Command::new(&command.program);
+    child.args(&command.args);
+    for (key, value) in &command.env {
+        child.env(key, value);
+    }
+    let status = child
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .with_context(|| format!("installing {spec} with {}", python.display()))?;
+        .with_context(|| format!("running {}", command.program.display()))?;
     if status.success() {
         Ok(())
     } else {
-        Err(anyhow!("pip install {spec} failed with exit {:?}", status.code()))
+        Err(anyhow!(
+            "{} {} failed with exit {:?}",
+            command.program.display(),
+            command.args.join(" "),
+            status.code()
+        ))
     }
 }
 
@@ -6551,6 +6638,50 @@ mod tests {
         assert_eq!(plan.requirements[0].pip_spec, "qrcode>=7.0,<8");
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn platform_sdk_install_commands_include_uv_pip_fallback() {
+        let plan = PlatformSdkStagePlan {
+            python: PathBuf::from("/opt/hermes/venv/bin/python"),
+            uv: Some(PathBuf::from("/opt/hermes/bin/uv")),
+            pip_cache_dir: PathBuf::from("/opt/hermes/pip-cache"),
+            uv_cache_dir: PathBuf::from("/opt/hermes/uv-cache"),
+            requirements: Vec::new(),
+        };
+        let sdk = PlatformSdkRequirement {
+            env_var: "SLACK_BOT_TOKEN",
+            import_name: "slack_sdk",
+            pip_spec: "slack-sdk>=3.27.0,<4",
+        };
+
+        let commands = platform_sdk_install_commands(&plan, sdk);
+
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].program, plan.python);
+        assert_eq!(
+            commands[0].args,
+            vec!["-m", "pip", "install", "slack-sdk>=3.27.0,<4"]
+        );
+        assert_eq!(
+            commands[0].env,
+            vec![("PIP_CACHE_DIR".to_string(), PathBuf::from("/opt/hermes/pip-cache"))]
+        );
+        assert_eq!(commands[1].program, PathBuf::from("/opt/hermes/bin/uv"));
+        assert_eq!(
+            commands[1].args,
+            vec![
+                "pip",
+                "install",
+                "--python",
+                "/opt/hermes/venv/bin/python",
+                "slack-sdk>=3.27.0,<4"
+            ]
+        );
+        assert_eq!(
+            commands[1].env,
+            vec![("UV_CACHE_DIR".to_string(), PathBuf::from("/opt/hermes/uv-cache"))]
+        );
     }
 
     #[test]

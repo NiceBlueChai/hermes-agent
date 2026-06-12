@@ -323,6 +323,8 @@ language-specific setup where needed.
 - Unix bootstrap manifests now expose the same `platform-sdks` stage after config preparation, so Linux and macOS GUI
   installs also skip SDK work when no messaging platform tokens are configured and run native-first targeted SDK
   recovery when tokens are present.
+- Platform SDK recovery now tries `python -m pip install` first and falls back inside Rust to
+  `uv pip install --python <venv-python>` with Hermes-owned caches before delegating to scripts.
 - Unix `system-packages` now installs missing `ffmpeg` through Rust-planned package-manager commands on common
   Linux/macOS/Termux targets after the native ripgrep archive path runs, preserving shell fallback for unsupported
   distributions, denied privileges, and package-manager failures.
@@ -337,8 +339,8 @@ language-specific setup where needed.
 **Still script-backed:**
 - Recovery tiers remain script-backed for failure cases that still need package-manager or mirror-specific handling:
   unknown Linux Playwright system-library recovery, interactive or denied Linux `chrome-sandbox` privilege escalation,
-  unsupported or failed Unix package-manager recovery, and messaging-platform SDK recovery if the native targeted pip
-  path fails.
+  unsupported or failed Unix package-manager recovery, and messaging-platform SDK recovery if both native pip and uv
+  targeted installs fail.
 - Fresh archive installs and archive updates do not require Git. Unix Git acquisition now has a native-first package
   manager path for common Linux/macOS/Termux setups, while unsupported distro handling, macOS CLT dialog recovery, and
   package-manager failures remain shell fallbacks.
