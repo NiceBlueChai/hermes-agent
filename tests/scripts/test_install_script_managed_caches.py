@@ -44,6 +44,8 @@ class InstallScriptManagedCachesTests(unittest.TestCase):
         self.assertIn("$env:HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR", script)
         self.assertIn("bootstrap-tools-manifest.json", script)
         self.assertIn("Get-FileHash", script)
+        self.assertIn("Test-ZipArchiveMembersSafe", script)
+        self.assertIn("[System.IO.Compression.ZipFile]::OpenRead", script)
         self.assertIn("Restore-BundledNpmCacheIfAvailable", script)
         self.assertIn("Restore-BundledPlaywrightBrowsersIfAvailable", script)
         self.assertIn("Restore-BundledElectronCacheIfAvailable", script)

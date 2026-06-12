@@ -1584,6 +1584,32 @@ function Test-BundledCacheArchiveManifest {
     }
 }
 
+function Test-ZipArchiveMembersSafe {
+    param([string]$ArchivePath)
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
+        try {
+            foreach ($entry in $zip.Entries) {
+                $name = [string]$entry.FullName
+                $normalized = $name.Replace('\', '/')
+                if ([string]::IsNullOrWhiteSpace($normalized) `
+                    -or $normalized.StartsWith("/") `
+                    -or $normalized -match '(^|/)\.\.(/|$)') {
+                    Write-Warn "Skipping bundled cache archive with unsafe member: $name"
+                    return $false
+                }
+            }
+        } finally {
+            $zip.Dispose()
+        }
+        return $true
+    } catch {
+        Write-Warn "Skipping bundled cache archive with unreadable ZIP members: $_"
+        return $false
+    }
+}
+
 function Restore-BundledCacheArchive {
     param(
         [string]$ArchiveName,
@@ -1598,6 +1624,9 @@ function Restore-BundledCacheArchive {
                 -ToolsDir $toolsDir `
                 -ArchiveName $ArchiveName `
                 -ArchivePath $archive)) {
+        return $false
+    }
+    if (-not (Test-ZipArchiveMembersSafe -ArchivePath $archive)) {
         return $false
     }
 
