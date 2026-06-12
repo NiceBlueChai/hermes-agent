@@ -1191,10 +1191,14 @@ fn stage_script_extra_env(
     }
     if stage_name.eq_ignore_ascii_case("node-deps") || stage_name.eq_ignore_ascii_case("desktop") {
         if let Some(home) = hermes_home {
+            let electron_cache = home.join("electron-cache").display().to_string();
             env.push((
                 "npm_config_cache".to_string(),
                 home.join("npm-cache").display().to_string(),
             ));
+            env.push(("electron_config_cache".to_string(), electron_cache.clone()));
+            env.push(("ELECTRON_CACHE".to_string(), electron_cache.clone()));
+            env.push(("ELECTRON_BUILDER_CACHE".to_string(), electron_cache));
         }
     }
     if stage_name.eq_ignore_ascii_case("node-deps") {
@@ -1778,6 +1782,18 @@ mod tests {
             stage_script_extra_env("node-deps", &install_root, Some(&hermes_home)),
             vec![
                 ("npm_config_cache".to_string(), hermes_home.join("npm-cache").display().to_string()),
+                (
+                    "electron_config_cache".to_string(),
+                    hermes_home.join("electron-cache").display().to_string()
+                ),
+                (
+                    "ELECTRON_CACHE".to_string(),
+                    hermes_home.join("electron-cache").display().to_string()
+                ),
+                (
+                    "ELECTRON_BUILDER_CACHE".to_string(),
+                    hermes_home.join("electron-cache").display().to_string()
+                ),
                 (
                     "PLAYWRIGHT_BROWSERS_PATH".to_string(),
                     hermes_home.join("playwright-browsers").display().to_string()
