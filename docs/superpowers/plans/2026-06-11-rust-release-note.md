@@ -26,6 +26,12 @@ User-visible behavior:
   installer platform being uploaded.
 - Native bootstrap diagnostics now preserve npm and Unix package-manager failure output, including permission hints for
   Hermes-managed npm cache and `node_modules` paths.
+- Native and script-fallback desktop packaging now direct Electron download/build caches into
+  `HERMES_HOME/electron-cache`, so repair and lite uninstall can remove that installer-owned cache without touching
+  unrelated user-wide Electron caches.
+- Python dependency setup now has a local wheelhouse entry point: if a release package supplies
+  `resources/wheelhouse/`, native bootstrap tries it with `--no-index` before falling back to the existing `uv.lock`
+  and PyPI tiers.
 - Release staging writes a checksummed bundled manifest beside the Rust manager binary and retains a
   `bootstrap-tools-manifest.json` artifact for packaged runtime archives. Installer workflows now run a no-UI binary
   self-check against the just-built setup executable, embedded install scripts, commit pin, and bootstrap-tools manifest.
@@ -39,9 +45,9 @@ Compatibility and fallback:
 - Script fallback is still used for unsupported platforms, denied or interactive privilege escalation, unrecognized
   package managers/distributions, failed package-manager recovery, and cases where both native pip and uv targeted SDK
   installs fail.
-- `ffmpeg`, Python wheels, Playwright browser downloads when no system browser is available, and Electron caches are not
-  bundled by default; they remain download or package-manager work unless the release-size and security-update tradeoff
-  is explicitly accepted later.
+- `ffmpeg`, Python wheels, and Playwright browser downloads when no system browser is available are not bundled by
+  default; they remain download or package-manager work unless the release-size and security-update tradeoff is
+  explicitly accepted later.
 
 Operational note:
 

@@ -2462,7 +2462,26 @@ pub fn sync_python_dependencies_stage(
 
 fn python_dependency_install_tiers_for_cwd(cwd: &Path) -> Vec<PythonDependencyInstallTier> {
     let pyproject = fs::read_to_string(cwd.join("pyproject.toml")).unwrap_or_default();
-    python_dependency_install_tiers_for_pyproject(&pyproject, PYTHON_KNOWN_BROKEN_EXTRAS)
+    let mut tiers = python_dependency_install_tiers_for_pyproject(&pyproject, PYTHON_KNOWN_BROKEN_EXTRAS);
+    let wheelhouse = cwd.join("resources").join("wheelhouse");
+    if wheelhouse.is_dir() {
+        tiers.insert(
+            0,
+            PythonDependencyInstallTier {
+                name: "local wheelhouse (all)".to_string(),
+                args: vec![
+                    "pip".to_string(),
+                    "install".to_string(),
+                    "--no-index".to_string(),
+                    "--find-links".to_string(),
+                    wheelhouse.display().to_string(),
+                    "-e".to_string(),
+                    ".[all]".to_string(),
+                ],
+            },
+        );
+    }
+    tiers
 }
 
 fn python_dependency_install_tiers_for_pyproject(
@@ -7542,6 +7561,36 @@ mod tests {
         assert_eq!(tiers[2].args, vec!["pip", "install", "-e", ".[all]"]);
         assert_eq!(tiers[3].name, "core only (no extras)");
         assert_eq!(tiers[3].args, vec!["pip", "install", "-e", "."]);
+    }
+
+    #[test]
+    fn python_dependency_install_tiers_prefer_local_wheelhouse_when_present() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-wheelhouse-tier-{}",
+            std::process::id()
+        ));
+        let wheelhouse = root.join("resources").join("wheelhouse");
+        std::fs::create_dir_all(&wheelhouse).unwrap();
+        std::fs::write(root.join("pyproject.toml"), b"").unwrap();
+
+        let tiers = python_dependency_install_tiers_for_cwd(&root);
+
+        assert_eq!(tiers[0].name, "local wheelhouse (all)");
+        assert_eq!(
+            tiers[0].args,
+            vec![
+                "pip".to_string(),
+                "install".to_string(),
+                "--no-index".to_string(),
+                "--find-links".to_string(),
+                wheelhouse.display().to_string(),
+                "-e".to_string(),
+                ".[all]".to_string(),
+            ]
+        );
+        assert_eq!(tiers[1].name, "hash-verified (uv.lock)");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

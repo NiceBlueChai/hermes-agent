@@ -538,6 +538,11 @@ language-specific setup where needed.
   installers, so release review can compare the actual bundled Node/uv/ripgrep/Git archives against the manifest.
 - The release artifact validator now rejects unmanifested runtime payloads in `bootstrap-tools/`, making the retained
   manifest the complete allow-list for bundled archives while allowing repository metadata files such as README/.gitignore.
+- Native and script-fallback desktop packaging now set Electron download/build caches to
+  `HERMES_HOME/electron-cache`, and `hermes-manager` treats that directory as installer-owned runtime state for repair
+  and lite uninstall.
+- Python dependency setup now detects `resources/wheelhouse/` in the installed checkout and tries an offline
+  `uv pip install --no-index --find-links` tier before the existing `uv.lock` and PyPI fallback tiers.
 - The validate-only gate now also requires every archive record to retain its download URL, keeping the packaged
   runtime archive update path auditable alongside size and SHA-256.
 - Archive URLs in the retained bootstrap-tools manifest must be HTTPS, so release review cannot accidentally accept an
