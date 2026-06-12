@@ -47,6 +47,8 @@ User-visible behavior:
   archives before network downloads.
 - Script recovery only extracts those bundled cache archives after their `bootstrap-tools-manifest.json` size and
   SHA-256 entries match, so a stale or tampered release payload falls back to the existing network path.
+- The built installer's self-check now also verifies that the Tauri bundle config still includes `bootstrap-tools/`
+  and `wheelhouse/`, catching accidental resource removal in release smoke tests.
 - Release npm-cache archive preparation reuses an existing populated workflow npm cache before falling back to
   `npm ci`, reducing release packaging time and avoidable registry traffic.
 - Native Unix PATH setup now updates every existing shell profile relevant to the user's shell, so fresh installs are

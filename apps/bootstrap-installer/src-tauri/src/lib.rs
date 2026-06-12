@@ -26,6 +26,7 @@ const BOOTSTRAP_TOOLS_MANIFEST: &str = "bootstrap-tools-manifest.json";
 const ALLOWED_BOOTSTRAP_TOOLS_METADATA: [&str; 2] = [".gitignore", "README.md"];
 const WHEELHOUSE_MANIFEST: &str = "wheelhouse-manifest.json";
 const ALLOWED_WHEELHOUSE_METADATA: [&str; 2] = [".gitignore", "README.md"];
+const TAURI_CONFIG_JSON: &str = include_str!("../tauri.conf.json");
 
 /// Machine-readable report emitted by the no-UI bootstrap installer self-check.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -106,6 +107,9 @@ pub fn bootstrap_self_check_report(
     if embedded_scripts.len() < 2 {
         errors.push("installer is missing embedded install scripts".to_string());
     }
+    errors.extend(validate_tauri_bundle_resources_config_for_self_check(
+        TAURI_CONFIG_JSON,
+    ));
     for script in &embedded_scripts {
         if script.size_bytes == 0 {
             errors.push(format!(
@@ -141,6 +145,34 @@ pub fn bootstrap_self_check_report(
         python_wheelhouse_wheels,
         errors,
     }
+}
+
+fn validate_tauri_bundle_resources_config_for_self_check(config_json: &str) -> Vec<String> {
+    let mut errors = Vec::new();
+    let config: serde_json::Value = match serde_json::from_str(config_json) {
+        Ok(value) => value,
+        Err(err) => {
+            return vec![format!("installer Tauri config is invalid JSON: {err}")];
+        }
+    };
+    let Some(resources) = config
+        .get("bundle")
+        .and_then(|bundle| bundle.get("resources"))
+        .and_then(|resources| resources.as_array())
+    else {
+        return vec!["installer Tauri bundle is missing resources".to_string()];
+    };
+    for required in ["bootstrap-tools/", "wheelhouse/"] {
+        let found = resources
+            .iter()
+            .any(|resource| resource.as_str() == Some(required));
+        if !found {
+            errors.push(format!(
+                "installer Tauri bundle resources missing {required}"
+            ));
+        }
+    }
+    errors
 }
 
 fn expected_self_check_commit<I, S>(args: I) -> Option<String>
@@ -874,7 +906,8 @@ mod tests {
         bootstrap_self_check_report, bootstrap_tool_archive_kind, bootstrap_tool_archive_target,
         expected_self_check_commit, force_setup_from_args, required_bootstrap_tool_kinds,
         self_check_bootstrap_tools_arch, self_check_bootstrap_tools_platform,
-        self_check_wheelhouse_arch, self_check_wheelhouse_dir, self_check_wheelhouse_platform, AppMode,
+        self_check_wheelhouse_arch, self_check_wheelhouse_dir, self_check_wheelhouse_platform,
+        validate_tauri_bundle_resources_config_for_self_check, AppMode,
     };
     use std::path::PathBuf;
 
@@ -959,6 +992,21 @@ mod tests {
             .embedded_scripts
             .iter()
             .all(|script| script.sha256.len() == 64));
+    }
+
+    #[test]
+    fn self_check_validates_tauri_bundle_resource_config() {
+        let missing_wheelhouse = r#"{
+            "bundle": {
+                "resources": ["bootstrap-tools/"]
+            }
+        }"#;
+
+        let errors = validate_tauri_bundle_resources_config_for_self_check(missing_wheelhouse);
+
+        assert!(errors
+            .iter()
+            .any(|err| err.contains("wheelhouse/")));
     }
 
     #[test]
