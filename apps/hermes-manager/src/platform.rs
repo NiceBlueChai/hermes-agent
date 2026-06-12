@@ -145,6 +145,30 @@ pub fn write_shell_profile_update(profile_path: &Path, plan: &PathUpdatePlan) ->
     fs::write(profile_path, next).map_err(|err| ManagerError::io(profile_path, err))
 }
 
+/// Return true when a shell profile contains a Hermes-managed PATH block.
+pub fn shell_profile_has_managed_update(profile_path: &Path) -> Result<bool> {
+    let existing = match fs::read_to_string(profile_path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(ManagerError::io(profile_path, err)),
+    };
+    Ok(existing.contains(HERMES_PROFILE_BEGIN) && existing.contains(HERMES_PROFILE_END))
+}
+
+/// Remove the Hermes-managed PATH block from a shell profile file.
+pub fn remove_shell_profile_update(profile_path: &Path) -> Result<bool> {
+    let existing = match fs::read_to_string(profile_path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(ManagerError::io(profile_path, err)),
+    };
+    let Some(next) = remove_managed_block(&existing) else {
+        return Ok(false);
+    };
+    fs::write(profile_path, next).map_err(|err| ManagerError::io(profile_path, err))?;
+    Ok(true)
+}
+
 /// Write a managed Unix launcher that sanitizes Python environment variables.
 pub fn write_unix_launcher(launcher_path: &Path, target_path: &Path) -> Result<bool> {
     if !target_path.is_file() {
@@ -486,6 +510,28 @@ fn replace_managed_block(existing: &str, block: &str) -> String {
     next
 }
 
+fn remove_managed_block(existing: &str) -> Option<String> {
+    let begin = existing.find(HERMES_PROFILE_BEGIN)?;
+    let end_offset = existing[begin..].find(HERMES_PROFILE_END)?;
+    let end = begin + end_offset + HERMES_PROFILE_END.len();
+    let prefix = existing[..begin].trim_end_matches(['\r', '\n']);
+    let suffix = existing[end..].trim_start_matches(['\r', '\n']);
+    let mut next = String::new();
+    if !prefix.is_empty() {
+        next.push_str(prefix);
+    }
+    if !prefix.is_empty() && !suffix.is_empty() {
+        next.push('\n');
+    }
+    if !suffix.is_empty() {
+        next.push_str(suffix);
+    }
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push('\n');
+    }
+    Some(next)
+}
+
 fn split_path_like(value: &str, delimiter: char) -> Vec<String> {
     value
         .split(delimiter)
@@ -654,6 +700,35 @@ mod tests {
         let text = std::fs::read_to_string(&profile).unwrap();
         assert!(!text.contains("old"));
         assert!(text.contains("export PATH=\"/new/hermes/bin:$PATH\""));
+    }
+
+    #[test]
+    fn remove_shell_profile_update_preserves_user_content() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let profile = dir.path().join(".profile");
+        std::fs::write(
+            &profile,
+            format!(
+                concat!(
+                    "alias ll='ls -la'\n\n",
+                    "{}\n",
+                    "export PATH=\"/tmp/hermes:$PATH\"\n",
+                    "{}\n\n",
+                    "export EDITOR=vim\n"
+                ),
+                HERMES_PROFILE_BEGIN, HERMES_PROFILE_END
+            ),
+        )
+        .unwrap();
+
+        let changed = remove_shell_profile_update(&profile).unwrap();
+
+        let text = std::fs::read_to_string(&profile).unwrap();
+        assert!(changed);
+        assert!(text.contains("alias ll='ls -la'"));
+        assert!(text.contains("export EDITOR=vim"));
+        assert!(!text.contains(HERMES_PROFILE_BEGIN));
+        assert!(!text.contains("/tmp/hermes"));
     }
 
     #[test]

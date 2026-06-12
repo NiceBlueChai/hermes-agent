@@ -48,7 +48,8 @@ pub fn uninstall_lite(hermes_home: &Path) -> Result<Vec<String>> {
     validate_manifest_home(hermes_home, &manifest)?;
     preflight_uninstall_lite_entries(hermes_home, &manifest)?;
 
-    let mut removed = remove_managed_command_links(hermes_home)?;
+    let mut removed = remove_managed_profile_updates(hermes_home)?;
+    removed.extend(remove_managed_command_links(hermes_home)?);
 
     for entry in manifest.entries.iter().rev() {
         if !entry.path.exists() {
@@ -76,10 +77,15 @@ pub fn uninstall_lite_plan(hermes_home: &Path) -> Result<Vec<String>> {
     validate_manifest_home(hermes_home, &manifest)?;
     preflight_uninstall_lite_entries(hermes_home, &manifest)?;
 
-    let mut planned = managed_command_link_plan(hermes_home)?
+    let mut planned = managed_profile_update_plan(hermes_home)?
         .into_iter()
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>();
+    planned.extend(
+        managed_command_link_plan(hermes_home)?
+            .into_iter()
+            .map(|path| path.display().to_string()),
+    );
     for entry in manifest.entries.iter().rev() {
         if !entry.path.exists() {
             continue;
@@ -218,6 +224,73 @@ fn remove_managed_command_links(hermes_home: &Path) -> Result<Vec<String>> {
         }
     }
     Ok(removed)
+}
+
+fn remove_managed_profile_updates(hermes_home: &Path) -> Result<Vec<String>> {
+    remove_managed_profile_updates_in_paths(hermes_home, shell_profile_candidate_paths())
+}
+
+fn remove_managed_profile_updates_in_paths(
+    hermes_home: &Path,
+    profile_paths: Vec<PathBuf>,
+) -> Result<Vec<String>> {
+    let mut removed = Vec::new();
+    for profile in managed_profile_update_plan_in_paths(hermes_home, profile_paths)? {
+        if crate::platform::remove_shell_profile_update(&profile).unwrap_or(false) {
+            removed.push(profile.display().to_string());
+        }
+    }
+    Ok(removed)
+}
+
+fn managed_profile_update_plan(hermes_home: &Path) -> Result<Vec<PathBuf>> {
+    managed_profile_update_plan_in_paths(hermes_home, shell_profile_candidate_paths())
+}
+
+fn managed_profile_update_plan_in_paths(
+    hermes_home: &Path,
+    profile_paths: Vec<PathBuf>,
+) -> Result<Vec<PathBuf>> {
+    let mut planned = Vec::new();
+    for profile in profile_paths {
+        if shell_profile_has_managed_update_for_home(&profile, hermes_home) {
+            planned.push(profile);
+        }
+    }
+    Ok(planned)
+}
+
+fn shell_profile_has_managed_update_for_home(profile_path: &Path, hermes_home: &Path) -> bool {
+    let Ok(content) = fs::read_to_string(profile_path) else {
+        return false;
+    };
+    content.contains(crate::platform::HERMES_PROFILE_BEGIN)
+        && content.contains(crate::platform::HERMES_PROFILE_END)
+        && content.contains(&hermes_home.display().to_string())
+}
+
+fn shell_profile_candidate_paths() -> Vec<PathBuf> {
+    shell_profile_candidate_paths_from_home(std::env::var_os("HOME").map(PathBuf::from))
+}
+
+#[cfg(unix)]
+fn shell_profile_candidate_paths_from_home(home: Option<PathBuf>) -> Vec<PathBuf> {
+    let Some(home) = home else {
+        return Vec::new();
+    };
+    vec![
+        home.join(".bashrc"),
+        home.join(".bash_profile"),
+        home.join(".profile"),
+        home.join(".zshrc"),
+        home.join(".zprofile"),
+        home.join(".config").join("fish").join("config.fish"),
+    ]
+}
+
+#[cfg(not(unix))]
+fn shell_profile_candidate_paths_from_home(_home: Option<PathBuf>) -> Vec<PathBuf> {
+    Vec::new()
 }
 
 fn managed_command_link_plan(hermes_home: &Path) -> Result<Vec<PathBuf>> {
@@ -506,6 +579,56 @@ mod tests {
         let planned = super::managed_hermes_wrapper_plan_in_dirs(vec![bin_dir])
             .expect("user wrapper plan should be created");
         assert!(planned.is_empty());
+    }
+
+    #[test]
+    fn managed_profile_cleanup_removes_only_managed_blocks() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let hermes_home = dir.path().join("hermes");
+        let managed = dir.path().join(".profile");
+        let other_home = dir.path().join("other-hermes");
+        let other = dir.path().join(".bashrc");
+        let user = dir.path().join(".zshrc");
+        fs::write(
+            &managed,
+            format!(
+                "export EDITOR=vim\n\n{}\nexport PATH=\"{}:$PATH\"\n{}\n",
+                crate::platform::HERMES_PROFILE_BEGIN,
+                hermes_home.join("bin").display(),
+                crate::platform::HERMES_PROFILE_END
+            ),
+        )
+        .expect("managed profile should be created");
+        fs::write(
+            &other,
+            format!(
+                "{}\nexport PATH=\"{}:$PATH\"\n{}\n",
+                crate::platform::HERMES_PROFILE_BEGIN,
+                other_home.join("bin").display(),
+                crate::platform::HERMES_PROFILE_END
+            ),
+        )
+        .expect("other profile should be created");
+        fs::write(&user, "export PATH=\"$HOME/bin:$PATH\"\n")
+            .expect("user profile should be created");
+
+        let removed = super::remove_managed_profile_updates_in_paths(
+            &hermes_home,
+            vec![managed.clone(), other.clone(), user.clone()],
+        )
+        .expect("managed profile updates should be removed");
+
+        assert_eq!(removed, vec![managed.display().to_string()]);
+        assert!(!fs::read_to_string(&managed)
+            .expect("managed profile should be readable")
+            .contains(crate::platform::HERMES_PROFILE_BEGIN));
+        assert!(fs::read_to_string(&other)
+            .expect("other profile should be readable")
+            .contains(crate::platform::HERMES_PROFILE_BEGIN));
+        assert_eq!(
+            fs::read_to_string(&user).expect("user profile should be readable"),
+            "export PATH=\"$HOME/bin:$PATH\"\n"
+        );
     }
 
     #[test]

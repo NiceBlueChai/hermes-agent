@@ -367,6 +367,8 @@ language-specific setup where needed.
   only when those links still point into `$HERMES_HOME/node`, preserving user-managed Node installations.
 - `hermes-manager uninstall-lite` and `repair-clean` now also plan and remove legacy Unix `hermes` wrapper scripts
   from managed command-link directories, but only when the wrapper content still identifies a Hermes launcher.
+- `hermes-manager uninstall-lite` now also plans and removes Hermes-managed shell profile PATH blocks from common Unix
+  shell config files, while leaving user-authored PATH lines outside the managed block untouched.
 - `hermes-manager` now has a CLI smoke test that runs `install-metadata`, `uninstall-lite`, and `repair-clean` against
   an isolated Hermes home, proving the command surface preserves user config while cleaning every current
   Hermes-managed runtime directory and staged installer file.
