@@ -243,6 +243,8 @@ language-specific setup where needed.
   network fallback behavior.
 - Unix Node preflight now prefers matching bundled Node tarballs from `bootstrap-tools/` before downloading from
   nodejs.org, matching the Windows bundled archive behavior for packaged installers.
+- Unix Node native install failures now retain the script fallback path for Linux and macOS packaged bootstraps,
+  preserving one-release recovery behavior while the Rust path remains native-first.
 - Unix bootstrap manifests now expose Node.js as a separate native-first stage after `uv`, and Rust passes an internal
   skip signal so the prerequisites shell fallback does not repeat the managed Node.js check/install path.
 - Unix `uv` now has a Rust native-first GitHub release tarball path for Linux and macOS x64/arm64, installing `uv` and

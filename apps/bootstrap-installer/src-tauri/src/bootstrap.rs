@@ -1145,20 +1145,29 @@ fn should_fallback_repository_archive(stage_name: &str, install_root: &std::path
 }
 
 fn should_fallback_native_stage(stage_name: &str, install_root: &std::path::Path) -> bool {
+    should_fallback_native_stage_for_target(stage_name, install_root, std::env::consts::OS)
+}
+
+fn should_fallback_native_stage_for_target(
+    stage_name: &str,
+    install_root: &std::path::Path,
+    target_os: &str,
+) -> bool {
     should_fallback_repository_archive(stage_name, install_root)
         || stage_name.eq_ignore_ascii_case("venv")
         || stage_name.eq_ignore_ascii_case("uv")
-        || (cfg!(target_os = "windows") && stage_name.eq_ignore_ascii_case("git"))
-        || (!cfg!(target_os = "windows") && stage_name.eq_ignore_ascii_case("git"))
+        || stage_name.eq_ignore_ascii_case("git")
         || stage_name.eq_ignore_ascii_case("system-packages")
         || stage_name.eq_ignore_ascii_case("python")
-        || (cfg!(target_os = "windows") && stage_name.eq_ignore_ascii_case("node"))
+        || (is_packaged_bootstrap_target(target_os) && stage_name.eq_ignore_ascii_case("node"))
         || is_python_dependencies_stage(stage_name)
         || stage_name.eq_ignore_ascii_case("platform-sdks")
-        || ((cfg!(target_os = "windows") || cfg!(target_os = "macos") || cfg!(target_os = "linux"))
-            && stage_name.eq_ignore_ascii_case("node-deps"))
-        || ((cfg!(target_os = "windows") || cfg!(target_os = "macos") || cfg!(target_os = "linux"))
-            && stage_name.eq_ignore_ascii_case("desktop"))
+        || (is_packaged_bootstrap_target(target_os) && stage_name.eq_ignore_ascii_case("node-deps"))
+        || (is_packaged_bootstrap_target(target_os) && stage_name.eq_ignore_ascii_case("desktop"))
+}
+
+fn is_packaged_bootstrap_target(target_os: &str) -> bool {
+    matches!(target_os, "windows" | "linux" | "macos")
 }
 
 fn is_python_dependencies_stage(stage_name: &str) -> bool {
@@ -1665,6 +1674,7 @@ mod tests {
     fn venv_native_stage_failure_can_fall_back_to_script() {
         let root = unique_tmp_dir("venv-fallback");
         let install_root = root.join("hermes-agent");
+        let packaged_target = is_packaged_bootstrap_target(std::env::consts::OS);
 
         assert!(should_fallback_native_stage("venv", &install_root));
         assert!(should_fallback_native_stage("python", &install_root));
@@ -1674,16 +1684,45 @@ mod tests {
         assert!(should_fallback_native_stage("system-packages", &install_root));
         assert_eq!(
             should_fallback_native_stage("node-deps", &install_root),
-            cfg!(target_os = "windows")
+            packaged_target
         );
         assert_eq!(
             should_fallback_native_stage("desktop", &install_root),
-            cfg!(target_os = "windows")
+            packaged_target
         );
         assert_eq!(
             should_fallback_native_stage("node", &install_root),
-            cfg!(target_os = "windows")
+            packaged_target
         );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn node_native_stage_failure_can_fall_back_to_script_on_packaged_targets() {
+        let root = unique_tmp_dir("node-fallback-targets");
+        let install_root = root.join("hermes-agent");
+
+        assert!(should_fallback_native_stage_for_target(
+            "node",
+            &install_root,
+            "windows"
+        ));
+        assert!(should_fallback_native_stage_for_target(
+            "node",
+            &install_root,
+            "linux"
+        ));
+        assert!(should_fallback_native_stage_for_target(
+            "node",
+            &install_root,
+            "macos"
+        ));
+        assert!(!should_fallback_native_stage_for_target(
+            "node",
+            &install_root,
+            "freebsd"
+        ));
 
         let _ = std::fs::remove_dir_all(&root);
     }
