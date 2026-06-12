@@ -73,6 +73,8 @@ User-visible behavior:
 - Native and script-fallback desktop packaging now direct Electron download/build caches into
   `HERMES_HOME/electron-cache`, so repair and lite uninstall can remove that installer-owned cache without touching
   unrelated user-wide Electron caches.
+- Script fallback for the `system-packages` stage now receives the packaged `bootstrap-tools/` directory, preserving
+  bundled ffmpeg/ripgrep recovery if the native Rust system-package path falls back.
 - Python dependency setup now has a local wheelhouse entry point: if a release package supplies
   `resources/wheelhouse/`, native bootstrap tries it with `--no-index` before falling back to the existing `uv.lock`
   and PyPI tiers.

@@ -1225,7 +1225,9 @@ fn stage_script_extra_env(
             ));
         }
     }
-    if stage_name.eq_ignore_ascii_case("node-deps") || stage_name.eq_ignore_ascii_case("desktop") {
+    if stage_name.eq_ignore_ascii_case("system-packages")
+        || stage_name.eq_ignore_ascii_case("node-deps")
+        || stage_name.eq_ignore_ascii_case("desktop") {
         if let Some(tools_dir) = bundled_tools_dir {
             env.push((
                 "HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR".to_string(),
@@ -1855,6 +1857,30 @@ mod tests {
                     bundled_tools.display().to_string()
                 )
             ]
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn system_package_fallback_scripts_use_bundled_tools() {
+        let root = unique_tmp_dir("system-packages-fallback-env");
+        let install_root = root.join("hermes-agent");
+        let hermes_home = root.join("home");
+        let bundled_tools = root.join("resources").join("bootstrap-tools");
+
+        assert_eq!(
+            stage_script_extra_env(
+                "system-packages",
+                &install_root,
+                Some(&hermes_home),
+                Some(&bundled_tools),
+                None,
+            ),
+            vec![(
+                "HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR".to_string(),
+                bundled_tools.display().to_string()
+            )]
         );
 
         let _ = std::fs::remove_dir_all(&root);

@@ -717,6 +717,8 @@ language-specific setup where needed.
   `npm install` only when the lockfile path cannot complete.
 - The validate-only gate now also requires every archive record to retain its download URL, keeping the packaged
   runtime archive update path auditable alongside size and SHA-256.
+- Script fallback for `system-packages` now receives the bundled bootstrap-tools directory, so packaged ffmpeg/ripgrep
+  resources remain available even if the native Rust recovery path has to hand control back to the install script.
 - Archive URLs in the retained bootstrap-tools manifest must be HTTPS, so release review cannot accidentally accept an
   insecure update source for a packaged runtime archive.
 - Runtime bootstrap archive selection now also requires each manifest archive URL to be HTTPS before trusting a bundled
