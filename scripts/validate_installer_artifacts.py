@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_BOOTSTRAP_TOOLS_METADATA = {".gitignore", "README.md"}
 
 
-def validate_bootstrap_tools_payload(output_dir: Path) -> int:
+def validate_bootstrap_tools_payload(output_dir: Path, expected_platform: str | None = None) -> int:
     """Validate that the bootstrap-tools directory contains only manifest-owned payloads."""
 
     archive_count = validate_manifest(output_dir)
@@ -38,6 +38,14 @@ def validate_bootstrap_tools_payload(output_dir: Path) -> int:
             raise RuntimeError(f"unmanifested bootstrap tool payload: {entry.name}")
         if not entry.is_file():
             raise RuntimeError(f"bootstrap tool payload is not a file: {entry.name}")
+    if expected_platform is not None:
+        for archive in payload["archives"]:
+            platform = archive.get("platform")
+            if platform != expected_platform:
+                raise RuntimeError(
+                    f"unexpected bootstrap tools platform for {archive['name']}: "
+                    f"expected {expected_platform}, got {platform}"
+                )
     return archive_count
 
 
@@ -45,6 +53,7 @@ def validate_artifacts(
     root: Path,
     patterns: list[str],
     bootstrap_tools_dir: Path | None = None,
+    bootstrap_tools_platform: str | None = None,
 ) -> list[Path]:
     """Return matched artifact paths after enforcing non-empty required globs."""
 
@@ -62,9 +71,9 @@ def validate_artifacts(
 
     manifest_paths = [path for path in checked if path.name == MANIFEST_NAME]
     if bootstrap_tools_dir is not None:
-        validate_bootstrap_tools_payload(bootstrap_tools_dir)
+        validate_bootstrap_tools_payload(bootstrap_tools_dir, bootstrap_tools_platform)
     elif manifest_paths:
-        validate_bootstrap_tools_payload(manifest_paths[0].parent)
+        validate_bootstrap_tools_payload(manifest_paths[0].parent, bootstrap_tools_platform)
     return checked
 
 
@@ -90,6 +99,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Optional bootstrap-tools directory whose manifest should be validated.",
     )
+    parser.add_argument(
+        "--bootstrap-tools-platform",
+        choices=("windows", "linux", "macos"),
+        default=None,
+        help="Optional release platform that every bootstrap-tools archive record must target.",
+    )
     return parser.parse_args(argv)
 
 
@@ -98,7 +113,12 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        checked = validate_artifacts(args.root, args.artifact, args.bootstrap_tools_dir)
+        checked = validate_artifacts(
+            args.root,
+            args.artifact,
+            args.bootstrap_tools_dir,
+            args.bootstrap_tools_platform,
+        )
     except Exception as exc:
         print(f"[installer-artifacts] error: {exc}", file=sys.stderr)
         return 1

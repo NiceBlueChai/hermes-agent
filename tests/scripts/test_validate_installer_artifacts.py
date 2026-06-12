@@ -170,6 +170,46 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
                     bootstrap_tools_dir=tools,
                 )
 
+    def test_validate_artifacts_rejects_wrong_bootstrap_tools_platform(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tools = root / "bootstrap-tools"
+            archive = tools / "uv-x86_64-unknown-linux-gnu.tar.gz"
+            manifest = tools / "bootstrap-tools-manifest.json"
+            tools.mkdir(parents=True)
+            archive.write_bytes(b"uv archive")
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "archives": [
+                            {
+                                "arch": "x64",
+                                "platform": "linux",
+                                "name": archive.name,
+                                "url": "https://example.invalid/uv.zip",
+                                "sizeBytes": len(b"uv archive"),
+                                "sha256": module.sha256_file(archive),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "unexpected bootstrap tools platform"):
+                module.validate_artifacts(
+                    root,
+                    [
+                        "bootstrap-tools/bootstrap-tools-manifest.json",
+                    ],
+                    bootstrap_tools_dir=tools,
+                    bootstrap_tools_platform="windows",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

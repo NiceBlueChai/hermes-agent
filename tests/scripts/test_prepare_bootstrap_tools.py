@@ -502,6 +502,8 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         )
         self.assertIn("python scripts/prepare_bootstrap_tools.py --validate-only", windows_workflow)
         self.assertIn("python scripts/prepare_bootstrap_tools.py --validate-only", unix_workflow)
+        self.assertIn("--bootstrap-tools-platform windows", windows_workflow)
+        self.assertIn("--bootstrap-tools-platform ${{ matrix.platform }}", unix_workflow)
         upload_sections = [
             section
             for section in windows_workflow.split("\n      - name: ")
