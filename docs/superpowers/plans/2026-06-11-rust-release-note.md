@@ -32,6 +32,8 @@ User-visible behavior:
   installer platform being uploaded.
 - Rust bootstrap archive resolution now requires a complete manifest record, including `sizeBytes`, before trusting
   bundled files or cache checksum metadata, matching the stricter script recovery path.
+- Bundled Node.js archive selection now also ignores unmanifested files, so stray resource-directory archives cannot
+  influence which Node runtime the installer plans to use.
 - Optional reviewed ffmpeg archives can now use `ffmpeg-<platform>-<arch>` names under `bootstrap-tools/`; native
   setup installs them before package-manager recovery when present and manifest-verified.
 - Python TTS/STT and WhatsApp voice conversion can consume that managed ffmpeg binary from `$HERMES_HOME/bin` while

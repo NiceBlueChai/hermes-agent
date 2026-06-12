@@ -587,8 +587,8 @@ language-specific setup where needed.
 - Runtime bootstrap archive resolution now reads `bootstrap-tools-manifest.json` when present and only uses a bundled
   Node/uv/ripgrep/Git archive if the manifest record exists and its SHA-256 matches the file on disk; otherwise the
   installer falls back to the managed download cache path with the same expected checksum when available.
-- Bundled Node.js archive selection now treats the bootstrap-tools manifest as the source of truth when it exists, so
-  stray or stale files in the resource directory cannot override the release-reviewed archive list.
+- Bundled Node.js archive selection now treats the bootstrap-tools manifest as the source of truth, so stray, stale, or
+  unmanifested files in the resource directory cannot override the release-reviewed archive list.
 - Bootstrap-tools manifest parsing now enforces schema version 1 before trusting archive checksum records, leaving
   future manifest schema changes on the safe download-cache fallback path until the Rust reader is updated.
 - Bundled archive validation now requires a complete manifest record, including `sizeBytes`, before trusting bundled

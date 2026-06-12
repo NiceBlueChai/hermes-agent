@@ -4737,7 +4737,7 @@ fn bootstrap_archive_name_is_plain_file(name: &str) -> bool {
 fn bundled_archive_is_manifest_listed(bundled_tools_dir: &Path, archive_name: &str) -> bool {
     let manifest_path = bundled_tools_dir.join(BOOTSTRAP_TOOLS_MANIFEST);
     if !manifest_path.is_file() {
-        return true;
+        return false;
     }
     bootstrap_tools_manifest_sha256(bundled_tools_dir, archive_name).is_some()
 }
@@ -7805,7 +7805,7 @@ mod tests {
     }
 
     #[test]
-    fn bundled_node_archive_picker_uses_latest_matching_v22_arch() {
+    fn bundled_node_archive_picker_rejects_unmanifested_archives() {
         let root = std::env::temp_dir().join(format!(
             "hermes-bundled-node-archive-test-{}",
             std::process::id()
@@ -7824,7 +7824,7 @@ mod tests {
 
         let picked = latest_bundled_windows_node_archive_name(Some(&bundled), 22, "x64");
 
-        assert_eq!(picked.as_deref(), Some("node-v22.19.1-win-x64.zip"));
+        assert_eq!(picked, None);
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -7852,6 +7852,8 @@ mod tests {
                         "arch": "x64",
                         "platform": "windows",
                         "name": "node-v22.19.1-win-x64.zip",
+                        "url": "https://nodejs.org/dist/latest-v22.x/node-v22.19.1-win-x64.zip",
+                        "sizeBytes": 4,
                         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                     }
                 ]
@@ -7867,7 +7869,7 @@ mod tests {
     }
 
     #[test]
-    fn bundled_unix_node_archive_picker_prefers_matching_gz() {
+    fn bundled_unix_node_archive_picker_prefers_matching_manifested_gz() {
         let root = std::env::temp_dir().join(format!(
             "hermes-bundled-unix-node-archive-test-{}",
             std::process::id()
@@ -7883,6 +7885,31 @@ mod tests {
         ] {
             std::fs::write(bundled.join(name), b"node").unwrap();
         }
+        std::fs::write(
+            bundled.join("bootstrap-tools-manifest.json"),
+            r#"{
+                "schemaVersion": 1,
+                "archives": [
+                    {
+                        "arch": "x64",
+                        "platform": "linux",
+                        "name": "node-v22.19.3-linux-x64.tar.gz",
+                        "url": "https://nodejs.org/dist/latest-v22.x/node-v22.19.3-linux-x64.tar.gz",
+                        "sizeBytes": 4,
+                        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    },
+                    {
+                        "arch": "x64",
+                        "platform": "linux",
+                        "name": "node-v22.19.2-linux-x64.tar.xz",
+                        "url": "https://nodejs.org/dist/latest-v22.x/node-v22.19.2-linux-x64.tar.xz",
+                        "sizeBytes": 4,
+                        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
 
         let picked =
             latest_bundled_unix_node_archive_name(Some(&bundled), 22, "linux", "x64");
