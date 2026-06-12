@@ -65,6 +65,12 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def name_is_plain_file(name: str) -> bool:
+    """Return whether a manifest path is a direct, unpadded file name."""
+
+    return bool(name.strip()) and name == name.strip() and Path(name).name == name and name not in {".", ".."}
+
+
 def source_file_records(repo_root: Path) -> list[SourceFileRecord]:
     """Return dependency input file hashes recorded in the wheelhouse manifest."""
 
@@ -296,7 +302,7 @@ def validate_manifest(
         name = wheel.get("name")
         if not isinstance(name, str) or not name.endswith(".whl"):
             raise RuntimeError("wheelhouse manifest wheel is missing .whl name")
-        if Path(name).name != name or name in {".", ".."}:
+        if not name_is_plain_file(name):
             raise RuntimeError(f"manifest wheel has unsafe wheel name: {name}")
         if name in seen_names:
             raise RuntimeError(f"duplicate wheel in wheelhouse manifest: {name}")
@@ -345,7 +351,7 @@ def validate_source_files(payload: dict, repo_root: Path) -> None:
     seen_paths: set[str] = set()
     for source in source_files:
         relative = source.get("path")
-        if not isinstance(relative, str) or Path(relative).name != relative:
+        if not isinstance(relative, str) or not name_is_plain_file(relative):
             raise RuntimeError("wheelhouse source file has unsafe path")
         if relative in seen_paths:
             raise RuntimeError(f"duplicate wheelhouse source file: {relative}")

@@ -105,6 +105,7 @@ User-visible behavior:
 - PowerShell bundled cache fallback now rejects unsafe ZIP member paths before extraction.
 - Rust bundled-resource manifest validation now rejects blank or padded archive names before target matching.
 - Release helper validation uses the same blank/padded archive-name rule before uploading bootstrap-tool resources.
+- Python wheelhouse validation now rejects blank or padded wheel names in both release helper and Rust runtime checks.
 
 Compatibility and fallback:
 

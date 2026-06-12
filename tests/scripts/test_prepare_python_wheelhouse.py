@@ -179,6 +179,37 @@ source = { registry = "https://pypi.org/simple" }
             with self.assertRaisesRegex(RuntimeError, "invalid sizeBytes"):
                 module.validate_manifest(output_dir)
 
+    def test_validate_manifest_rejects_padded_wheel_name_as_unsafe(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "wheelhouse"
+            output_dir.mkdir()
+            wheel = output_dir / " demo-0.1-py3-none-any.whl"
+            wheel.write_bytes(b"wheel bytes")
+            (output_dir / "wheelhouse-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "wheels": [
+                            {
+                                "arch": "x64",
+                                "platform": "linux",
+                                "python": "cp311",
+                                "name": wheel.name,
+                                "sizeBytes": len(b"wheel bytes"),
+                                "sha256": module.sha256_file(wheel),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "unsafe wheel name"):
+                module.validate_manifest(output_dir)
+
     def test_validate_manifest_rejects_expected_arch_mismatch(self):
         module = _load_script_module()
         with tempfile.TemporaryDirectory() as tmp:

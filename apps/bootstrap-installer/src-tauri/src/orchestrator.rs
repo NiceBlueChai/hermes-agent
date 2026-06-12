@@ -3144,7 +3144,8 @@ fn current_wheelhouse_arch() -> Option<&'static str> {
 }
 
 fn wheel_name_is_plain_file(name: &str) -> bool {
-    !name.is_empty()
+    !name.trim().is_empty()
+        && name == name.trim()
         && name.ends_with(".whl")
         && name != "."
         && name != ".."
@@ -7826,6 +7827,14 @@ mod tests {
         assert!(!bootstrap_archive_name_is_plain_file("   "));
         assert!(!bootstrap_archive_name_is_plain_file(" uv-x86_64-pc-windows-msvc.zip"));
         assert!(!bootstrap_archive_name_is_plain_file("uv-x86_64-pc-windows-msvc.zip "));
+    }
+
+    #[test]
+    fn wheel_name_rejects_blank_or_padded_names() {
+        assert!(!wheel_name_is_plain_file(""));
+        assert!(!wheel_name_is_plain_file("   "));
+        assert!(!wheel_name_is_plain_file(" demo-0.1-py3-none-any.whl"));
+        assert!(!wheel_name_is_plain_file("demo-0.1-py3-none-any.whl "));
     }
 
     #[test]
