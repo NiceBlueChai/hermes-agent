@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus, Output, Stdio};
 
 const BOOTSTRAP_TOOLS_MANIFEST: &str = "bootstrap-tools-manifest.json";
 const BOOTSTRAP_TOOLS_MANIFEST_SCHEMA_VERSION: u32 = 1;
@@ -3994,18 +3994,75 @@ fn run_node_dependency_command_args(
     if let Some(path) = playwright_browsers_dir {
         child.env("PLAYWRIGHT_BROWSERS_PATH", path);
     }
-    let status = child
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+    let output = child
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
         .with_context(|| format!("running {}", command.display()))?;
-    if status.success() {
+    if output.status.success() {
         return Ok(());
     }
-    Err(anyhow!(
-        "{} failed with exit {:?}",
+    let output_text = process_output_text(&output);
+    let mut message = format!(
+        "{} {} failed with exit {:?}",
         command.display(),
-        status.code()
+        args.join(" "),
+        output.status.code()
+    );
+    if let Some(hint) = npm_permission_diagnostic(
+        &output_text,
+        npm_cache_dir,
+        cwd,
+        std::env::consts::OS,
+    ) {
+        message.push_str("; ");
+        message.push_str(&hint);
+    }
+    if !output_text.trim().is_empty() {
+        message.push_str("; npm output: ");
+        message.push_str(output_text.trim());
+    }
+    Err(anyhow!(message))
+}
+
+fn process_output_text(output: &Output) -> String {
+    let mut text = String::new();
+    text.push_str(String::from_utf8_lossy(&output.stdout).as_ref());
+    if !text.is_empty() && !output.stderr.is_empty() {
+        text.push('\n');
+    }
+    text.push_str(String::from_utf8_lossy(&output.stderr).as_ref());
+    text
+}
+
+fn npm_permission_diagnostic(
+    output: &str,
+    npm_cache_dir: &Path,
+    cwd: &Path,
+    target_os: &str,
+) -> Option<String> {
+    let lower = output.to_ascii_lowercase();
+    let permission_error = ["eacces", "eperm", "permission denied", "operation not permitted"]
+        .iter()
+        .any(|needle| lower.contains(needle));
+    if !permission_error {
+        return None;
+    }
+    let node_modules = cwd.join("node_modules");
+    let locations = format!("{} and {}", npm_cache_dir.display(), node_modules.display());
+    if target_os == "windows" {
+        return Some(format!(
+            "npm reported a filesystem permission problem; ensure this user can write to {locations}, \
+             or delete those directories and retry"
+        ));
+    }
+    Some(format!(
+        "npm reported a filesystem permission problem; ensure this user can write to {locations}. \
+         If ownership is stale, run: sudo chown -R \"$(id -un)\" \"{}\" \"{}\"; \
+         then run npm --cache \"{}\" cache verify",
+        npm_cache_dir.display(),
+        node_modules.display(),
+        npm_cache_dir.display()
     ))
 }
 
@@ -5748,6 +5805,19 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn npm_permission_diagnostic_points_at_managed_cache_and_node_modules() {
+        let cwd = PathBuf::from("/tmp/hermes-agent");
+        let cache = PathBuf::from("/tmp/hermes-home/npm-cache");
+        let output = "npm ERR! code EACCES\nnpm ERR! syscall mkdir\nnpm ERR! permission denied";
+
+        let hint = npm_permission_diagnostic(output, &cache, &cwd, "linux").unwrap();
+
+        assert!(hint.contains(&cache.display().to_string()));
+        assert!(hint.contains(&cwd.join("node_modules").display().to_string()));
+        assert!(hint.contains("sudo chown -R"));
     }
 
     #[test]

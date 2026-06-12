@@ -54,7 +54,7 @@ scripts should become recovery paths instead of the normal first-run path.
    metadata, and completion stages should all be Rust-native or native-first.
 2. Move recovery branches one at a time after the normal path is native-first. The current priority order is Unix
    `ffmpeg` package-manager recovery, Linux Playwright system-library recovery, Electron/npm cache and mirror recovery,
-   remaining privileged `chrome-sandbox` repair, platform SDK fallback recovery, and npm permission diagnostics.
+   remaining privileged `chrome-sandbox` repair, and platform SDK fallback recovery.
 3. Keep direct `install.ps1` and `install.sh` supported for one release cycle, but make packaged desktop/bootstrap
    paths reach them only for unsupported platforms, denied privileges, mirror/package-manager failures, or explicitly
    interactive recovery.
@@ -293,6 +293,8 @@ language-specific setup where needed.
   behavior without starting PowerShell or bash for a stage that can only skip.
 - Windows `node-deps` now has a Rust native-first path for root npm dependencies, Playwright Chromium, and TUI npm
   dependencies, while preserving the PowerShell stage as fallback for missing `npx` or failed npm/Playwright commands.
+- Rust npm command failures now capture npm output and add a managed-cache permission diagnostic for EACCES/EPERM-style
+  failures, pointing users at Hermes-owned npm cache and `node_modules` paths instead of relying on script-only hints.
 - macOS `node-deps` now uses the same Rust native-first npm/Playwright/TUI dependency path as Windows, while Linux
   now uses the same native-first path; Linux keeps script fallback for failed npm/Playwright commands and for RPM,
   zypper, or unknown distribution Playwright system-library recovery.
@@ -334,9 +336,9 @@ language-specific setup where needed.
 
 **Still script-backed:**
 - Recovery tiers remain script-backed for failure cases that still need package-manager or mirror-specific handling:
-  unknown Linux Playwright system-library recovery, npm install permission diagnostics, interactive or denied Linux
-  `chrome-sandbox` privilege escalation, unsupported or failed Unix package-manager recovery, and messaging-platform
-  SDK recovery if the native targeted pip path fails.
+  unknown Linux Playwright system-library recovery, interactive or denied Linux `chrome-sandbox` privilege escalation,
+  unsupported or failed Unix package-manager recovery, and messaging-platform SDK recovery if the native targeted pip
+  path fails.
 - Fresh archive installs and archive updates do not require Git. Unix Git acquisition now has a native-first package
   manager path for common Linux/macOS/Termux setups, while unsupported distro handling, macOS CLT dialog recovery, and
   package-manager failures remain shell fallbacks.
