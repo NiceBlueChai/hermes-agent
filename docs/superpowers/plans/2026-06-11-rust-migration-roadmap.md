@@ -306,6 +306,8 @@ language-specific setup where needed.
   available, it writes `AGENT_BROWSER_EXECUTABLE_PATH` to `$HERMES_HOME/.env` and skips the Playwright Chromium download.
 - System browser probing now also recognizes common Brave and Microsoft Edge install locations/commands across
   Windows, macOS, and Linux, reducing avoidable Playwright Chromium downloads on Chromium-family browser machines.
+- Direct `install.ps1` and `install.sh` browser probing now share the same broader Brave/Edge coverage, so script
+  fallback and direct installs preserve the same download-saving behavior.
 - `desktop` now uses a Rust no-op skip when `apps/desktop/package.json` is absent, matching the existing script
   behavior without starting PowerShell or bash for a stage that can only skip.
 - Windows `desktop` now has a Rust native-first build path for workspace npm install and `npm run pack`, verifies the

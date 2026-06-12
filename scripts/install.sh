@@ -1865,9 +1865,8 @@ write_bootstrap_marker() {
 }
 
 find_system_browser() {
-    # Prefer a user-specified browser path, then common Linux/macOS Chrome and
-    # Chromium command names.  Arch-family distributions commonly ship plain
-    # `chromium`, while Debian-family systems often use `chromium-browser`.
+    # Prefer a user-specified browser path, then common Chromium-family
+    # browser command names to avoid unnecessary Playwright downloads.
     if [ -n "${AGENT_BROWSER_EXECUTABLE_PATH:-}" ]; then
         if [ -x "$AGENT_BROWSER_EXECUTABLE_PATH" ]; then
             echo "$AGENT_BROWSER_EXECUTABLE_PATH"
@@ -1880,7 +1879,10 @@ find_system_browser() {
     fi
 
     local candidate
-    for candidate in google-chrome google-chrome-stable chromium chromium-browser chrome; do
+    for candidate in \
+        google-chrome google-chrome-stable chromium chromium-browser chrome \
+        brave-browser brave-browser-stable brave \
+        microsoft-edge microsoft-edge-stable msedge; do
         if command -v "$candidate" >/dev/null 2>&1; then
             command -v "$candidate"
             return 0
@@ -1890,7 +1892,9 @@ find_system_browser() {
     if [ "$(uname)" = "Darwin" ]; then
         for app in \
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-            "/Applications/Chromium.app/Contents/MacOS/Chromium"; do
+            "/Applications/Chromium.app/Contents/MacOS/Chromium" \
+            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"; do
             if [ -x "$app" ]; then
                 echo "$app"
                 return 0

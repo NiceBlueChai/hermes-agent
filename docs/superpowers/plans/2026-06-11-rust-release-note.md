@@ -24,6 +24,8 @@ User-visible behavior:
   `AGENT_BROWSER_EXECUTABLE_PATH`, avoiding an unnecessary Playwright Chromium download without disabling browser tools.
 - Browser setup now recognizes common Brave and Microsoft Edge install locations/commands across Windows, macOS, and
   Linux before falling back to Playwright Chromium.
+- Direct `install.ps1` and `install.sh` paths use the same broader browser detection, preserving the optimization when
+  the Rust bootstrapper falls back or users run the scripts directly.
 - Release packages can bundle reviewed Node.js, `uv`, Git for Windows, and ripgrep archives under `bootstrap-tools/`.
   The installer validates their manifest schema, HTTPS URLs, target platform and architecture labels, size, and SHA-256
   before use; release validation rejects platform or architecture labels that do not match the archive name or the

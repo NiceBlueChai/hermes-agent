@@ -238,8 +238,13 @@ function Find-SystemBrowser {
         "${env:LOCALAPPDATA}\Google\Chrome\Application\chrome.exe",
         "${env:ProgramFiles}\Microsoft\Edge\Application\msedge.exe",
         "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+        "${env:ProgramFiles}\BraveSoftware\Brave-Browser\Application\brave.exe",
+        "${env:ProgramFiles(x86)}\BraveSoftware\Brave-Browser\Application\brave.exe",
+        "${env:LOCALAPPDATA}\BraveSoftware\Brave-Browser\Application\brave.exe",
         "${env:ProgramFiles}\Chromium\Application\chrome.exe",
-        "${env:LOCALAPPDATA}\Chromium\Application\chrome.exe"
+        "${env:LOCALAPPDATA}\Chromium\Application\chrome.exe",
+        "${env:ProgramFiles}\Chromium\Application\chromium.exe",
+        "${env:LOCALAPPDATA}\Chromium\Application\chromium.exe"
     )
     foreach ($p in $candidates) {
         if (Test-Path $p) { return $p }
