@@ -3013,6 +3013,30 @@ fn browser_install_decision(
     })
 }
 
+fn install_playwright_with_system_recovery(
+    npx: &Path,
+    playwright_plan: &PlaywrightInstallPlan,
+    cwd: &Path,
+    npm_cache_dir: &Path,
+    playwright_browsers_dir: &Path,
+) -> Result<Vec<String>> {
+    let mut failures = Vec::new();
+    for command in &playwright_plan.system_package_commands {
+        if let Err(err) = run_unix_system_package_install_command(command) {
+            failures.push(err.to_string());
+        }
+    }
+    run_node_dependency_command_args(
+        npx,
+        &playwright_plan.npx_args,
+        cwd,
+        npm_cache_dir,
+        Some(playwright_browsers_dir),
+    )
+    .context("installing Playwright Chromium")?;
+    Ok(failures)
+}
+
 fn find_system_browser<P>(path_env: P, pathext: &str) -> Option<PathBuf>
 where
     P: AsRef<OsStr>,
@@ -3271,6 +3295,7 @@ pub fn install_node_dependencies_stage(
     let plan = node_dependencies_stage_plan(install_root, hermes_home, &path_env, &pathext)?;
     let mut playwright_system_deps = "skipped".to_string();
     let mut playwright_system_commands = Vec::new();
+    let mut playwright_system_failures = Vec::new();
     if plan.browser_tools {
         run_node_dependency_command(
             &plan.npm,
@@ -3301,23 +3326,18 @@ pub fn install_node_dependencies_stage(
                 .npx
                 .as_ref()
                 .ok_or_else(|| anyhow!("npx is not available"))?;
-            for command in &playwright_plan.system_package_commands {
-                run_unix_system_package_install_command(command)
-                    .context("installing Playwright system dependencies")?;
-            }
             playwright_system_commands = playwright_plan
                 .system_package_commands
                 .iter()
                 .map(unix_package_command_display)
                 .collect::<Vec<_>>();
-            run_node_dependency_command_args(
+            playwright_system_failures = install_playwright_with_system_recovery(
                 npx,
-                &playwright_plan.npx_args,
+                &playwright_plan,
                 &plan.cwd,
                 &plan.npm_cache_dir,
-                Some(&plan.playwright_browsers_dir),
-            )
-            .context("installing Playwright Chromium")?;
+                &plan.playwright_browsers_dir,
+            )?;
         }
     }
     if let Some(tui_dir) = &plan.tui_dir {
@@ -3337,6 +3357,7 @@ pub fn install_node_dependencies_stage(
         "playwrightBrowsersDir": plan.playwright_browsers_dir,
         "playwrightSystemDeps": playwright_system_deps,
         "playwrightSystemCommands": playwright_system_commands,
+        "playwrightSystemFailures": playwright_system_failures,
         "browserTools": plan.browser_tools,
         "tui": plan.tui_dir.is_some(),
     }))
@@ -6621,6 +6642,75 @@ mod tests {
         assert_eq!(decision.system_browser, Some(browser));
         assert!(decision.playwright.is_none());
         assert_eq!(decision.system_deps, "system-browser");
+    }
+
+    #[test]
+    fn playwright_system_dependency_failure_does_not_skip_browser_install() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-playwright-recovery-test-{}",
+            std::process::id()
+        ));
+        let cwd = root.join("checkout");
+        let npm_cache = root.join("npm-cache");
+        let browsers = root.join("playwright-browsers");
+        let ran_file = root.join("npx-ran.txt");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::create_dir_all(&npm_cache).unwrap();
+        std::fs::create_dir_all(&browsers).unwrap();
+
+        let failing_system = if cfg!(target_os = "windows") {
+            let command = root.join("fake-system-dep.cmd");
+            std::fs::write(&command, "@echo off\r\necho system failed 1>&2\r\nexit /b 9\r\n")
+                .unwrap();
+            command
+        } else {
+            let command = root.join("fake-system-dep.sh");
+            std::fs::write(&command, "#!/usr/bin/env sh\necho system failed >&2\nexit 9\n")
+                .unwrap();
+            make_executable(&command).unwrap();
+            command
+        };
+        let npx = if cfg!(target_os = "windows") {
+            let command = root.join("fake-npx.cmd");
+            let script = format!("@echo off\r\n> \"{}\" echo %*\r\nexit /b 0\r\n", ran_file.display());
+            std::fs::write(&command, script).unwrap();
+            command
+        } else {
+            let command = root.join("fake-npx.sh");
+            let script = format!(
+                "#!/usr/bin/env sh\nprintf '%s' \"$*\" > '{}'\nexit 0\n",
+                ran_file.display()
+            );
+            std::fs::write(&command, script).unwrap();
+            make_executable(&command).unwrap();
+            command
+        };
+        let plan = PlaywrightInstallPlan {
+            npx_args: vec![
+                "--yes".to_string(),
+                "playwright".to_string(),
+                "install".to_string(),
+                "chromium".to_string(),
+            ],
+            system_package_commands: vec![UnixPackageInstallCommandPlan {
+                program: failing_system.display().to_string(),
+                args: Vec::new(),
+            }],
+            system_deps: "pacman".to_string(),
+        };
+
+        let failures =
+            install_playwright_with_system_recovery(&npx, &plan, &cwd, &npm_cache, &browsers)
+                .expect("browser install should continue after system dependency failure");
+
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("system failed"));
+        assert_eq!(
+            std::fs::read_to_string(&ran_file).unwrap().trim(),
+            "--yes playwright install chromium"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -285,6 +285,8 @@ language-specific setup where needed.
   by installing the same pacman system libraries before the browser download.
 - Native Playwright Chromium install now also plans the same Fedora/RHEL-family and openSUSE/SLES system-library
   packages that the shell script previously only printed as manual recovery hints.
+- Native Playwright Chromium install now treats Linux package-manager dependency failures as recoverable, records the
+  failed commands, and still attempts the browser install before handing the stage to script fallback.
 - Script fallback for `node-deps` and desktop npm stages now receives the same managed npm cache and Playwright browser
   path environment where applicable, so native fallback does not spill browser/runtime caches back into global user
   locations.
