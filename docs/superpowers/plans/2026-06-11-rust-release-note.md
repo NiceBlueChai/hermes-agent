@@ -48,6 +48,8 @@ User-visible behavior:
 - Release staging writes a checksummed bundled manifest beside the Rust manager binary and retains a
   `bootstrap-tools-manifest.json` artifact for packaged runtime archives. Installer workflows now run a no-UI binary
   self-check against the just-built setup executable, embedded install scripts, commit pin, and bootstrap-tools manifest.
+- Release artifact validation also checks directory-style artifacts such as macOS `.app` bundles and rejects empty
+  placeholder bundles or bundles whose files are all zero bytes before upload.
 
 Compatibility and fallback:
 

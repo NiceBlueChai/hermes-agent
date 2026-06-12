@@ -587,6 +587,8 @@ language-specific setup where needed.
   the local `pyproject.toml`/`uv.lock` inputs before trusting a manifested offline wheelhouse.
 - Release installer self-check and artifact validators now accept expected `bootstrap-tools` and wheelhouse platform
   and architecture labels, rejecting mismatched runtime archive or Python wheelhouse payloads before upload.
+- Directory-style release artifacts such as macOS `.app` bundles must now contain at least one non-empty file, so CI
+  rejects empty placeholder bundles before upload instead of relying on artifact upload shape alone.
 - Direct `install.ps1` and `install.sh` Python dependency stages now also prefer a repository-local
   `resources/wheelhouse/` offline tier when its manifest matches the current target platform, architecture, wheel size,
   and SHA-256, while falling back to the existing `uv.lock` and PyPI tiers on any mismatch or install failure.
