@@ -337,6 +337,25 @@ def parse_local_archive_arg(value: str) -> tuple[Path, ArchiveSpec, tuple[str, s
     return source, ArchiveSpec(name=name, url=url), target
 
 
+def parse_audited_archive_arg(value: str) -> tuple[ArchiveSpec, tuple[str, str], str]:
+    """Parse one explicitly checksummed archive download mapping."""
+
+    parts = value.split("=", 2)
+    if len(parts) != 3 or not all(parts):
+        raise ValueError("audited archive must use NAME=HTTPS_URL=SHA256")
+    name, url, expected_sha256 = parts
+    if Path(name).name != name or name in {".", ".."}:
+        raise ValueError(f"audited archive has unsafe name: {name}")
+    if not url.startswith("https://"):
+        raise ValueError("audited archive URL must be HTTPS")
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
+        raise ValueError(f"audited archive has invalid sha256: {name}")
+    target = archive_target_from_name(name)
+    if target is None or archive_tool_kind_from_name(name) is None:
+        raise ValueError(f"audited archive name is not a recognized bootstrap tool: {name}")
+    return ArchiveSpec(name=name, url=url), target, expected_sha256.lower()
+
+
 def prepare_local_archives(output_dir: Path, local_archives: list[str], dry_run: bool) -> list[PreparedArchive]:
     """Copy maintainer-provided local archives into the release resource directory."""
 
@@ -353,6 +372,32 @@ def prepare_local_archives(output_dir: Path, local_archives: list[str], dry_run:
         if source.resolve() != dest.resolve():
             shutil.copy2(source, dest)
         prepared.append(prepared_archive_record(platform, arch, spec, dest))
+    return prepared
+
+
+def prepare_audited_archives(
+    output_dir: Path,
+    audited_archives: list[str],
+    force: bool,
+    dry_run: bool,
+) -> list[PreparedArchive]:
+    """Download explicitly checksummed optional archives into the release resource directory."""
+
+    prepared: list[PreparedArchive] = []
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for value in audited_archives:
+        spec, (platform, arch), expected_sha256 = parse_audited_archive_arg(value)
+        if dry_run:
+            print(f"[bootstrap-tools] would download audited {spec.name} <- {spec.url}")
+            continue
+        path = download_archive(spec, output_dir, force)
+        actual_sha256 = sha256_file(path)
+        if actual_sha256.lower() != expected_sha256:
+            raise RuntimeError(
+                f"audited archive checksum mismatch for {spec.name}: "
+                f"expected {expected_sha256}, got {actual_sha256}"
+            )
+        prepared.append(prepared_archive_record(platform, arch, spec, path))
     return prepared
 
 
@@ -466,6 +511,7 @@ def prepare_archives(
     dry_run: bool,
     platform: str = "windows",
     local_archives: list[str] | None = None,
+    audited_archives: list[str] | None = None,
 ) -> list[PreparedArchive]:
     """Resolve and optionally download all archives for the requested architectures."""
 
@@ -485,6 +531,7 @@ def prepare_archives(
                 path = download_archive(spec, output_dir, force)
                 downloaded.append(prepared_archive_record(normalized_platform, arch, spec, path))
     downloaded.extend(prepare_local_archives(output_dir, local_archives or [], dry_run))
+    downloaded.extend(prepare_audited_archives(output_dir, audited_archives or [], force, dry_run))
     if downloaded:
         manifest_path = write_manifest(output_dir, downloaded)
         print(f"[bootstrap-tools] wrote manifest {manifest_path}")
@@ -523,6 +570,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Copy an audited local archive into the manifest, in PATH=HTTPS_URL form.",
     )
+    parser.add_argument(
+        "--audited-archive",
+        action="append",
+        default=None,
+        help="Download an explicitly checksummed archive into the manifest, in NAME=HTTPS_URL=SHA256 form.",
+    )
     return parser.parse_args(argv)
 
 
@@ -543,6 +596,7 @@ def main(argv: list[str] | None = None) -> int:
             args.dry_run,
             args.platform,
             args.local_archive,
+            args.audited_archive,
         )
     except Exception as exc:
         print(f"[bootstrap-tools] error: {exc}", file=sys.stderr)

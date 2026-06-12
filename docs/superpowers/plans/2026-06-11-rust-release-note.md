@@ -34,6 +34,8 @@ User-visible behavior:
   setup installs them before package-manager recovery when present and manifest-verified.
 - Release maintainers can add such archives with `prepare_bootstrap_tools.py --local-archive PATH=HTTPS_URL`, which
   copies the local file and records the reviewed URL, target platform, architecture, size, and SHA-256 in the manifest.
+- Release workflows can alternatively use `prepare_bootstrap_tools.py --audited-archive NAME=HTTPS_URL=SHA256` to
+  download a maintainer-selected archive only when its checksum matches before writing it to the manifest.
 - Native bootstrap diagnostics now preserve npm and Unix package-manager failure output, including permission hints for
   Hermes-managed npm cache and `node_modules` paths.
 - Native and script-fallback desktop packaging now direct Electron download/build caches into

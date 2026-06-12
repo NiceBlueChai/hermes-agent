@@ -196,6 +196,44 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             source_dir.rmdir()
             root.rmdir()
 
+    def test_prepare_audited_archive_downloads_and_checks_optional_ffmpeg(self):
+        module = _load_script_module()
+        root = Path("tmp-bootstrap-tools-audited-archive-test")
+        output_dir = root / "bootstrap-tools"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        archive_name = "ffmpeg-windows-x64.zip"
+        archive_bytes = b"ffmpeg archive"
+        archive_sha256 = "e21cc7b8116757183912e4e491cc358d6ebc64ea1407a0d1f607b22a53d436b7"
+        original_download = module.download_archive
+
+        def fake_download(spec, output_dir, force):
+            dest = output_dir / spec.name
+            dest.write_bytes(archive_bytes)
+            return dest
+
+        module.download_archive = fake_download
+        try:
+            prepared = module.prepare_audited_archives(
+                output_dir,
+                [f"{archive_name}=https://example.invalid/{archive_name}={archive_sha256}"],
+                force=False,
+                dry_run=False,
+            )
+            module.write_manifest(output_dir, prepared)
+
+            self.assertEqual(len(prepared), 1)
+            self.assertEqual(prepared[0].platform, "windows")
+            self.assertEqual(prepared[0].arch, "x64")
+            self.assertEqual(prepared[0].name, archive_name)
+            self.assertEqual(prepared[0].sha256, archive_sha256)
+            self.assertEqual(module.validate_manifest(output_dir), 1)
+        finally:
+            module.download_archive = original_download
+            for entry in output_dir.glob("*"):
+                entry.unlink()
+            output_dir.rmdir()
+            root.rmdir()
+
     def test_manifest_records_archive_platform_size_and_sha256(self):
         module = _load_script_module()
         root = Path("tmp-bootstrap-tools-test")
