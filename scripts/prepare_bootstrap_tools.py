@@ -870,7 +870,7 @@ def validate_manifest(
         if not path.is_file():
             raise RuntimeError(f"manifest archive is missing: {path}")
         expected_size = archive.get("sizeBytes")
-        if not isinstance(expected_size, int) or expected_size <= 0:
+        if type(expected_size) is not int or expected_size <= 0:
             raise RuntimeError(f"manifest archive has invalid sizeBytes: {name}")
         actual_size = path.stat().st_size
         if actual_size != expected_size:

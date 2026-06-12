@@ -7,6 +7,7 @@ import json
 import shutil
 import sys
 import tarfile
+import tempfile
 import unittest
 import zipfile
 from pathlib import Path
@@ -585,6 +586,37 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                 manifest.unlink()
             output_dir.rmdir()
             root.rmdir()
+
+    def test_validate_manifest_rejects_boolean_archive_size(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "bootstrap-tools"
+            output_dir.mkdir()
+            archive = output_dir / "uv-x86_64-pc-windows-msvc.zip"
+            archive.write_bytes(b"x")
+            (output_dir / "bootstrap-tools-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "archives": [
+                            {
+                                "arch": "x64",
+                                "platform": "windows",
+                                "name": archive.name,
+                                "url": "https://example.invalid/uv.zip",
+                                "sizeBytes": True,
+                                "sha256": module.sha256_file(archive),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "invalid sizeBytes"):
+                module.validate_manifest(output_dir)
 
     def test_validate_manifest_rejects_archive_without_url(self):
         module = _load_script_module()
