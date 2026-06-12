@@ -48,7 +48,8 @@ pub fn uninstall_lite(hermes_home: &Path) -> Result<Vec<String>> {
     validate_manifest_home(hermes_home, &manifest)?;
     preflight_uninstall_lite_entries(hermes_home, &manifest)?;
 
-    let mut removed = remove_managed_windows_env_vars(hermes_home)?;
+    let mut removed = remove_managed_windows_path_entries(hermes_home)?;
+    removed.extend(remove_managed_windows_env_vars(hermes_home)?);
     removed.extend(remove_managed_profile_updates(hermes_home)?);
     removed.extend(remove_managed_command_links(hermes_home)?);
 
@@ -78,7 +79,8 @@ pub fn uninstall_lite_plan(hermes_home: &Path) -> Result<Vec<String>> {
     validate_manifest_home(hermes_home, &manifest)?;
     preflight_uninstall_lite_entries(hermes_home, &manifest)?;
 
-    let mut planned = managed_windows_env_var_plan(hermes_home)?;
+    let mut planned = managed_windows_path_entry_plan(hermes_home)?;
+    planned.extend(managed_windows_env_var_plan(hermes_home)?);
     planned.extend(
         managed_profile_update_plan(hermes_home)?
             .into_iter()
@@ -227,6 +229,20 @@ fn remove_managed_command_links(hermes_home: &Path) -> Result<Vec<String>> {
         }
     }
     Ok(removed)
+}
+
+fn remove_managed_windows_path_entries(hermes_home: &Path) -> Result<Vec<String>> {
+    let current_path = crate::platform::read_windows_user_path()?;
+    let plan = crate::platform::plan_windows_user_path_cleanup(current_path, hermes_home);
+    if crate::platform::write_windows_user_path_cleanup(&plan)? {
+        return Ok(plan.removed_entries);
+    }
+    Ok(Vec::new())
+}
+
+fn managed_windows_path_entry_plan(hermes_home: &Path) -> Result<Vec<String>> {
+    let current_path = crate::platform::read_windows_user_path()?;
+    Ok(crate::platform::plan_windows_user_path_cleanup(current_path, hermes_home).removed_entries)
 }
 
 fn remove_managed_windows_env_vars(hermes_home: &Path) -> Result<Vec<String>> {

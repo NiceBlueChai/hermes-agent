@@ -24,6 +24,14 @@ pub struct PathUpdatePlan {
     pub next_path: String,
 }
 
+/// Planned cleanup for current-user Windows PATH entries owned by Hermes.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct WindowsPathCleanupPlan {
+    pub removed_entries: Vec<String>,
+    pub changed: bool,
+    pub next_path: String,
+}
+
 /// Planned Windows shortcut pointing at the packaged Hermes desktop app.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ShortcutPlan {
@@ -430,6 +438,39 @@ pub fn write_windows_user_path_update(plan: &PathUpdatePlan) -> Result<bool> {
     Ok(true)
 }
 
+/// Compute a current-user Windows PATH cleanup that removes Hermes-owned entries.
+pub fn plan_windows_user_path_cleanup(
+    current_path: Option<String>,
+    hermes_home: &Path,
+) -> WindowsPathCleanupPlan {
+    let current_path = current_path.unwrap_or_default();
+    let mut removed_entries = Vec::new();
+    let mut kept_entries = Vec::new();
+    for entry in split_path_like(&current_path, ';') {
+        if windows_path_entry_matches_hermes_home(&entry, hermes_home) {
+            removed_entries.push(entry);
+        } else {
+            kept_entries.push(entry);
+        }
+    }
+    WindowsPathCleanupPlan {
+        changed: !removed_entries.is_empty(),
+        removed_entries,
+        next_path: kept_entries.join(";"),
+    }
+}
+
+/// Apply a current-user Windows PATH cleanup plan.
+#[cfg(target_os = "windows")]
+pub fn write_windows_user_path_cleanup(plan: &WindowsPathCleanupPlan) -> Result<bool> {
+    if !plan.changed {
+        return Ok(false);
+    }
+    write_windows_user_env_var("Path", &plan.next_path)?;
+    broadcast_windows_environment_change();
+    Ok(true)
+}
+
 /// Write a current-user Windows environment variable.
 #[cfg(target_os = "windows")]
 pub fn write_windows_user_env_var(name: &str, value: &str) -> Result<()> {
@@ -475,6 +516,12 @@ pub fn write_windows_user_path_update(_plan: &PathUpdatePlan) -> Result<bool> {
     ))
 }
 
+/// No-op current-user Windows PATH cleanup off Windows.
+#[cfg(not(target_os = "windows"))]
+pub fn write_windows_user_path_cleanup(_plan: &WindowsPathCleanupPlan) -> Result<bool> {
+    Ok(false)
+}
+
 /// Return an actionable error on non-Windows platforms.
 #[cfg(not(target_os = "windows"))]
 pub fn write_windows_user_env_var(_name: &str, _value: &str) -> Result<()> {
@@ -501,6 +548,22 @@ pub fn windows_env_var_matches_hermes_home(name: &str, value: &str, hermes_home:
         return value == git_root || value.starts_with(&format!("{git_root}\\"));
     }
     false
+}
+
+/// Return true when a Windows PATH entry belongs to the active Hermes home.
+pub fn windows_path_entry_matches_hermes_home(entry: &str, hermes_home: &Path) -> bool {
+    let entry = normalize_windows_env_path(entry);
+    let home = normalize_windows_env_path(&hermes_home.display().to_string());
+    let markers = [
+        format!("{home}\\hermes-agent"),
+        format!("{home}\\git"),
+        format!("{home}\\node"),
+        format!("{home}\\venv"),
+        format!("{home}\\bin"),
+    ];
+    markers
+        .iter()
+        .any(|marker| entry == *marker || entry.starts_with(&format!("{marker}\\")))
 }
 
 fn normalize_windows_env_path(value: &str) -> String {
@@ -806,6 +869,34 @@ mod tests {
             "C:\\Program Files\\Git\\bin\\bash.exe",
             &home
         ));
+    }
+
+    #[test]
+    fn windows_path_cleanup_removes_only_hermes_owned_entries() {
+        let home = PathBuf::from("C:/Users/example/AppData/Local/hermes");
+        let current = concat!(
+            "C:\\Users\\example\\AppData\\Local\\hermes\\git\\cmd;",
+            "C:\\Windows\\System32;",
+            "C:\\Users\\example\\AppData\\Local\\hermes\\node;",
+            "C:\\Users\\example\\AppData\\Local\\hermes\\bin;",
+            "C:\\Tools\\hermes-helper"
+        );
+
+        let plan = plan_windows_user_path_cleanup(Some(current.to_string()), &home);
+
+        assert!(plan.changed);
+        assert_eq!(
+            plan.removed_entries,
+            vec![
+                "C:\\Users\\example\\AppData\\Local\\hermes\\git\\cmd",
+                "C:\\Users\\example\\AppData\\Local\\hermes\\node",
+                "C:\\Users\\example\\AppData\\Local\\hermes\\bin",
+            ]
+        );
+        assert_eq!(
+            plan.next_path,
+            "C:\\Windows\\System32;C:\\Tools\\hermes-helper"
+        );
     }
 
     #[test]

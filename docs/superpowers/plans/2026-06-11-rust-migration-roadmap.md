@@ -371,6 +371,8 @@ language-specific setup where needed.
   shell config files, while leaving user-authored PATH lines outside the managed block untouched.
 - `hermes-manager uninstall-lite` now also plans and removes current-user Windows `HERMES_HOME` and
   `HERMES_GIT_BASH_PATH` environment variables when their values still belong to the active Hermes home.
+- `hermes-manager uninstall-lite` now also plans and removes current-user Windows `Path` entries that point under the
+  active Hermes home, including managed Git, Node, `bin`, `venv`, and source-checkout entries.
 - `hermes-manager` now has a CLI smoke test that runs `install-metadata`, `uninstall-lite`, and `repair-clean` against
   an isolated Hermes home, proving the command surface preserves user config while cleaning every current
   Hermes-managed runtime directory and staged installer file.
