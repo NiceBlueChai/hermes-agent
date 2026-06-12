@@ -1403,6 +1403,103 @@ function Install-Venv {
     Write-Success "Virtual environment ready (Python $PythonVersion)"
 }
 
+function Test-LocalWheelhouseManifest {
+    param([Parameter(Mandatory=$true)][string]$WheelhouseDir)
+
+    if (-not (Test-Path $WheelhouseDir -PathType Container)) {
+        return $false
+    }
+
+    $manifest = Join-Path $WheelhouseDir "wheelhouse-manifest.json"
+    if (-not (Test-Path $manifest -PathType Leaf)) {
+        return [bool](Get-ChildItem -Path $WheelhouseDir -Filter "*.whl" -File -ErrorAction SilentlyContinue)
+    }
+
+    $expectedArch = Get-WindowsArch
+    try {
+        $payload = Get-Content -Path $manifest -Raw | ConvertFrom-Json
+        if ($payload.schemaVersion -ne 1) {
+            Write-Warn "Skipping local wheelhouse: unsupported manifest schema"
+            return $false
+        }
+
+        $wheels = @($payload.wheels)
+        if ($wheels.Count -eq 0) {
+            Write-Warn "Skipping local wheelhouse: manifest has no wheels"
+            return $false
+        }
+
+        $manifested = New-Object "System.Collections.Generic.HashSet[string]"
+        foreach ($wheel in $wheels) {
+            $name = [string]$wheel.name
+            if ([string]::IsNullOrWhiteSpace($name) -or
+                -not $name.EndsWith(".whl") -or
+                [System.IO.Path]::GetFileName($name) -ne $name -or
+                $name.Contains("..")) {
+                Write-Warn "Skipping local wheelhouse: invalid wheel name '$name'"
+                return $false
+            }
+            if ($wheel.platform -ne "windows") {
+                Write-Warn "Skipping local wheelhouse: unexpected platform for $name"
+                return $false
+            }
+            if ($wheel.arch -ne $expectedArch) {
+                Write-Warn "Skipping local wheelhouse: unexpected architecture for $name"
+                return $false
+            }
+
+            $wheelPath = Join-Path $WheelhouseDir $name
+            if (-not (Test-Path $wheelPath -PathType Leaf)) {
+                Write-Warn "Skipping local wheelhouse: missing wheel $name"
+                return $false
+            }
+
+            $item = Get-Item -Path $wheelPath
+            if ($null -ne $wheel.sizeBytes -and [int64]$wheel.sizeBytes -ne $item.Length) {
+                Write-Warn "Skipping local wheelhouse: size mismatch for $name"
+                return $false
+            }
+
+            $expectedSha = [string]$wheel.sha256
+            $actualSha = (Get-FileHash -Path $wheelPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ([string]::IsNullOrWhiteSpace($expectedSha) -or $actualSha -ne $expectedSha.ToLowerInvariant()) {
+                Write-Warn "Skipping local wheelhouse: sha256 mismatch for $name"
+                return $false
+            }
+            [void]$manifested.Add($name)
+        }
+
+        foreach ($wheelFile in Get-ChildItem -Path $WheelhouseDir -Filter "*.whl" -File) {
+            if (-not $manifested.Contains($wheelFile.Name)) {
+                Write-Warn "Skipping local wheelhouse: unmanifested wheel $($wheelFile.Name)"
+                return $false
+            }
+        }
+        return $true
+    } catch {
+        Write-Warn "Skipping local wheelhouse: $_"
+        return $false
+    }
+}
+
+function Install-LocalWheelhouseTier {
+    $wheelhouseDir = Join-Path $InstallDir "resources\wheelhouse"
+    if (-not (Test-LocalWheelhouseManifest -WheelhouseDir $wheelhouseDir)) {
+        return $false
+    }
+
+    Write-Info "Trying tier: local wheelhouse (all) ..."
+    & $UvCmd pip install --no-index --find-links $wheelhouseDir -e ".[all]"
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "Main package installed (local wheelhouse)"
+        $script:InstalledTier = "local wheelhouse (all)"
+        return $true
+    }
+
+    Write-Warn "Local wheelhouse install failed. Falling back to uv.lock/PyPI tiers..."
+    return $false
+}
+
 function Install-Dependencies {
     Write-Info "Installing dependencies..."
     
@@ -1427,6 +1524,15 @@ function Install-Dependencies {
         }
     }
 
+    # Offline release-bundle install (Tier -1) -- direct script runs can use
+    # the same repository-local wheelhouse that the Rust bootstrapper bundles.
+    # A manifest with target platform, architecture, size, and SHA-256 keeps
+    # this path auditable; failure falls through to the existing network tiers.
+    $skipPipFallback = $false
+    if (Install-LocalWheelhouseTier) {
+        $skipPipFallback = $true
+    }
+
     # Hash-verified install (Tier 0) -- when uv.lock is present, prefer
     # `uv sync --locked`. The lockfile records SHA256 hashes for every
     # transitive dependency, so a compromised transitive (different hash
@@ -1437,7 +1543,7 @@ function Install-Dependencies {
     # without any hash verification -- they exist to keep installs working
     # when the lockfile is stale, missing, or out-of-sync with the
     # current extras spec, NOT because they're equivalent in posture.
-    if (Test-Path "uv.lock") {
+    if (-not $skipPipFallback -and (Test-Path "uv.lock")) {
         Write-Info "Trying tier: hash-verified (uv.lock) ..."
         # Critical flag choice: `--extra all`, NOT `--all-extras`.
         #   --all-extras = every [project.optional-dependencies] key,
@@ -1458,14 +1564,14 @@ function Install-Dependencies {
         if ($LASTEXITCODE -eq 0) {
             Write-Success "Main package installed (hash-verified via uv.lock)"
             $script:InstalledTier = "hash-verified (uv.lock)"
+            $skipPipFallback = $true
             # Skip the rest of the tiered cascade -- we already have a
             # complete, hash-verified install.
-            $skipPipFallback = $true
         } else {
             Write-Warn "uv.lock sync failed (lockfile may be stale), falling back to PyPI resolve..."
             $skipPipFallback = $false
         }
-    } else {
+    } elseif (-not $skipPipFallback) {
         Write-Info "uv.lock not found -- falling back to PyPI resolve (no hash verification)"
         $skipPipFallback = $false
     }

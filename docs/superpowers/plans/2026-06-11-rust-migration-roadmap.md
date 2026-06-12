@@ -561,6 +561,9 @@ language-specific setup where needed.
   the current installer target before trying the offline tier.
 - Release installer self-check and artifact validators now accept expected `bootstrap-tools` and wheelhouse platform
   and architecture labels, rejecting mismatched runtime archive or Python wheelhouse payloads before upload.
+- Direct `install.ps1` and `install.sh` Python dependency stages now also prefer a repository-local
+  `resources/wheelhouse/` offline tier when its manifest matches the current target platform, architecture, wheel size,
+  and SHA-256, while falling back to the existing `uv.lock` and PyPI tiers on any mismatch or install failure.
 - The validate-only gate now also requires every archive record to retain its download URL, keeping the packaged
   runtime archive update path auditable alongside size and SHA-256.
 - Archive URLs in the retained bootstrap-tools manifest must be HTTPS, so release review cannot accidentally accept an

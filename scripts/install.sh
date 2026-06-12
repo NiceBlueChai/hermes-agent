@@ -1266,6 +1266,114 @@ setup_venv() {
     log_success "Virtual environment ready (Python $PYTHON_VERSION)"
 }
 
+get_wheelhouse_platform() {
+    case "$OS" in
+        linux) echo "linux" ;;
+        macos) echo "macos" ;;
+        *) echo "" ;;
+    esac
+}
+
+get_wheelhouse_arch() {
+    case "$(uname -m)" in
+        x86_64|amd64) echo "x64" ;;
+        aarch64|arm64) echo "arm64" ;;
+        i386|i686) echo "x86" ;;
+        *) echo "" ;;
+    esac
+}
+
+local_wheelhouse_manifest_is_valid() {
+    local wheelhouse_dir="$1"
+    local manifest="$wheelhouse_dir/wheelhouse-manifest.json"
+    local expected_platform expected_arch validation_error
+
+    if [ ! -d "$wheelhouse_dir" ]; then
+        return 1
+    fi
+
+    if [ ! -f "$manifest" ]; then
+        find "$wheelhouse_dir" -maxdepth 1 -type f -name '*.whl' | grep -q .
+        return $?
+    fi
+
+    expected_platform="$(get_wheelhouse_platform)"
+    expected_arch="$(get_wheelhouse_arch)"
+    if [ -z "$expected_platform" ] || [ -z "$expected_arch" ]; then
+        log_warn "Skipping local wheelhouse: unsupported target for bundled wheels"
+        return 1
+    fi
+
+    validation_error="$(
+        HERMES_WHEELHOUSE_DIR="$wheelhouse_dir" \
+        HERMES_WHEELHOUSE_PLATFORM="$expected_platform" \
+        HERMES_WHEELHOUSE_ARCH="$expected_arch" \
+        "$PYTHON_PATH" - <<'PY' 2>&1
+import hashlib
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ["HERMES_WHEELHOUSE_DIR"])
+expected_platform = os.environ["HERMES_WHEELHOUSE_PLATFORM"]
+expected_arch = os.environ["HERMES_WHEELHOUSE_ARCH"]
+manifest = root / "wheelhouse-manifest.json"
+payload = json.loads(manifest.read_text(encoding="utf-8"))
+if payload.get("schemaVersion") != 1:
+    raise SystemExit("unsupported wheelhouse manifest schema")
+wheels = payload.get("wheels") or []
+if not wheels:
+    raise SystemExit("wheelhouse manifest has no wheels")
+
+manifested = set()
+for wheel in wheels:
+    name = wheel.get("name")
+    if not name or not name.endswith(".whl") or Path(name).name != name or ".." in Path(name).parts:
+        raise SystemExit(f"invalid wheelhouse wheel name: {name!r}")
+    if wheel.get("platform") != expected_platform:
+        raise SystemExit(f"unexpected wheelhouse platform for {name}")
+    if wheel.get("arch") != expected_arch:
+        raise SystemExit(f"unexpected wheelhouse arch for {name}")
+    path = root / name
+    data = path.read_bytes()
+    if wheel.get("sizeBytes") is not None and int(wheel["sizeBytes"]) != len(data):
+        raise SystemExit(f"wheelhouse size mismatch for {name}")
+    expected_sha = wheel.get("sha256")
+    if not expected_sha or hashlib.sha256(data).hexdigest().lower() != expected_sha.lower():
+        raise SystemExit(f"wheelhouse sha256 mismatch for {name}")
+    manifested.add(name)
+
+for path in root.glob("*.whl"):
+    if path.name not in manifested:
+        raise SystemExit(f"unmanifested wheelhouse payload: {path.name}")
+PY
+    )"
+    if [ $? -ne 0 ]; then
+        log_warn "Skipping local wheelhouse: $validation_error"
+        return 1
+    fi
+
+    return 0
+}
+
+install_local_wheelhouse_tier() {
+    local wheelhouse_dir="$INSTALL_DIR/resources/wheelhouse"
+
+    if ! local_wheelhouse_manifest_is_valid "$wheelhouse_dir"; then
+        return 1
+    fi
+
+    log_info "Trying tier: local wheelhouse (all) ..."
+    if $UV_CMD pip install --no-index --find-links "$wheelhouse_dir" -e ".[all]"; then
+        log_success "Main package installed (local wheelhouse)"
+        log_success "All dependencies installed"
+        return 0
+    fi
+
+    log_warn "Local wheelhouse install failed, falling back to uv.lock/PyPI tiers..."
+    return 1
+}
+
 install_deps() {
     log_info "Installing dependencies..."
 
@@ -1381,6 +1489,14 @@ install_deps() {
 
     # Install the main package in editable mode with all extras.
     #
+    # Offline release-bundle install (Tier -1) -- direct script runs can use
+    # the same repository-local wheelhouse that the Rust bootstrapper bundles.
+    # A manifest with target platform, architecture, size, and SHA-256 keeps
+    # this path auditable; failure falls through to the existing network tiers.
+    if install_local_wheelhouse_tier; then
+        return 0
+    fi
+
     # Hash-verified install (Tier 0) — when uv.lock is present, prefer
     # `uv sync --locked`. The lockfile records SHA256 hashes for every
     # transitive, so a compromised transitive (different hash than what
