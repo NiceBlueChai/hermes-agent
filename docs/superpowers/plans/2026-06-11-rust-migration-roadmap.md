@@ -447,6 +447,8 @@ language-specific setup where needed.
   Hermes-managed profile block through the Rust manager and refreshing the bootstrap process PATH. Linux root/FHS
   bootstraps now resolve the checkout to `/usr/local/lib/hermes-agent`, write the launcher to `/usr/local/bin/hermes`,
   and keep native/script fallback Python runtime paths under `/usr/local/share/uv` for non-root command usability.
+- The native Unix `path` stage now writes the same managed PATH block to every existing shell profile that the selected
+  shell normally uses, such as `.bashrc` plus `.profile`, instead of only touching one profile file.
 - The Rust manager writes fish-compatible managed profile blocks when the selected Unix profile is `config.fish`, while
   keeping POSIX export blocks for bash/zsh-compatible profile files.
 - The Rust manager can create an idempotent Unix `hermes` launcher in the managed tool bin directory, so the bootstrap

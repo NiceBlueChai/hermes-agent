@@ -3905,22 +3905,26 @@ pub fn configure_windows_path_stage(_hermes_home: &Path, _install_root: &Path) -
 
 /// Apply the native Unix shell-profile PATH stage.
 pub fn configure_unix_path_stage(hermes_home: &Path, install_root: &Path) -> Result<serde_json::Value> {
-    let profile_path = default_unix_profile_path()
+    let profile_paths = default_unix_profile_paths()
         .ok_or_else(|| anyhow!("could not resolve a writable Unix shell profile path"))?;
-    configure_unix_path_stage_with_profile(
+    configure_unix_path_stage_with_profiles(
         hermes_home,
         install_root,
-        &profile_path,
+        &profile_paths,
         std::env::var("PATH").ok(),
     )
 }
 
-fn configure_unix_path_stage_with_profile(
+fn configure_unix_path_stage_with_profiles(
     hermes_home: &Path,
     install_root: &Path,
-    profile_path: &Path,
+    profile_paths: &[PathBuf],
     current_path: Option<String>,
 ) -> Result<serde_json::Value> {
+    if profile_paths.is_empty() {
+        return Err(anyhow!("could not resolve a writable Unix shell profile path"));
+    }
+
     let command_link_dir = unix_command_link_dir_for_layout(hermes_home, install_root);
     let extra_path_entries = [command_link_dir.clone()];
     let plan = hermes_manager::platform::plan_path_update_with_extra_entries(
@@ -3929,41 +3933,79 @@ fn configure_unix_path_stage_with_profile(
         current_path,
         false,
     );
-    let before = std::fs::read_to_string(profile_path).ok();
-    hermes_manager::platform::write_shell_profile_update(profile_path, &plan)
-        .map_err(|err| anyhow!("writing Unix shell profile update: {err}"))?;
-    let after = std::fs::read_to_string(profile_path).ok();
+    let mut profile_changed = false;
+    for profile_path in profile_paths {
+        let before = std::fs::read_to_string(profile_path).ok();
+        hermes_manager::platform::write_shell_profile_update(profile_path, &plan)
+            .map_err(|err| anyhow!("writing Unix shell profile update: {err}"))?;
+        let after = std::fs::read_to_string(profile_path).ok();
+        profile_changed |= before != after;
+    }
     let launcher_path = command_link_dir.join("hermes");
     let launcher_target = install_root.join("venv").join("bin").join("hermes");
     let launcher_changed =
         hermes_manager::platform::write_unix_launcher(&launcher_path, &launcher_target)
             .map_err(|err| anyhow!("writing Unix launcher: {err}"))?;
     std::env::set_var("PATH", &plan.next_path);
+    let profile_path_values = profile_paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
     Ok(serde_json::json!({
-        "profilePath": profile_path.display().to_string(),
+        "profilePath": profile_path_values[0],
+        "profilePaths": profile_path_values,
         "hermesBin": plan.hermes_bin,
         "commandLinkDir": command_link_dir.display().to_string(),
         "launcherPath": launcher_path.display().to_string(),
         "launcherChanged": launcher_changed,
         "pathEntries": plan.path_entries,
         "pathChanged": plan.changed,
-        "profileChanged": before != after,
-        "applied": plan.changed || before != after || launcher_changed,
+        "profileChanged": profile_changed,
+        "applied": plan.changed || profile_changed || launcher_changed,
     }))
 }
 
-fn default_unix_profile_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    let shell = std::env::var("SHELL").unwrap_or_default();
-    default_unix_profile_path_for(&home, &shell)
+#[cfg(test)]
+fn configure_unix_path_stage_with_profile(
+    hermes_home: &Path,
+    install_root: &Path,
+    profile_path: &Path,
+    current_path: Option<String>,
+) -> Result<serde_json::Value> {
+    configure_unix_path_stage_with_profiles(hermes_home, install_root, &[profile_path.to_path_buf()], current_path)
 }
 
+fn default_unix_profile_paths() -> Option<Vec<PathBuf>> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let shell = std::env::var("SHELL").unwrap_or_default();
+    Some(default_unix_profile_paths_for(&home, &shell))
+}
+
+#[cfg(test)]
 fn default_unix_profile_path_for(home: &Path, shell: &str) -> Option<PathBuf> {
+    default_unix_profile_paths_for(home, shell).into_iter().next()
+}
+
+fn default_unix_profile_paths_for(home: &Path, shell: &str) -> Vec<PathBuf> {
     if shell.ends_with("fish") {
-        return Some(home.join(".config").join("fish").join("config.fish"));
+        return vec![home.join(".config").join("fish").join("config.fish")];
     }
-    let name = if shell.ends_with("zsh") { ".zshrc" } else { ".profile" };
-    Some(home.join(name))
+    if shell.ends_with("zsh") {
+        return existing_or_default_profile_paths(home, &[".zshrc", ".zprofile"], ".zshrc");
+    }
+    existing_or_default_profile_paths(home, &[".bashrc", ".bash_profile", ".profile"], ".bashrc")
+}
+
+fn existing_or_default_profile_paths(home: &Path, names: &[&str], default_name: &str) -> Vec<PathBuf> {
+    let existing = names
+        .iter()
+        .map(|name| home.join(name))
+        .filter(|path| path.is_file())
+        .collect::<Vec<_>>();
+    if existing.is_empty() {
+        return vec![home.join(default_name)];
+    }
+    existing
 }
 
 fn unix_command_link_dir_for_layout(hermes_home: &Path, install_root: &Path) -> PathBuf {
@@ -9351,7 +9393,7 @@ mod tests {
         );
         assert_eq!(
             default_unix_profile_path_for(&home, "/bin/bash").unwrap(),
-            home.join(".profile")
+            home.join(".bashrc")
         );
     }
 
@@ -9404,6 +9446,50 @@ mod tests {
         );
         assert_eq!(report["launcherPath"], launcher.display().to_string());
         assert_eq!(report["launcherChanged"], true);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unix_path_stage_writes_multiple_profile_blocks() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-unix-path-multi-{}",
+            std::process::id()
+        ));
+        let home = root.join("home");
+        let install_root = root.join("hermes-agent");
+        let bashrc = home.join(".bashrc");
+        let profile = home.join(".profile");
+        let hermes_entry = install_root.join("venv").join("bin").join("hermes");
+        std::fs::create_dir_all(hermes_entry.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(&hermes_entry, "#!/bin/sh\n").unwrap();
+        std::fs::write(&bashrc, "alias ll='ls -la'\n").unwrap();
+        std::fs::write(&profile, "export EDITOR=vim\n").unwrap();
+
+        let report = configure_unix_path_stage_with_profiles(
+            &home,
+            &install_root,
+            &[bashrc.clone(), profile.clone()],
+            None,
+        )
+        .unwrap();
+
+        for profile_path in [&bashrc, &profile] {
+            let text = std::fs::read_to_string(profile_path).unwrap();
+            assert!(text.contains("Hermes Agent PATH"));
+            assert!(text.contains(&install_root.join("venv").join("bin").display().to_string()));
+            assert!(text.contains(&home.join("bin").display().to_string()));
+        }
+        assert_eq!(
+            report["profilePaths"],
+            serde_json::json!([
+                bashrc.display().to_string(),
+                profile.display().to_string()
+            ])
+        );
+        assert_eq!(report["profileChanged"], true);
+        assert_eq!(report["applied"], true);
 
         let _ = std::fs::remove_dir_all(&root);
     }
