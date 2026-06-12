@@ -272,6 +272,13 @@ def archive_target_from_name(name: str) -> tuple[str, str] | None:
         "ffmpeg-linux-arm64.tar.gz": ("linux", "arm64"),
         "ffmpeg-macos-x64.tar.gz": ("macos", "x64"),
         "ffmpeg-macos-arm64.tar.gz": ("macos", "arm64"),
+        "playwright-browsers-windows-x64.zip": ("windows", "x64"),
+        "playwright-browsers-windows-arm64.zip": ("windows", "arm64"),
+        "playwright-browsers-windows-x86.zip": ("windows", "x86"),
+        "playwright-browsers-linux-x64.tar.gz": ("linux", "x64"),
+        "playwright-browsers-linux-arm64.tar.gz": ("linux", "arm64"),
+        "playwright-browsers-macos-x64.tar.gz": ("macos", "x64"),
+        "playwright-browsers-macos-arm64.tar.gz": ("macos", "arm64"),
     }
     return known_targets.get(name)
 
@@ -289,6 +296,8 @@ def archive_tool_kind_from_name(name: str) -> str | None:
         return "git"
     if name.startswith("ffmpeg-"):
         return "ffmpeg"
+    if name.startswith("playwright-browsers-"):
+        return "playwright-browsers"
     return None
 
 

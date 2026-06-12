@@ -781,6 +781,7 @@ async fn run_bootstrap(
                 Some(crate::orchestrator::install_node_dependencies_stage(
                     &install_root,
                     &hermes_home,
+                    bundled_tools_dir.as_deref(),
                 ))
             } else if stage.name.eq_ignore_ascii_case("platform-sdks") {
                 Some(crate::orchestrator::install_platform_sdks_stage(

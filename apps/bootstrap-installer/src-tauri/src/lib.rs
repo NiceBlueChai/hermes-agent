@@ -600,6 +600,9 @@ fn bootstrap_tool_archive_target(name: &str) -> Option<(&'static str, &'static s
         "ffmpeg-windows-x64.zip" => Some(("windows", "x64")),
         "ffmpeg-windows-arm64.zip" => Some(("windows", "arm64")),
         "ffmpeg-windows-x86.zip" => Some(("windows", "x86")),
+        "playwright-browsers-windows-x64.zip" => Some(("windows", "x64")),
+        "playwright-browsers-windows-arm64.zip" => Some(("windows", "arm64")),
+        "playwright-browsers-windows-x86.zip" => Some(("windows", "x86")),
         "uv-x86_64-unknown-linux-gnu.tar.gz"
         | "ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz" => Some(("linux", "x64")),
         "uv-aarch64-unknown-linux-gnu.tar.gz"
@@ -610,8 +613,12 @@ fn bootstrap_tool_archive_target(name: &str) -> Option<(&'static str, &'static s
         | "ripgrep-15.1.0-aarch64-apple-darwin.tar.gz" => Some(("macos", "arm64")),
         "ffmpeg-linux-x64.tar.gz" => Some(("linux", "x64")),
         "ffmpeg-linux-arm64.tar.gz" => Some(("linux", "arm64")),
+        "playwright-browsers-linux-x64.tar.gz" => Some(("linux", "x64")),
+        "playwright-browsers-linux-arm64.tar.gz" => Some(("linux", "arm64")),
         "ffmpeg-macos-x64.tar.gz" => Some(("macos", "x64")),
         "ffmpeg-macos-arm64.tar.gz" => Some(("macos", "arm64")),
+        "playwright-browsers-macos-x64.tar.gz" => Some(("macos", "x64")),
+        "playwright-browsers-macos-arm64.tar.gz" => Some(("macos", "arm64")),
         _ => None,
     }
 }
@@ -632,6 +639,9 @@ fn bootstrap_tool_archive_kind(name: &str) -> Option<&'static str> {
     }
     if name.starts_with("ffmpeg-") {
         return Some("ffmpeg");
+    }
+    if name.starts_with("playwright-browsers-") {
+        return Some("playwright-browsers");
     }
     None
 }
@@ -1551,6 +1561,27 @@ mod tests {
             Some("ffmpeg")
         );
         assert!(!required_bootstrap_tool_kinds("linux", "x64").contains("ffmpeg"));
+    }
+
+    #[test]
+    fn self_check_knows_optional_playwright_browser_bootstrap_archive_targets() {
+        assert_eq!(
+            bootstrap_tool_archive_target("playwright-browsers-windows-x64.zip"),
+            Some(("windows", "x64"))
+        );
+        assert_eq!(
+            bootstrap_tool_archive_target("playwright-browsers-linux-arm64.tar.gz"),
+            Some(("linux", "arm64"))
+        );
+        assert_eq!(
+            bootstrap_tool_archive_target("playwright-browsers-macos-x64.tar.gz"),
+            Some(("macos", "x64"))
+        );
+        assert_eq!(
+            bootstrap_tool_archive_kind("playwright-browsers-macos-x64.tar.gz"),
+            Some("playwright-browsers")
+        );
+        assert!(!required_bootstrap_tool_kinds("linux", "x64").contains("playwright-browsers"));
     }
 
     #[test]

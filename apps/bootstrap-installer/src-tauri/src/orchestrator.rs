@@ -253,6 +253,13 @@ pub struct UnixFfmpegRuntimeStagePlan {
     pub ffmpeg_bin: PathBuf,
 }
 
+/// Native Playwright browser cache installation plan for bundled release archives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaywrightBrowsersRuntimeStagePlan {
+    pub archive_name: String,
+    pub install_dir: PathBuf,
+}
+
 /// Native Unix Node runtime installation plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnixNodeRuntimeStagePlan {
@@ -2086,6 +2093,55 @@ pub fn unix_ffmpeg_runtime_stage_plan(
     })
 }
 
+/// Build a Playwright browser cache plan for a bundled release archive.
+pub fn playwright_browsers_runtime_stage_plan(
+    hermes_home: &Path,
+    target_os: &str,
+    arch: &str,
+) -> Result<PlaywrightBrowsersRuntimeStagePlan> {
+    let platform = match target_os {
+        "windows" => "windows",
+        "darwin" | "macos" => "macos",
+        "linux" => "linux",
+        other => return Err(anyhow!("unsupported Playwright browser platform: {other}")),
+    };
+    match (platform, arch) {
+        ("windows", "arm64" | "x64" | "x86")
+        | ("linux", "arm64" | "x64")
+        | ("macos", "arm64" | "x64") => {}
+        (_, other) => {
+            return Err(anyhow!(
+                "unsupported Playwright browser architecture for {platform}: {other}"
+            ));
+        }
+    }
+    let extension = if platform == "windows" {
+        "zip"
+    } else {
+        "tar.gz"
+    };
+    Ok(PlaywrightBrowsersRuntimeStagePlan {
+        archive_name: format!("playwright-browsers-{platform}-{arch}.{extension}"),
+        install_dir: hermes_home.join("playwright-browsers"),
+    })
+}
+
+fn install_bundled_playwright_browsers_if_available(
+    hermes_home: &Path,
+    bundled_tools_dir: Option<&Path>,
+    target_os: &str,
+    arch: &str,
+) -> Result<Option<(String, BootstrapArchiveSourceKind)>> {
+    let plan = playwright_browsers_runtime_stage_plan(hermes_home, target_os, arch)?;
+    let archive_source =
+        resolve_bootstrap_archive_source(hermes_home, bundled_tools_dir, &plan.archive_name);
+    if archive_source.kind != BootstrapArchiveSourceKind::Bundled {
+        return Ok(None);
+    }
+    extract_playwright_browsers_archive(&archive_source.path, &plan.install_dir)?;
+    Ok(Some((plan.archive_name, archive_source.kind)))
+}
+
 /// Install Windows ripgrep natively and prefer bundled ffmpeg before package-manager recovery.
 pub async fn install_windows_system_packages_stage(
     hermes_home: &Path,
@@ -3451,6 +3507,7 @@ fn playwright_zypper_system_packages() -> &'static [&'static str] {
 pub fn install_node_dependencies_stage(
     install_root: &Path,
     hermes_home: &Path,
+    bundled_tools_dir: Option<&Path>,
 ) -> Result<serde_json::Value> {
     let path_env = std::env::var_os("PATH").unwrap_or_default();
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
@@ -3458,6 +3515,8 @@ pub fn install_node_dependencies_stage(
     let mut playwright_system_deps = "skipped".to_string();
     let mut playwright_system_commands = Vec::new();
     let mut playwright_system_failures = Vec::new();
+    let mut playwright_browsers_archive_name = None;
+    let mut playwright_browsers_archive_source_kind = None;
     let mut optional_node_failures = Vec::new();
     if plan.browser_tools {
         let npm_ci_ok = plan.cwd.join("package-lock.json").is_file()
@@ -3502,22 +3561,39 @@ pub fn install_node_dependencies_stage(
             write_browser_env_from_system_browser(hermes_home, &browser)
                 .context("configuring system browser for browser tools")?;
         } else if let Some(playwright_plan) = browser_decision.playwright {
-            let npx = plan
-                .npx
-                .as_ref()
-                .ok_or_else(|| anyhow!("npx is not available"))?;
-            playwright_system_commands = playwright_plan
-                .system_package_commands
-                .iter()
-                .map(unix_package_command_display)
-                .collect::<Vec<_>>();
-            playwright_system_failures = install_playwright_with_system_recovery(
-                npx,
-                &playwright_plan,
-                &plan.cwd,
-                &plan.npm_cache_dir,
-                &plan.playwright_browsers_dir,
-            )?;
+            let arch = current_wheelhouse_arch().ok_or_else(|| {
+                anyhow!(
+                    "unsupported Playwright browser architecture: {}",
+                    std::env::consts::ARCH
+                )
+            })?;
+            if let Some((archive_name, source_kind)) = install_bundled_playwright_browsers_if_available(
+                hermes_home,
+                bundled_tools_dir,
+                current_wheelhouse_platform(),
+                arch,
+            )? {
+                playwright_system_deps = "bundled-playwright-browsers".to_string();
+                playwright_browsers_archive_name = Some(archive_name);
+                playwright_browsers_archive_source_kind = Some(source_kind.as_str().to_string());
+            } else {
+                let npx = plan
+                    .npx
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("npx is not available"))?;
+                playwright_system_commands = playwright_plan
+                    .system_package_commands
+                    .iter()
+                    .map(unix_package_command_display)
+                    .collect::<Vec<_>>();
+                playwright_system_failures = install_playwright_with_system_recovery(
+                    npx,
+                    &playwright_plan,
+                    &plan.cwd,
+                    &plan.npm_cache_dir,
+                    &plan.playwright_browsers_dir,
+                )?;
+            }
         }
     }
     if let Some(tui_dir) = &plan.tui_dir {
@@ -3542,6 +3618,8 @@ pub fn install_node_dependencies_stage(
         "npx": plan.npx,
         "npmCacheDir": plan.npm_cache_dir,
         "playwrightBrowsersDir": plan.playwright_browsers_dir,
+        "playwrightBrowsersArchive": playwright_browsers_archive_name,
+        "playwrightBrowsersArchiveSource": playwright_browsers_archive_source_kind,
         "playwrightSystemDeps": playwright_system_deps,
         "playwrightSystemCommands": playwright_system_commands,
         "playwrightSystemFailures": playwright_system_failures,
@@ -4343,6 +4421,18 @@ fn bootstrap_archive_target_from_name(name: &str) -> Option<BootstrapArchiveTarg
             platform: "windows",
             arch: "x86",
         }),
+        "playwright-browsers-windows-x64.zip" => Some(BootstrapArchiveTarget {
+            platform: "windows",
+            arch: "x64",
+        }),
+        "playwright-browsers-windows-arm64.zip" => Some(BootstrapArchiveTarget {
+            platform: "windows",
+            arch: "arm64",
+        }),
+        "playwright-browsers-windows-x86.zip" => Some(BootstrapArchiveTarget {
+            platform: "windows",
+            arch: "x86",
+        }),
         "uv-x86_64-unknown-linux-gnu.tar.gz"
         | "ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz" => Some(BootstrapArchiveTarget {
             platform: "linux",
@@ -4371,11 +4461,27 @@ fn bootstrap_archive_target_from_name(name: &str) -> Option<BootstrapArchiveTarg
             platform: "linux",
             arch: "arm64",
         }),
+        "playwright-browsers-linux-x64.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "linux",
+            arch: "x64",
+        }),
+        "playwright-browsers-linux-arm64.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "linux",
+            arch: "arm64",
+        }),
         "ffmpeg-macos-x64.tar.gz" => Some(BootstrapArchiveTarget {
             platform: "macos",
             arch: "x64",
         }),
         "ffmpeg-macos-arm64.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "macos",
+            arch: "arm64",
+        }),
+        "playwright-browsers-macos-x64.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "macos",
+            arch: "x64",
+        }),
+        "playwright-browsers-macos-arm64.tar.gz" => Some(BootstrapArchiveTarget {
             platform: "macos",
             arch: "arm64",
         }),
@@ -4790,6 +4896,87 @@ fn extract_unix_ffmpeg_tar_gz(archive_path: &Path, install_dir: &Path) -> Result
     let cleanup = remove_path_if_exists(&tmp_dir);
     result?;
     cleanup
+}
+
+fn extract_playwright_browsers_archive(archive_path: &Path, install_dir: &Path) -> Result<()> {
+    let parent = install_dir.parent().ok_or_else(|| {
+        anyhow!(
+            "Playwright browser install directory has no parent: {}",
+            install_dir.display()
+        )
+    })?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("creating Playwright browser parent {}", parent.display()))?;
+    let tmp_dir = parent.join("playwright-browsers-extracting");
+    remove_path_if_exists(&tmp_dir)?;
+    fs::create_dir_all(&tmp_dir).with_context(|| {
+        format!(
+            "creating Playwright browser extraction directory {}",
+            tmp_dir.display()
+        )
+    })?;
+
+    let result: Result<()> = (|| {
+        let archive_name = archive_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if archive_name.ends_with(".zip") {
+            crate::artifact::extract_zip_archive(archive_path, &tmp_dir)?;
+        } else if archive_name.ends_with(".tar.gz") {
+            extract_tar_gz_archive(archive_path, &tmp_dir, "Playwright browsers")?;
+        } else {
+            return Err(anyhow!(
+                "unsupported Playwright browser archive format: {}",
+                archive_path.display()
+            ));
+        }
+        let cache_root = if tmp_dir.join("playwright-browsers").is_dir() {
+            tmp_dir.join("playwright-browsers")
+        } else {
+            tmp_dir.clone()
+        };
+        if !playwright_browsers_dir_has_chromium(&cache_root)? {
+            return Err(anyhow!(
+                "Playwright browser archive did not contain Chromium cache directories"
+            ));
+        }
+        remove_path_if_exists(install_dir)?;
+        fs::create_dir_all(install_dir).with_context(|| {
+            format!(
+                "creating Playwright browser install dir {}",
+                install_dir.display()
+            )
+        })?;
+        copy_dir_contents(&cache_root, install_dir)?;
+        if !playwright_browsers_dir_has_chromium(install_dir)? {
+            return Err(anyhow!(
+                "Playwright browser extraction did not produce Chromium cache directories"
+            ));
+        }
+        Ok(())
+    })();
+    let cleanup = remove_path_if_exists(&tmp_dir);
+    result?;
+    cleanup
+}
+
+fn playwright_browsers_dir_has_chromium(path: &Path) -> Result<bool> {
+    if !path.is_dir() {
+        return Ok(false);
+    }
+    for entry in fs::read_dir(path).with_context(|| format!("reading {}", path.display()))? {
+        let entry = entry.with_context(|| format!("reading entry under {}", path.display()))?;
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("chromium-") || name.starts_with("chromium_headless_shell-") {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn extract_tar_gz_archive(archive_path: &Path, destination_dir: &Path, label: &str) -> Result<()> {
@@ -6349,6 +6536,132 @@ mod tests {
             b"fake ffmpeg"
         );
         assert!(!install_dir.join("ffmpeg-extracting").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn playwright_browsers_runtime_stage_plan_matches_bundled_archive_contract() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-playwright-browsers-runtime-plan-test-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+
+        let windows = playwright_browsers_runtime_stage_plan(&hermes_home, "windows", "x64")
+            .expect("Windows x64 Playwright browser archive should be supported");
+        assert_eq!(windows.archive_name, "playwright-browsers-windows-x64.zip");
+        assert_eq!(windows.install_dir, hermes_home.join("playwright-browsers"));
+
+        let linux = playwright_browsers_runtime_stage_plan(&hermes_home, "linux", "arm64")
+            .expect("Linux arm64 Playwright browser archive should be supported");
+        assert_eq!(linux.archive_name, "playwright-browsers-linux-arm64.tar.gz");
+
+        let macos = playwright_browsers_runtime_stage_plan(&hermes_home, "darwin", "x64")
+            .expect("macOS x64 Playwright browser archive should be supported");
+        assert_eq!(macos.archive_name, "playwright-browsers-macos-x64.tar.gz");
+        assert!(playwright_browsers_runtime_stage_plan(&hermes_home, "freebsd", "x64").is_err());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_playwright_browsers_archive_copies_nested_zip_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-playwright-browsers-zip-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive = root.join("playwright-browsers.zip");
+        write_test_zip(
+            &archive,
+            &[("playwright-browsers/chromium-1208/chrome-linux/chrome", b"chrome")],
+        );
+        let install_dir = root.join("home").join("playwright-browsers");
+
+        extract_playwright_browsers_archive(&archive, &install_dir).unwrap();
+
+        assert_eq!(
+            std::fs::read(install_dir.join("chromium-1208").join("chrome-linux").join("chrome"))
+                .unwrap(),
+            b"chrome"
+        );
+        assert!(!install_dir
+            .parent()
+            .unwrap()
+            .join("playwright-browsers-extracting")
+            .exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_playwright_browsers_archive_copies_nested_tar_gz_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-playwright-browsers-tar-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive = root.join("playwright-browsers.tar.gz");
+        write_test_tar_gz(
+            &archive,
+            &[("playwright-browsers/chromium_headless_shell-1208/headless_shell", b"shell")],
+        );
+        let install_dir = root.join("home").join("playwright-browsers");
+
+        extract_playwright_browsers_archive(&archive, &install_dir).unwrap();
+
+        assert_eq!(
+            std::fs::read(install_dir.join("chromium_headless_shell-1208").join("headless_shell"))
+                .unwrap(),
+            b"shell"
+        );
+        assert!(!install_dir
+            .parent()
+            .unwrap()
+            .join("playwright-browsers-extracting")
+            .exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn bundled_playwright_browsers_archive_installs_before_npx_download() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-playwright-browsers-bundled-test-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+        let bundled = root.join("resources").join("bootstrap-tools");
+        std::fs::create_dir_all(&bundled).unwrap();
+        write_test_zip(
+            &bundled.join("playwright-browsers-windows-x64.zip"),
+            &[("playwright-browsers/chromium-1208/chrome-win/chrome.exe", b"chrome")],
+        );
+
+        let source = install_bundled_playwright_browsers_if_available(
+            &hermes_home,
+            Some(&bundled),
+            "windows",
+            "x64",
+        )
+        .unwrap();
+
+        assert_eq!(
+            source,
+            Some((
+                "playwright-browsers-windows-x64.zip".to_string(),
+                BootstrapArchiveSourceKind::Bundled,
+            ))
+        );
+        assert_eq!(
+            std::fs::read(
+                hermes_home
+                    .join("playwright-browsers")
+                    .join("chromium-1208")
+                    .join("chrome-win")
+                    .join("chrome.exe")
+            )
+            .unwrap(),
+            b"chrome"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

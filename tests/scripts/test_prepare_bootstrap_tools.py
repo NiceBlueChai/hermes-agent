@@ -162,6 +162,23 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         self.assertEqual(module.archive_tool_kind_from_name("ffmpeg-macos-x64.tar.gz"), "ffmpeg")
         self.assertNotIn("ffmpeg", module.required_tool_kinds_for_target("macos", "x64"))
 
+    def test_playwright_browser_archive_names_have_target_metadata_without_being_required(self):
+        module = _load_script_module()
+
+        self.assertEqual(
+            module.archive_target_from_name("playwright-browsers-windows-x64.zip"),
+            ("windows", "x64"),
+        )
+        self.assertEqual(
+            module.archive_target_from_name("playwright-browsers-linux-arm64.tar.gz"),
+            ("linux", "arm64"),
+        )
+        self.assertEqual(
+            module.archive_tool_kind_from_name("playwright-browsers-macos-x64.tar.gz"),
+            "playwright-browsers",
+        )
+        self.assertNotIn("playwright-browsers", module.required_tool_kinds_for_target("linux", "x64"))
+
     def test_prepare_local_archive_copies_optional_ffmpeg_into_manifest(self):
         module = _load_script_module()
         root = Path("tmp-bootstrap-tools-local-archive-test")

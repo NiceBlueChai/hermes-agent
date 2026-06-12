@@ -287,6 +287,10 @@ language-specific setup where needed.
   packages that the shell script previously only printed as manual recovery hints.
 - Native Playwright Chromium install now treats Linux package-manager dependency failures as recoverable, records the
   failed commands, and still attempts the browser install before handing the stage to script fallback.
+- Native Playwright Chromium install can now consume optional manifest-verified
+  `playwright-browsers-<platform>-<arch>` archives from `bootstrap-tools/` before running
+  `npx playwright install chromium`, so release packages can pre-seed the managed browser cache while keeping the
+  existing system-browser and Playwright download fallbacks.
 - Script fallback for `node-deps` and desktop npm stages now receives the same managed npm cache and Playwright browser
   path environment where applicable, so native fallback does not spill browser/runtime caches back into global user
   locations.
@@ -356,7 +360,8 @@ language-specific setup where needed.
   explicitly checksummed optional archive, verify it before manifesting, and keep ffmpeg bundling source selection in
   release policy rather than installer code.
 - Windows, Linux, and macOS installer workflows now expose optional audited-archive dispatch inputs, so an admin can
-  produce a more self-contained package with reviewed ffmpeg payloads without changing workflow YAML for each release.
+  produce a more self-contained package with reviewed ffmpeg or Playwright browser-cache payloads without changing
+  workflow YAML for each release.
 - Linux distro detection now uses both `ID` and `ID_LIKE` from `/etc/os-release`, so derivative distributions can use
   the native apt/dnf/pacman/zypper recovery paths for Git, ffmpeg, and Playwright system libraries.
 - Native Unix Git and package-manager recovery failures now capture stdout/stderr in the Rust error message, so GUI
