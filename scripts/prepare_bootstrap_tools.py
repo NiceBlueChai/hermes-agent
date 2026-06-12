@@ -269,6 +269,33 @@ def archive_target_from_name(name: str) -> tuple[str, str] | None:
     return known_targets.get(name)
 
 
+def archive_tool_kind_from_name(name: str) -> str | None:
+    """Infer which runtime tool one bootstrap archive provides."""
+
+    if name.startswith("node-v"):
+        return "node"
+    if name.startswith("uv-"):
+        return "uv"
+    if name.startswith(f"ripgrep-{RIPGREP_VERSION}-"):
+        return "ripgrep"
+    if name.startswith(("PortableGit-", "MinGit-")):
+        return "git"
+    return None
+
+
+def required_tool_kinds_for_target(platform: str, arch: str) -> set[str]:
+    """Return runtime tool kinds that must be bundled for one release target."""
+
+    normalized_platform = "macos" if platform == "darwin" else platform
+    if normalized_platform == "windows":
+        node_archive_name = f"node-v22.0.0-win-{arch}.zip"
+    else:
+        node_os = "darwin" if normalized_platform == "macos" else normalized_platform
+        node_archive_name = f"node-v22.0.0-{node_os}-{arch}.tar.gz"
+    specs = archive_specs_for_target(normalized_platform, arch, node_archive_name)
+    return {kind for spec in specs if (kind := archive_tool_kind_from_name(spec.name)) is not None}
+
+
 def prepared_archive_record(platform: str, arch: str, spec: ArchiveSpec, path: Path) -> PreparedArchive:
     """Build manifest metadata for one downloaded archive."""
 
@@ -325,6 +352,7 @@ def validate_manifest(
         raise RuntimeError("bootstrap tools manifest has no archives")
 
     seen_names: set[str] = set()
+    seen_tool_kinds: set[str] = set()
     for archive in archives:
         name = archive.get("name")
         if not isinstance(name, str) or not name:
@@ -349,6 +377,9 @@ def validate_manifest(
         target = archive_target_from_name(name)
         if target is not None and target != (platform, arch):
             raise RuntimeError(f"manifest archive target mismatch: {name}")
+        tool_kind = archive_tool_kind_from_name(name)
+        if tool_kind is not None:
+            seen_tool_kinds.add(tool_kind)
         url = archive.get("url")
         if not isinstance(url, str) or not url:
             raise RuntimeError(f"manifest archive is missing url: {name}")
@@ -373,6 +404,12 @@ def validate_manifest(
             raise RuntimeError(
                 f"archive checksum mismatch for {name}: expected {expected_sha256}, got {actual_sha256}"
             )
+    if expected_platform is not None and expected_arch is not None:
+        missing_kinds = sorted(
+            required_tool_kinds_for_target(expected_platform, expected_arch) - seen_tool_kinds
+        )
+        if missing_kinds:
+            raise RuntimeError(f"missing required bootstrap tool archive: {', '.join(missing_kinds)}")
     return len(archives)
 
 

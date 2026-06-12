@@ -132,6 +132,22 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported Unix uv platform"):
             module.archive_specs_for_target("linux", "x86", "node-v22.19.1-linux-x86.tar.gz")
 
+    def test_required_tool_kinds_match_release_targets(self):
+        module = _load_script_module()
+
+        self.assertEqual(
+            module.required_tool_kinds_for_target("windows", "x64"),
+            {"git", "node", "ripgrep", "uv"},
+        )
+        self.assertEqual(
+            module.required_tool_kinds_for_target("linux", "x64"),
+            {"node", "ripgrep", "uv"},
+        )
+        self.assertEqual(
+            module.required_tool_kinds_for_target("macos", "arm64"),
+            {"node", "ripgrep", "uv"},
+        )
+
     def test_manifest_records_archive_platform_size_and_sha256(self):
         module = _load_script_module()
         root = Path("tmp-bootstrap-tools-test")
@@ -391,6 +407,28 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                 archive.unlink()
             if manifest.exists():
                 manifest.unlink()
+            output_dir.rmdir()
+            root.rmdir()
+
+    def test_validate_manifest_requires_all_release_tool_kinds(self):
+        module = _load_script_module()
+        root = Path("tmp-bootstrap-tools-required-test")
+        output_dir = root / "bootstrap-tools"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            prepared = []
+            for spec in module.archive_specs_for_arch("x64", "node-v22.19.0-win-x64.zip")[:-1]:
+                archive = output_dir / spec.name
+                archive.write_bytes(spec.name.encode("utf-8"))
+                prepared.append(module.prepared_archive_record("windows", "x64", spec, archive))
+            module.write_manifest(output_dir, prepared)
+
+            with self.assertRaisesRegex(RuntimeError, "missing required bootstrap tool archive: git"):
+                module.validate_manifest(output_dir, expected_platform="windows", expected_arch="x64")
+        finally:
+            for entry in output_dir.iterdir():
+                entry.unlink()
             output_dir.rmdir()
             root.rmdir()
 
