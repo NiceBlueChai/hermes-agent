@@ -574,6 +574,8 @@ language-specific setup where needed.
   and SHA-256, while falling back to the existing `uv.lock` and PyPI tiers on any mismatch or install failure.
 - Direct `install.ps1` and `install.sh` platform SDK recovery now also tries the same validated local wheelhouse before
   network pip, reducing follow-up SDK downloads for token-enabled messaging platforms without removing pip fallback.
+- Direct `install.ps1 --ensure browser` and `install.sh --ensure browser` now use Hermes-owned npm and browser cache
+  directories, matching the native bootstrap cache layout for post-install browser dependency repair.
 - The validate-only gate now also requires every archive record to retain its download URL, keeping the packaged
   runtime archive update path auditable alongside size and SHA-256.
 - Archive URLs in the retained bootstrap-tools manifest must be HTTPS, so release review cannot accidentally accept an

@@ -2462,8 +2462,14 @@ ensure_browser() {
 
     log_info "Installing agent-browser..."
     local log_file
+    local npm_cache_dir browser_cache_dir
+    npm_cache_dir="$HERMES_HOME/npm-cache"
+    browser_cache_dir="$HERMES_HOME/playwright-browsers"
+    mkdir -p "$npm_cache_dir" "$browser_cache_dir"
     log_file="$(mktemp)"
-    if ! "$npm_bin" install -g --prefix "$HERMES_HOME/node" --silent --ignore-scripts \
+    if ! npm_config_cache="$HERMES_HOME/npm-cache" \
+        PLAYWRIGHT_BROWSERS_PATH="$HERMES_HOME/playwright-browsers" \
+        "$npm_bin" install -g --prefix "$HERMES_HOME/node" --silent --ignore-scripts \
         "agent-browser@^0.26.0" \
         "@askjo/camofox-browser@^1.5.2" \
         >"$log_file" 2>&1; then
@@ -2486,7 +2492,8 @@ ensure_browser() {
     log_info "Installing Chromium via agent-browser install..."
     local ab_bin="$HERMES_HOME/node/bin/agent-browser"
     if [ -x "$ab_bin" ]; then
-        "$ab_bin" install 2>/dev/null || {
+        PLAYWRIGHT_BROWSERS_PATH="$HERMES_HOME/playwright-browsers" \
+            "$ab_bin" install 2>/dev/null || {
             log_warn "Chromium install failed. Browser tools may not work without a system browser."
 
             # OS-specific hints (detect_os sets $DISTRO)

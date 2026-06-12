@@ -37,6 +37,16 @@ def test_install_script_persists_system_browser_for_agent_browser() -> None:
     assert "AGENT_BROWSER_EXECUTABLE_PATH=$browser_path" in text
 
 
+def test_ensure_browser_uses_hermes_managed_caches() -> None:
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    ps_text = (REPO_ROOT / "scripts" / "install.ps1").read_text(encoding="utf-8")
+
+    assert 'npm_config_cache="$HERMES_HOME/npm-cache"' in text
+    assert 'PLAYWRIGHT_BROWSERS_PATH="$HERMES_HOME/playwright-browsers"' in text
+    assert '$env:npm_config_cache = Join-Path $HermesHome "npm-cache"' in ps_text
+    assert '$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $HermesHome "playwright-browsers"' in ps_text
+
+
 def test_playwright_installs_are_timeout_guarded() -> None:
     text = INSTALL_SH.read_text(encoding="utf-8")
 

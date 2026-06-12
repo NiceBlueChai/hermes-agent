@@ -280,6 +280,12 @@ function Install-AgentBrowser {
     if (-not (Test-Path $prefixDir)) {
         New-Item -ItemType Directory -Path $prefixDir -Force | Out-Null
     }
+    $npmCacheDir = Join-Path $HermesHome "npm-cache"
+    $browserCacheDir = Join-Path $HermesHome "playwright-browsers"
+    New-Item -ItemType Directory -Path $npmCacheDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $browserCacheDir -Force | Out-Null
+    $env:npm_config_cache = Join-Path $HermesHome "npm-cache"
+    $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $HermesHome "playwright-browsers"
     $npmLog = [System.IO.Path]::GetTempFileName()
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
