@@ -257,11 +257,13 @@ pub struct PlatformSdkStagePlan {
     pub uv: Option<PathBuf>,
     pub pip_cache_dir: PathBuf,
     pub uv_cache_dir: PathBuf,
+    pub wheelhouse_dir: Option<PathBuf>,
     pub requirements: Vec<PlatformSdkRequirement>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlatformSdkInstallCommandPlan {
+    method: &'static str,
     program: PathBuf,
     args: Vec<String>,
     env: Vec<(String, PathBuf)>,
@@ -641,11 +643,14 @@ pub fn platform_sdk_stage_plan(
     let path_env = std::env::var_os("PATH").unwrap_or_default();
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
     let uv = uv_tool_path(hermes_home, path_env, &pathext).ok();
+    let checkout_wheelhouse = install_root.join("resources").join("wheelhouse");
+    let wheelhouse_dir = wheelhouse_has_wheels(&checkout_wheelhouse).then_some(checkout_wheelhouse);
     Ok(PlatformSdkStagePlan {
         python,
         uv,
         pip_cache_dir: hermes_home.join("pip-cache"),
         uv_cache_dir: hermes_home.join("uv-cache"),
+        wheelhouse_dir,
         requirements,
     })
 }
@@ -668,6 +673,7 @@ pub fn install_platform_sdks_stage(
             "uv": plan.uv,
             "pipCacheDir": plan.pip_cache_dir,
             "uvCacheDir": plan.uv_cache_dir,
+            "wheelhouseDir": plan.wheelhouse_dir,
             "checked": plan.requirements.len(),
             "installed": [],
         }));
@@ -685,6 +691,7 @@ pub fn install_platform_sdks_stage(
         "uv": plan.uv,
         "pipCacheDir": plan.pip_cache_dir,
         "uvCacheDir": plan.uv_cache_dir,
+        "wheelhouseDir": plan.wheelhouse_dir,
         "checked": plan.requirements.len(),
         "installed": missing.iter().map(|sdk| sdk.pip_spec).collect::<Vec<_>>(),
         "installMethods": installed_methods,
@@ -802,16 +809,24 @@ fn install_platform_sdk_requirement(
 ) -> Result<&'static str> {
     let commands = platform_sdk_install_commands(plan, sdk);
     let mut errors = Vec::new();
-    match ensure_pip_available(&plan.python) {
-        Ok(()) => match run_platform_sdk_install_command(&commands[0]) {
-            Ok(()) => return Ok("pip"),
-            Err(err) => errors.push(err.to_string()),
-        },
-        Err(err) => errors.push(err.to_string()),
-    }
-    for command in commands.iter().skip(1) {
+    let mut pip_checked = false;
+    let mut pip_ready = false;
+    for command in &commands {
+        if command.method != "uv" && !pip_checked {
+            pip_checked = true;
+            match ensure_pip_available(&plan.python) {
+                Ok(()) => pip_ready = true,
+                Err(err) => {
+                    errors.push(err.to_string());
+                    continue;
+                }
+            }
+        }
+        if command.method != "uv" && !pip_ready {
+            continue;
+        }
         match run_platform_sdk_install_command(command) {
-            Ok(()) => return Ok("uv"),
+            Ok(()) => return Ok(command.method),
             Err(err) => errors.push(err.to_string()),
         }
     }
@@ -826,7 +841,25 @@ fn platform_sdk_install_commands(
     plan: &PlatformSdkStagePlan,
     sdk: PlatformSdkRequirement,
 ) -> Vec<PlatformSdkInstallCommandPlan> {
-    let mut commands = vec![PlatformSdkInstallCommandPlan {
+    let mut commands = Vec::new();
+    if let Some(wheelhouse) = &plan.wheelhouse_dir {
+        commands.push(PlatformSdkInstallCommandPlan {
+            method: "wheelhouse",
+            program: plan.python.clone(),
+            args: vec![
+                "-m".to_string(),
+                "pip".to_string(),
+                "install".to_string(),
+                "--no-index".to_string(),
+                "--find-links".to_string(),
+                wheelhouse.display().to_string(),
+                sdk.pip_spec.to_string(),
+            ],
+            env: vec![("PIP_CACHE_DIR".to_string(), plan.pip_cache_dir.clone())],
+        });
+    }
+    commands.push(PlatformSdkInstallCommandPlan {
+        method: "pip",
         program: plan.python.clone(),
         args: vec![
             "-m".to_string(),
@@ -835,9 +868,10 @@ fn platform_sdk_install_commands(
             sdk.pip_spec.to_string(),
         ],
         env: vec![("PIP_CACHE_DIR".to_string(), plan.pip_cache_dir.clone())],
-    }];
+    });
     if let Some(uv) = &plan.uv {
         commands.push(PlatformSdkInstallCommandPlan {
+            method: "uv",
             program: uv.clone(),
             args: vec![
                 "pip".to_string(),
@@ -7480,8 +7514,11 @@ mod tests {
         let hermes_home = root.join("home");
         let install_root = hermes_home.join("hermes-agent");
         let venv_python = venv_python_path(&install_root.join("venv"));
+        let wheelhouse = install_root.join("resources").join("wheelhouse");
         std::fs::create_dir_all(venv_python.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&wheelhouse).unwrap();
         std::fs::write(&venv_python, b"python").unwrap();
+        std::fs::write(wheelhouse.join("demo-0.1-py3-none-any.whl"), b"wheel").unwrap();
         std::fs::create_dir_all(&hermes_home).unwrap();
         std::fs::write(hermes_home.join(".env"), "WHATSAPP_ENABLED=true\n").unwrap();
 
@@ -7489,6 +7526,7 @@ mod tests {
 
         assert_eq!(plan.python, venv_python);
         assert_eq!(plan.pip_cache_dir, hermes_home.join("pip-cache"));
+        assert_eq!(plan.wheelhouse_dir, Some(wheelhouse));
         assert_eq!(plan.requirements.len(), 1);
         assert_eq!(plan.requirements[0].import_name, "qrcode");
         assert_eq!(plan.requirements[0].pip_spec, "qrcode>=7.0,<8");
@@ -7503,6 +7541,7 @@ mod tests {
             uv: Some(PathBuf::from("/opt/hermes/bin/uv")),
             pip_cache_dir: PathBuf::from("/opt/hermes/pip-cache"),
             uv_cache_dir: PathBuf::from("/opt/hermes/uv-cache"),
+            wheelhouse_dir: Some(PathBuf::from("/opt/hermes/hermes-agent/resources/wheelhouse")),
             requirements: Vec::new(),
         };
         let sdk = PlatformSdkRequirement {
@@ -7513,19 +7552,39 @@ mod tests {
 
         let commands = platform_sdk_install_commands(&plan, sdk);
 
-        assert_eq!(commands.len(), 2);
+        assert_eq!(commands.len(), 3);
+        assert_eq!(commands[0].method, "wheelhouse");
         assert_eq!(commands[0].program, plan.python);
         assert_eq!(
             commands[0].args,
-            vec!["-m", "pip", "install", "slack-sdk>=3.27.0,<4"]
+            vec![
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                "--find-links",
+                "/opt/hermes/hermes-agent/resources/wheelhouse",
+                "slack-sdk>=3.27.0,<4",
+            ]
         );
         assert_eq!(
             commands[0].env,
             vec![("PIP_CACHE_DIR".to_string(), PathBuf::from("/opt/hermes/pip-cache"))]
         );
-        assert_eq!(commands[1].program, PathBuf::from("/opt/hermes/bin/uv"));
+        assert_eq!(commands[1].method, "pip");
+        assert_eq!(commands[1].program, plan.python);
         assert_eq!(
             commands[1].args,
+            vec!["-m", "pip", "install", "slack-sdk>=3.27.0,<4"]
+        );
+        assert_eq!(
+            commands[1].env,
+            vec![("PIP_CACHE_DIR".to_string(), PathBuf::from("/opt/hermes/pip-cache"))]
+        );
+        assert_eq!(commands[2].method, "uv");
+        assert_eq!(commands[2].program, PathBuf::from("/opt/hermes/bin/uv"));
+        assert_eq!(
+            commands[2].args,
             vec![
                 "pip",
                 "install",
@@ -7535,7 +7594,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            commands[1].env,
+            commands[2].env,
             vec![("UV_CACHE_DIR".to_string(), PathBuf::from("/opt/hermes/uv-cache"))]
         );
     }

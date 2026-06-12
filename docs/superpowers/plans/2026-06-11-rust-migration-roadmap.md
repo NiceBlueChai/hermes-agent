@@ -270,6 +270,8 @@ language-specific setup where needed.
   and uv's install cache under Hermes-managed repair/uninstall roots instead of the user's global uv cache.
 - Native messaging-platform SDK recovery now sets `PIP_CACHE_DIR=$HERMES_HOME/pip-cache` when installing missing SDKs
   into the Hermes venv, keeping pip's recovery cache out of the user's global pip cache.
+- Native messaging-platform SDK recovery now also tries the repository-local `resources/wheelhouse/` before network
+  pip/uv recovery when the wheelhouse manifest is valid for the current platform and architecture.
 - Native messaging-platform SDK recovery now ignores disabled token values such as `false`, `0`, `no`, `off`,
   `none`, and `null`, avoiding unnecessary SDK installs when a platform is explicitly disabled.
 - Native npm, Playwright, TUI, and desktop build commands now set `npm_config_cache=$HERMES_HOME/npm-cache`, keeping
