@@ -6723,6 +6723,29 @@ mod tests {
     }
 
     #[test]
+    fn native_bootstrap_manifests_have_no_script_only_release_stages() {
+        for (kind, include_desktop) in [
+            (crate::install_script::ScriptKind::Ps1, false),
+            (crate::install_script::ScriptKind::Ps1, true),
+            (crate::install_script::ScriptKind::Sh, false),
+            (crate::install_script::ScriptKind::Sh, true),
+        ] {
+            let manifest = native_bootstrap_manifest(kind, include_desktop);
+            let plan = build_stage_plan(&manifest.stages, include_desktop);
+            let script_only = plan
+                .iter()
+                .filter(|stage| stage.execution == StageExecutionMode::Script)
+                .map(|stage| stage.name.as_str())
+                .collect::<Vec<_>>();
+
+            assert!(
+                script_only.is_empty(),
+                "{kind:?} include_desktop={include_desktop} has script-only stages: {script_only:?}"
+            );
+        }
+    }
+
+    #[test]
     fn interactive_stage_skip_result_only_skips_user_input_stages() {
         let setup = stage_info("setup", "Configure API keys and settings", "configuration", true);
         let path = stage_info("path", "Install hermes command", "runtime", false);

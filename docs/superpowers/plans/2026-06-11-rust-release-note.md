@@ -107,6 +107,7 @@ User-visible behavior:
 - Release helper validation uses the same blank/padded archive-name rule before uploading bootstrap-tool resources.
 - Python wheelhouse validation now rejects blank or padded wheel names in both release helper and Rust runtime checks.
 - Built-installer self-check now applies the same plain-file name guard to bootstrap-tools and wheelhouse resources.
+- Native bootstrap manifest tests now guard against reintroducing pure script-only stages in release manifests.
 
 Compatibility and fallback:
 
