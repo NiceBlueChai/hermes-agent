@@ -135,6 +135,23 @@ pub fn managed_runtime_files(hermes_home: &std::path::Path) -> Vec<PathBuf> {
     ]
 }
 
+/// Source-built desktop GUI directories that can be regenerated on demand.
+pub fn source_gui_build_roots(hermes_home: &std::path::Path) -> Vec<PathBuf> {
+    let agent_root = agent_root(hermes_home);
+    let desktop_dir = agent_root.join("apps").join("desktop");
+    vec![
+        desktop_dir.join("dist"),
+        desktop_dir.join("release"),
+        desktop_dir.join("node_modules"),
+        agent_root.join("node_modules"),
+    ]
+}
+
+/// Source-built desktop GUI files that can be regenerated on demand.
+pub fn source_gui_build_files(hermes_home: &std::path::Path) -> Vec<PathBuf> {
+    vec![hermes_home.join("desktop-build-stamp.json")]
+}
+
 /// Manager metadata directory.
 pub fn manager_state_dir(hermes_home: &std::path::Path) -> PathBuf {
     hermes_home.join("manager")
@@ -197,6 +214,25 @@ mod tests {
                 PathBuf::from("/tmp/hermes").join(installer_name),
                 PathBuf::from("/tmp/hermes/desktop-build-stamp.json"),
             ]
+        );
+    }
+
+    #[test]
+    fn source_gui_build_artifacts_are_under_hermes_home() {
+        let home = PathBuf::from("/tmp/hermes");
+
+        assert_eq!(
+            source_gui_build_roots(&home),
+            vec![
+                PathBuf::from("/tmp/hermes/hermes-agent/apps/desktop/dist"),
+                PathBuf::from("/tmp/hermes/hermes-agent/apps/desktop/release"),
+                PathBuf::from("/tmp/hermes/hermes-agent/apps/desktop/node_modules"),
+                PathBuf::from("/tmp/hermes/hermes-agent/node_modules"),
+            ]
+        );
+        assert_eq!(
+            source_gui_build_files(&home),
+            vec![PathBuf::from("/tmp/hermes/desktop-build-stamp.json")]
         );
     }
 

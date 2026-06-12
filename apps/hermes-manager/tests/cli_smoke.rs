@@ -48,6 +48,19 @@ fn create_runtime_files(hermes_home: &Path) -> Vec<PathBuf> {
     paths
 }
 
+fn create_source_gui_build_artifacts(hermes_home: &Path) -> Vec<PathBuf> {
+    let mut paths = hermes_manager::paths::source_gui_build_roots(hermes_home);
+    paths.extend(hermes_manager::paths::source_gui_build_files(hermes_home));
+    for path in &paths {
+        if path.extension().is_some() {
+            fs::write(path, "managed").expect("runtime file should be created");
+        } else {
+            fs::create_dir_all(path).expect("runtime dir should be created");
+        }
+    }
+    paths
+}
+
 #[test]
 fn cli_smoke_manages_runtime_metadata_repair_and_lite_uninstall() {
     let temp = tempfile::tempdir().expect("tempdir should be created");
@@ -124,6 +137,54 @@ fn cli_smoke_manages_runtime_metadata_repair_and_lite_uninstall() {
     for path in repaired_runtime_files {
         assert!(!path.exists(), "{} should be removed", path.display());
     }
+    assert!(user_config.exists());
+}
+
+#[test]
+fn cli_smoke_uninstall_gui_build_cleans_source_artifacts_only() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let agent_root = hermes_manager::paths::agent_root(&hermes_home);
+    let package_source = agent_root.join("hermes_cli").join("__init__.py");
+    let user_config = hermes_home.join("config.yaml");
+    fs::create_dir_all(package_source.parent().unwrap()).expect("package source should exist");
+    fs::write(&package_source, "").expect("package source should be written");
+    fs::write(&user_config, "model: test").expect("user config should be created");
+    let artifacts = create_source_gui_build_artifacts(&hermes_home);
+    let hermes_home_text = hermes_home.display().to_string();
+
+    let dry_run_out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "uninstall-gui-build",
+        "--dry-run",
+    ]);
+    let dry_run: serde_json::Value =
+        serde_json::from_str(&dry_run_out).expect("dry-run output should be json");
+    assert_eq!(dry_run["command"], "uninstall-gui-build");
+    assert_eq!(dry_run["dryRun"], true);
+    assert_eq!(
+        dry_run["paths"]
+            .as_array()
+            .expect("paths should be array")
+            .len(),
+        artifacts.len()
+    );
+
+    let uninstall_out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "uninstall-gui-build",
+    ]);
+    let uninstall: serde_json::Value =
+        serde_json::from_str(&uninstall_out).expect("uninstall output should be json");
+    assert_eq!(uninstall["command"], "uninstall-gui-build");
+    for path in artifacts {
+        assert!(!path.exists(), "{} should be removed", path.display());
+    }
+    assert!(package_source.exists());
     assert!(user_config.exists());
 }
 

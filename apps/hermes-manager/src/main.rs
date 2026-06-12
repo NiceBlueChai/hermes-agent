@@ -49,6 +49,12 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Remove source-built desktop GUI artifacts while preserving the agent.
+    UninstallGuiBuild {
+        /// Report paths that would be removed without deleting them.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Plan PATH changes needed to expose the Hermes command.
     PlanPath {
         /// Override install root; defaults to HERMES_HOME/hermes-agent.
@@ -258,6 +264,27 @@ fn run() -> hermes_manager::Result<()> {
                     println!("{prefix}={path}");
                 }
                 println!("repair_clean=ok");
+            }
+        }
+        Command::UninstallGuiBuild { dry_run } => {
+            let paths = if dry_run {
+                hermes_manager::commands::uninstall_gui_build_plan(&home)?
+            } else {
+                hermes_manager::commands::uninstall_gui_build(&home)?
+            };
+            if cli.json {
+                print_json_report(CommandReport {
+                    ok: true,
+                    command: "uninstall-gui-build",
+                    dry_run,
+                    paths,
+                })?;
+            } else {
+                let prefix = if dry_run { "would_remove" } else { "removed" };
+                for path in paths {
+                    println!("{prefix}={path}");
+                }
+                println!("uninstall_gui_build=ok");
             }
         }
         Command::PlanPath {
@@ -522,6 +549,17 @@ mod tests {
         match cli.command {
             Command::UninstallLite { shortcuts, .. } => assert!(shortcuts),
             _ => panic!("expected uninstall-lite command"),
+        }
+    }
+
+    #[test]
+    fn uninstall_gui_build_parses_dry_run_flag() {
+        let cli = Cli::try_parse_from(["hermes-manager", "uninstall-gui-build", "--dry-run"])
+            .expect("GUI build cleanup flag should parse");
+
+        match cli.command {
+            Command::UninstallGuiBuild { dry_run } => assert!(dry_run),
+            _ => panic!("expected uninstall-gui-build command"),
         }
     }
 

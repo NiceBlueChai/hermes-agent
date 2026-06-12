@@ -101,6 +101,44 @@ pub fn uninstall_lite_plan(hermes_home: &Path) -> Result<Vec<String>> {
     Ok(planned)
 }
 
+/// Remove source-built desktop GUI artifacts while preserving the agent.
+pub fn uninstall_gui_build(hermes_home: &Path) -> Result<Vec<String>> {
+    let mut removed = Vec::new();
+    for root in paths::source_gui_build_roots(hermes_home) {
+        ensure_safe_to_delete(hermes_home, &root)?;
+        if root.exists() {
+            fs::remove_dir_all(&root).map_err(|err| ManagerError::io(&root, err))?;
+            removed.push(root.display().to_string());
+        }
+    }
+    for file in paths::source_gui_build_files(hermes_home) {
+        ensure_safe_to_delete(hermes_home, &file)?;
+        if file.exists() {
+            fs::remove_file(&file).map_err(|err| ManagerError::io(&file, err))?;
+            removed.push(file.display().to_string());
+        }
+    }
+    Ok(removed)
+}
+
+/// Report source-built desktop GUI artifacts that would be removed.
+pub fn uninstall_gui_build_plan(hermes_home: &Path) -> Result<Vec<String>> {
+    let mut planned = Vec::new();
+    for root in paths::source_gui_build_roots(hermes_home) {
+        ensure_safe_to_delete(hermes_home, &root)?;
+        if root.exists() {
+            planned.push(root.display().to_string());
+        }
+    }
+    for file in paths::source_gui_build_files(hermes_home) {
+        ensure_safe_to_delete(hermes_home, &file)?;
+        if file.exists() {
+            planned.push(file.display().to_string());
+        }
+    }
+    Ok(planned)
+}
+
 fn read_installed_manifest_or_default(
     hermes_home: &Path,
     manifest_path: &Path,
@@ -567,6 +605,80 @@ mod tests {
             ]
         );
         assert!(!paths.contains(&user_config));
+    }
+
+    #[test]
+    fn uninstall_gui_build_plan_reports_existing_artifacts() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let hermes_home = dir.path().join("hermes");
+        let agent_root = paths::agent_root(&hermes_home);
+        let desktop_dir = agent_root.join("apps").join("desktop");
+        let dist_dir = desktop_dir.join("dist");
+        let release_dir = desktop_dir.join("release");
+        let stamp = hermes_home.join("desktop-build-stamp.json");
+        fs::create_dir_all(&dist_dir).expect("dist should be created");
+        fs::create_dir_all(&release_dir).expect("release should be created");
+        fs::write(&stamp, "{}").expect("desktop stamp should be created");
+
+        let planned = super::uninstall_gui_build_plan(&hermes_home)
+            .expect("GUI build cleanup should be planned");
+
+        assert_eq!(
+            planned,
+            vec![
+                dist_dir.display().to_string(),
+                release_dir.display().to_string(),
+                stamp.display().to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn uninstall_gui_build_removes_only_desktop_build_artifacts() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let hermes_home = dir.path().join("hermes");
+        let agent_root = paths::agent_root(&hermes_home);
+        let desktop_dir = agent_root.join("apps").join("desktop");
+        let dist_dir = desktop_dir.join("dist");
+        let release_dir = desktop_dir.join("release");
+        let desktop_node_modules = desktop_dir.join("node_modules");
+        let workspace_node_modules = agent_root.join("node_modules");
+        let package_source = agent_root.join("hermes_cli").join("__init__.py");
+        let venv_dir = agent_root.join("venv");
+        let config = hermes_home.join("config.yaml");
+        let sessions = hermes_home.join("sessions");
+        let stamp = hermes_home.join("desktop-build-stamp.json");
+        fs::create_dir_all(&dist_dir).expect("dist should be created");
+        fs::create_dir_all(&release_dir).expect("release should be created");
+        fs::create_dir_all(&desktop_node_modules).expect("desktop node_modules should be created");
+        fs::create_dir_all(&workspace_node_modules)
+            .expect("workspace node_modules should be created");
+        fs::create_dir_all(package_source.parent().unwrap())
+            .expect("package source should be created");
+        fs::create_dir_all(&venv_dir).expect("venv should be created");
+        fs::create_dir_all(&sessions).expect("sessions should be created");
+        fs::write(&package_source, "").expect("package source should be written");
+        fs::write(&config, "model: test").expect("config should be written");
+        fs::write(&stamp, "{}").expect("desktop stamp should be created");
+
+        let removed = super::uninstall_gui_build(&hermes_home)
+            .expect("GUI build artifacts should be removed");
+
+        assert!(removed.contains(&dist_dir.display().to_string()));
+        assert!(removed.contains(&release_dir.display().to_string()));
+        assert!(removed.contains(&desktop_node_modules.display().to_string()));
+        assert!(removed.contains(&workspace_node_modules.display().to_string()));
+        assert!(removed.contains(&stamp.display().to_string()));
+        assert!(!dist_dir.exists());
+        assert!(!release_dir.exists());
+        assert!(!desktop_node_modules.exists());
+        assert!(!workspace_node_modules.exists());
+        assert!(!stamp.exists());
+        assert!(desktop_dir.exists());
+        assert!(package_source.exists());
+        assert!(venv_dir.exists());
+        assert!(config.exists());
+        assert!(sessions.exists());
     }
 
     #[test]
