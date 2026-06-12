@@ -2551,12 +2551,18 @@ fn wheelhouse_manifest_is_valid(path: &Path) -> bool {
         if !matches!(wheel.platform.as_deref(), Some("windows" | "linux" | "macos")) {
             return false;
         }
+        if wheel.platform.as_deref() != Some(current_wheelhouse_platform()) {
+            return false;
+        }
         if wheel
             .arch
             .as_deref()
             .map(|value| value.trim().is_empty())
             .unwrap_or(true)
         {
+            return false;
+        }
+        if wheel.arch.as_deref() != current_wheelhouse_arch() {
             return false;
         }
         if wheel
@@ -2591,6 +2597,24 @@ fn wheelhouse_manifest_is_valid(path: &Path) -> bool {
         }
     }
     true
+}
+
+fn current_wheelhouse_platform() -> &'static str {
+    match std::env::consts::OS {
+        "windows" => "windows",
+        "linux" => "linux",
+        "macos" => "macos",
+        _ => "unsupported",
+    }
+}
+
+fn current_wheelhouse_arch() -> Option<&'static str> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some("x64"),
+        "aarch64" | "arm64" => Some("arm64"),
+        "x86" | "i686" => Some("x86"),
+        _ => None,
+    }
 }
 
 fn wheel_name_is_plain_file(name: &str) -> bool {
@@ -7857,6 +7881,56 @@ mod tests {
   ]
 }
 "#,
+        )
+        .unwrap();
+        std::fs::write(root.join("pyproject.toml"), b"").unwrap();
+
+        let tiers = python_dependency_install_tiers_for_cwd_with_wheelhouse(&root, None);
+
+        assert_eq!(tiers[0].name, "hash-verified (uv.lock)");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn python_dependency_install_tiers_skip_wrong_target_wheelhouse() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-wheelhouse-target-tier-{}",
+            std::process::id()
+        ));
+        let wheelhouse = root.join("resources").join("wheelhouse");
+        std::fs::create_dir_all(&wheelhouse).unwrap();
+        let wheel = wheelhouse.join("demo-0.1-py3-none-any.whl");
+        std::fs::write(&wheel, b"wheel").unwrap();
+        let wrong_platform = if cfg!(target_os = "windows") {
+            "linux"
+        } else {
+            "windows"
+        };
+        let wrong_arch = if cfg!(target_arch = "x86_64") {
+            "arm64"
+        } else {
+            "x64"
+        };
+        std::fs::write(
+            wheelhouse.join("wheelhouse-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "wheels": [
+    {{
+      "arch": "{wrong_arch}",
+      "platform": "{wrong_platform}",
+      "python": "cp311",
+      "name": "demo-0.1-py3-none-any.whl",
+      "sizeBytes": 5,
+      "sha256": "{}"
+    }}
+  ]
+}}
+"#,
+                crate::artifact::sha256_hex(b"wheel")
+            ),
         )
         .unwrap();
         std::fs::write(root.join("pyproject.toml"), b"").unwrap();

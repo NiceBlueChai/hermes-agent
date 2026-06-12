@@ -555,6 +555,8 @@ language-specific setup where needed.
   every wheel checksum, and unmanifested payloads before release artifacts are accepted.
 - Runtime Python dependency planning now trusts a local wheelhouse manifest when present and skips the offline
   wheelhouse tier if any listed wheel size or SHA-256 does not match, while preserving manifestless dev wheelhouses.
+- Runtime Python dependency planning now also requires wheelhouse manifest platform and architecture labels to match
+  the current installer target before trying the offline tier.
 - Release installer self-check and artifact validators now accept expected `bootstrap-tools` and wheelhouse platform
   and architecture labels, rejecting mismatched runtime archive or Python wheelhouse payloads before upload.
 - The validate-only gate now also requires every archive record to retain its download URL, keeping the packaged
