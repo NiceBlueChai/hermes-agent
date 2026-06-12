@@ -3296,6 +3296,7 @@ pub fn install_node_dependencies_stage(
     let mut playwright_system_deps = "skipped".to_string();
     let mut playwright_system_commands = Vec::new();
     let mut playwright_system_failures = Vec::new();
+    let mut optional_node_failures = Vec::new();
     if plan.browser_tools {
         run_node_dependency_command(
             &plan.npm,
@@ -3341,14 +3342,15 @@ pub fn install_node_dependencies_stage(
         }
     }
     if let Some(tui_dir) = &plan.tui_dir {
-        run_node_dependency_command(
+        if let Some(failure) = run_optional_node_dependency_command(
             &plan.npm,
             ["install", "--silent"],
             tui_dir,
             &plan.npm_cache_dir,
             Some(&plan.playwright_browsers_dir),
-        )
-            .context("installing TUI Node dependencies")?;
+        ) {
+            optional_node_failures.push(format!("TUI npm install failed: {failure}"));
+        }
     }
     Ok(serde_json::json!({
         "npm": plan.npm,
@@ -3358,6 +3360,7 @@ pub fn install_node_dependencies_stage(
         "playwrightSystemDeps": playwright_system_deps,
         "playwrightSystemCommands": playwright_system_commands,
         "playwrightSystemFailures": playwright_system_failures,
+        "optionalNodeFailures": optional_node_failures,
         "browserTools": plan.browser_tools,
         "tui": plan.tui_dir.is_some(),
     }))
@@ -4775,6 +4778,18 @@ fn run_node_dependency_command<const N: usize>(
         npm_cache_dir,
         playwright_browsers_dir,
     )
+}
+
+fn run_optional_node_dependency_command<const N: usize>(
+    command: &Path,
+    args: [&str; N],
+    cwd: &Path,
+    npm_cache_dir: &Path,
+    playwright_browsers_dir: Option<&Path>,
+) -> Option<String> {
+    run_node_dependency_command(command, args, cwd, npm_cache_dir, playwright_browsers_dir)
+        .err()
+        .map(|err| err.to_string())
 }
 
 fn run_node_dependency_command_args(
@@ -6858,6 +6873,39 @@ mod tests {
             std::fs::read_to_string(&browser_output).unwrap().trim(),
             browsers.display().to_string()
         );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn optional_node_dependency_command_reports_failure_without_error() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-optional-node-failure-test-{}",
+            std::process::id()
+        ));
+        let cwd = root.join("checkout");
+        let cache = root.join("npm-cache");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::create_dir_all(&cache).unwrap();
+
+        let command = if cfg!(target_os = "windows") {
+            let command = root.join("fake-npm-failure.cmd");
+            std::fs::write(&command, "@echo off\r\necho tui failed 1>&2\r\nexit /b 5\r\n")
+                .unwrap();
+            command
+        } else {
+            let command = root.join("fake-npm-failure.sh");
+            std::fs::write(&command, "#!/usr/bin/env sh\necho tui failed >&2\nexit 5\n")
+                .unwrap();
+            make_executable(&command).unwrap();
+            command
+        };
+
+        let failure =
+            run_optional_node_dependency_command(&command, ["install", "--silent"], &cwd, &cache, None)
+                .expect("optional npm failure should be reported");
+
+        assert!(failure.contains("tui failed"));
 
         let _ = std::fs::remove_dir_all(&root);
     }

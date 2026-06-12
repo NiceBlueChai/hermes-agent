@@ -305,6 +305,8 @@ language-specific setup where needed.
   dependencies, while preserving the PowerShell stage as fallback for missing `npx` or failed npm/Playwright commands.
 - Rust npm command failures now capture npm output and add a managed-cache permission diagnostic for EACCES/EPERM-style
   failures, pointing users at Hermes-owned npm cache and `node_modules` paths instead of relying on script-only hints.
+- Native `node-deps` now records optional TUI npm install failures without invoking script fallback for a path that the
+  install scripts already treat as warning-only.
 - macOS `node-deps` now uses the same Rust native-first npm/Playwright/TUI dependency path as Windows, while Linux
   now uses the same native-first path; Linux keeps script fallback for failed npm/Playwright commands and for RPM,
   zypper, or unknown distribution Playwright system-library recovery.
