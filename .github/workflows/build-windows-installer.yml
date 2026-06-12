@@ -120,6 +120,7 @@ jobs:
           .\apps\bootstrap-installer\src-tauri\target\release\Hermes-Setup.exe --self-check
           --self-check-expect-commit "${{ github.sha }}"
           --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
+          --self-check-bootstrap-tools-platform windows
           --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse
           --self-check-wheelhouse-platform windows
 

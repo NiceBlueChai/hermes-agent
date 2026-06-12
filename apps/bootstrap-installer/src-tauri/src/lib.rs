@@ -90,6 +90,7 @@ pub fn bootstrap_self_check_report(
     commit: Option<&str>,
     branch: Option<&str>,
     bootstrap_tools_dir: Option<&Path>,
+    bootstrap_tools_platform: Option<&str>,
     wheelhouse_dir: Option<&Path>,
     wheelhouse_platform: Option<&str>,
 ) -> BootstrapSelfCheckReport {
@@ -118,7 +119,7 @@ pub fn bootstrap_self_check_report(
         }
     }
     if let Some(dir) = bootstrap_tools_dir {
-        match validate_bootstrap_tools_for_self_check(dir) {
+        match validate_bootstrap_tools_for_self_check(dir, bootstrap_tools_platform) {
             Ok(count) => bootstrap_tools_archives = Some(count),
             Err(err) => errors.push(err),
         }
@@ -176,6 +177,24 @@ where
     None
 }
 
+fn self_check_bootstrap_tools_platform<I, S>(args: I) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        let arg = arg.as_ref();
+        if let Some(value) = arg.strip_prefix("--self-check-bootstrap-tools-platform=") {
+            return Some(value.to_string());
+        }
+        if arg == "--self-check-bootstrap-tools-platform" {
+            return iter.next().map(|value| value.as_ref().to_string());
+        }
+    }
+    None
+}
+
 fn self_check_wheelhouse_dir<I, S>(args: I) -> Option<PathBuf>
 where
     I: IntoIterator<Item = S>,
@@ -212,7 +231,10 @@ where
     None
 }
 
-fn validate_bootstrap_tools_for_self_check(dir: &Path) -> Result<usize, String> {
+fn validate_bootstrap_tools_for_self_check(
+    dir: &Path,
+    expected_platform: Option<&str>,
+) -> Result<usize, String> {
     let manifest_path = dir.join(BOOTSTRAP_TOOLS_MANIFEST);
     let manifest_text = std::fs::read_to_string(&manifest_path)
         .map_err(|err| format!("reading bootstrap tools manifest failed: {err}"))?;
@@ -257,6 +279,13 @@ fn validate_bootstrap_tools_for_self_check(dir: &Path) -> Result<usize, String> 
             .ok_or_else(|| format!("bootstrap tool archive is missing platform: {name}"))?;
         if !matches!(platform, "windows" | "linux" | "macos") {
             return Err(format!("bootstrap tool archive is missing platform: {name}"));
+        }
+        if let Some(expected) = expected_platform {
+            if platform != expected {
+                return Err(format!(
+                    "unexpected bootstrap tool platform for {name}: expected {expected}, got {platform}"
+                ));
+            }
         }
         if let Some((expected_platform, expected_arch)) = bootstrap_tool_archive_target(name) {
             if platform != expected_platform || arch != expected_arch {
@@ -488,6 +517,7 @@ fn write_self_check_and_exit(args: &[String]) {
         option_env!("BUILD_PIN_COMMIT"),
         option_env!("BUILD_PIN_BRANCH"),
         self_check_bootstrap_tools_dir(args).as_deref(),
+        self_check_bootstrap_tools_platform(args).as_deref(),
         self_check_wheelhouse_dir(args).as_deref(),
         self_check_wheelhouse_platform(args).as_deref(),
     );
@@ -639,7 +669,8 @@ pub fn run() {
 mod tests {
     use super::{
         bootstrap_self_check_report, expected_self_check_commit, force_setup_from_args,
-        self_check_wheelhouse_dir, self_check_wheelhouse_platform, AppMode,
+        self_check_bootstrap_tools_platform, self_check_wheelhouse_dir,
+        self_check_wheelhouse_platform, AppMode,
     };
     use std::path::PathBuf;
 
@@ -695,15 +726,22 @@ mod tests {
 
     #[test]
     fn self_check_requires_commit_pin_and_embedded_scripts() {
-        let missing_commit = bootstrap_self_check_report(None, Some("main"), None, None, None);
+        let missing_commit =
+            bootstrap_self_check_report(None, Some("main"), None, None, None, None);
         assert!(!missing_commit.ok);
         assert!(missing_commit
             .errors
             .iter()
             .any(|err| err.contains("commit pin")));
 
-        let report =
-            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), None, None, None);
+        let report = bootstrap_self_check_report(
+            Some("abcdef1234567890"),
+            Some("main"),
+            None,
+            None,
+            None,
+            None,
+        );
         assert!(report.ok, "{:?}", report.errors);
         assert_eq!(report.commit.as_deref(), Some("abcdef1234567890"));
         assert!(report.embedded_scripts.len() >= 2);
@@ -753,6 +791,7 @@ mod tests {
                 Some(&tools),
                 None,
                 None,
+                None,
             );
         assert!(report.ok, "{:?}", report.errors);
         assert_eq!(report.bootstrap_tools_archives, Some(1));
@@ -763,6 +802,7 @@ mod tests {
                 Some("abcdef1234567890"),
                 Some("main"),
                 Some(&tools),
+                None,
                 None,
                 None,
             );
@@ -808,6 +848,7 @@ mod tests {
             Some("abcdef1234567890"),
             Some("main"),
             None,
+            None,
             Some(&wheelhouse),
             None,
         );
@@ -818,6 +859,7 @@ mod tests {
         let report = bootstrap_self_check_report(
             Some("abcdef1234567890"),
             Some("main"),
+            None,
             None,
             Some(&wheelhouse),
             None,
@@ -864,6 +906,7 @@ mod tests {
                 Some(&tools),
                 None,
                 None,
+                None,
             );
         assert!(!report.ok);
         assert!(report
@@ -895,6 +938,7 @@ mod tests {
                 Some("abcdef1234567890"),
                 Some("main"),
                 Some(&tools),
+                None,
                 None,
                 None,
             );
@@ -931,6 +975,7 @@ mod tests {
                 Some(&tools),
                 None,
                 None,
+                None,
             );
         assert!(!report.ok);
         assert!(report
@@ -963,6 +1008,7 @@ mod tests {
                 Some("abcdef1234567890"),
                 Some("main"),
                 Some(&tools),
+                None,
                 None,
                 None,
             );
@@ -1005,6 +1051,7 @@ mod tests {
                 Some("abcdef1234567890"),
                 Some("main"),
                 Some(&tools),
+                None,
                 None,
                 None,
             );
@@ -1076,6 +1123,7 @@ mod tests {
             Some("abcdef1234567890"),
             Some("main"),
             None,
+            None,
             Some(&wheelhouse),
             Some("linux"),
         );
@@ -1103,5 +1151,68 @@ mod tests {
             Some("linux".to_string())
         );
         assert_eq!(self_check_wheelhouse_platform(["--self-check"]), None);
+    }
+
+    #[test]
+    fn self_check_bootstrap_tools_platform_rejects_wrong_release_payload() {
+        let root = unique_tmp_dir("tools-platform");
+        let tools = root.join("bootstrap-tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        let archive = tools.join("uv-x86_64-pc-windows-msvc.zip");
+        std::fs::write(&archive, b"uv archive").unwrap();
+        let sha256 = crate::artifact::sha256_hex(b"uv archive");
+        std::fs::write(
+            tools.join("bootstrap-tools-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "archives": [
+    {{
+      "arch": "x64",
+      "platform": "windows",
+      "name": "uv-x86_64-pc-windows-msvc.zip",
+      "url": "https://example.invalid/uv.zip",
+      "sizeBytes": 10,
+      "sha256": "{sha256}"
+    }}
+  ]
+}}
+"#
+            ),
+        )
+        .unwrap();
+
+        let report = bootstrap_self_check_report(
+            Some("abcdef1234567890"),
+            Some("main"),
+            Some(&tools),
+            Some("linux"),
+            None,
+            None,
+        );
+        assert!(!report.ok);
+        assert!(report
+            .errors
+            .iter()
+            .any(|err| err.contains("unexpected bootstrap tool platform")));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn self_check_bootstrap_tools_platform_parses_space_or_equals_forms() {
+        assert_eq!(
+            self_check_bootstrap_tools_platform([
+                "--self-check",
+                "--self-check-bootstrap-tools-platform",
+                "windows"
+            ]),
+            Some("windows".to_string())
+        );
+        assert_eq!(
+            self_check_bootstrap_tools_platform(["--self-check-bootstrap-tools-platform=linux"]),
+            Some("linux".to_string())
+        );
+        assert_eq!(self_check_bootstrap_tools_platform(["--self-check"]), None);
     }
 }
