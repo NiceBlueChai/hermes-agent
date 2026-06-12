@@ -2418,11 +2418,12 @@ where
 pub fn sync_python_dependencies_stage(
     install_root: &Path,
     hermes_home: &Path,
+    wheelhouse_dir: Option<&Path>,
 ) -> Result<serde_json::Value> {
     let path_env = std::env::var_os("PATH").unwrap_or_default();
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
     let plan = python_dependencies_stage_plan(install_root, hermes_home, path_env, &pathext)?;
-    let tiers = python_dependency_install_tiers_for_cwd(&plan.cwd);
+    let tiers = python_dependency_install_tiers_for_cwd_with_wheelhouse(&plan.cwd, wheelhouse_dir);
     let mut selected_tier = None;
     let mut last_exit_code = None;
     for tier in &tiers {
@@ -2460,11 +2461,18 @@ pub fn sync_python_dependencies_stage(
     }))
 }
 
-fn python_dependency_install_tiers_for_cwd(cwd: &Path) -> Vec<PythonDependencyInstallTier> {
+fn python_dependency_install_tiers_for_cwd_with_wheelhouse(
+    cwd: &Path,
+    wheelhouse_dir: Option<&Path>,
+) -> Vec<PythonDependencyInstallTier> {
     let pyproject = fs::read_to_string(cwd.join("pyproject.toml")).unwrap_or_default();
     let mut tiers = python_dependency_install_tiers_for_pyproject(&pyproject, PYTHON_KNOWN_BROKEN_EXTRAS);
-    let wheelhouse = cwd.join("resources").join("wheelhouse");
-    if wheelhouse.is_dir() {
+    let checkout_wheelhouse = cwd.join("resources").join("wheelhouse");
+    let wheelhouse = wheelhouse_dir
+        .filter(|path| wheelhouse_has_wheels(path))
+        .map(Path::to_path_buf)
+        .or_else(|| wheelhouse_has_wheels(&checkout_wheelhouse).then_some(checkout_wheelhouse));
+    if let Some(wheelhouse) = wheelhouse {
         tiers.insert(
             0,
             PythonDependencyInstallTier {
@@ -2482,6 +2490,18 @@ fn python_dependency_install_tiers_for_cwd(cwd: &Path) -> Vec<PythonDependencyIn
         );
     }
     tiers
+}
+
+fn wheelhouse_has_wheels(path: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == OsStr::new("whl"))
+    })
 }
 
 fn python_dependency_install_tiers_for_pyproject(
@@ -7571,9 +7591,10 @@ mod tests {
         ));
         let wheelhouse = root.join("resources").join("wheelhouse");
         std::fs::create_dir_all(&wheelhouse).unwrap();
+        std::fs::write(wheelhouse.join("demo-0.1-py3-none-any.whl"), b"wheel").unwrap();
         std::fs::write(root.join("pyproject.toml"), b"").unwrap();
 
-        let tiers = python_dependency_install_tiers_for_cwd(&root);
+        let tiers = python_dependency_install_tiers_for_cwd_with_wheelhouse(&root, None);
 
         assert_eq!(tiers[0].name, "local wheelhouse (all)");
         assert_eq!(
@@ -7589,6 +7610,43 @@ mod tests {
             ]
         );
         assert_eq!(tiers[1].name, "hash-verified (uv.lock)");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn python_dependency_install_tiers_prefer_resource_wheelhouse_over_checkout() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-resource-wheelhouse-tier-{}",
+            std::process::id()
+        ));
+        let checkout = root.join("checkout");
+        let checkout_wheelhouse = checkout.join("resources").join("wheelhouse");
+        let resource_wheelhouse = root.join("tauri-resources").join("wheelhouse");
+        std::fs::create_dir_all(&checkout_wheelhouse).unwrap();
+        std::fs::create_dir_all(&resource_wheelhouse).unwrap();
+        std::fs::write(
+            checkout_wheelhouse.join("checkout-0.1-py3-none-any.whl"),
+            b"wheel",
+        )
+        .unwrap();
+        std::fs::write(
+            resource_wheelhouse.join("resource-0.1-py3-none-any.whl"),
+            b"wheel",
+        )
+        .unwrap();
+        std::fs::write(checkout.join("pyproject.toml"), b"").unwrap();
+
+        let tiers = python_dependency_install_tiers_for_cwd_with_wheelhouse(
+            &checkout,
+            Some(&resource_wheelhouse),
+        );
+
+        assert_eq!(tiers[0].name, "local wheelhouse (all)");
+        assert_eq!(
+            tiers[0].args[4],
+            resource_wheelhouse.display().to_string()
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
