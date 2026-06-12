@@ -330,6 +330,8 @@ language-specific setup where needed.
   distributions, denied privileges, and package-manager failures.
 - Linux distro detection now uses both `ID` and `ID_LIKE` from `/etc/os-release`, so derivative distributions can use
   the native apt/dnf/pacman/zypper recovery paths for Git, ffmpeg, and Playwright system libraries.
+- Native Unix Git and package-manager recovery failures now capture stdout/stderr in the Rust error message, so GUI
+  bootstrap logs expose apt/dnf/pacman/zypper/pkg/brew failure details before any script fallback.
 - `bootstrap-marker` now runs as a native Rust stage in the Tauri bootstrapper on Windows and Unix manifests.
 - `config-templates` and the Unix `config` stage now run as native Rust stages while preserving Python
   `tools/skills_sync.py` when available and retaining the existing bundled-skill copy fallback.

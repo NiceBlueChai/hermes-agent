@@ -2173,20 +2173,32 @@ where
 }
 
 fn run_unix_git_install_command(command: &UnixGitInstallCommandPlan) -> Result<()> {
-    let status = Command::new(&command.program)
+    let output = Command::new(&command.program)
         .args(&command.args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
         .with_context(|| format!("running {}", unix_git_command_display(command)))?;
-    if status.success() {
+    if output.status.success() {
         return Ok(());
     }
-    Err(anyhow!(
-        "{} failed with exit {:?}",
-        unix_git_command_display(command),
-        status.code()
-    ))
+    Err(anyhow!(process_failure_message(
+        &unix_git_command_display(command),
+        &output,
+    )))
+}
+
+fn process_failure_message(display: &str, output: &Output) -> String {
+    let mut message = format!(
+        "{display} failed with exit {:?}",
+        output.status.code()
+    );
+    let output_text = process_output_text(output);
+    if !output_text.trim().is_empty() {
+        message.push_str("; process output: ");
+        message.push_str(output_text.trim());
+    }
+    message
 }
 
 fn unix_git_command_display(command: &UnixGitInstallCommandPlan) -> String {
@@ -2197,20 +2209,19 @@ fn unix_git_command_display(command: &UnixGitInstallCommandPlan) -> String {
 }
 
 fn run_unix_system_package_install_command(command: &UnixPackageInstallCommandPlan) -> Result<()> {
-    let status = Command::new(&command.program)
+    let output = Command::new(&command.program)
         .args(&command.args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
         .with_context(|| format!("running {}", unix_package_command_display(command)))?;
-    if status.success() {
+    if output.status.success() {
         return Ok(());
     }
-    Err(anyhow!(
-        "{} failed with exit {:?}",
-        unix_package_command_display(command),
-        status.code()
-    ))
+    Err(anyhow!(process_failure_message(
+        &unix_package_command_display(command),
+        &output,
+    )))
 }
 
 fn unix_package_command_display(command: &UnixPackageInstallCommandPlan) -> String {
@@ -6537,6 +6548,48 @@ mod tests {
         let fedora_like = playwright_install_plan("linux", "nobara fedora", true, false)
             .expect("ID_LIKE=fedora should use dnf recovery");
         assert_eq!(fedora_like.system_deps, "dnf");
+    }
+
+    #[test]
+    fn unix_package_command_failure_includes_process_output() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-package-output-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+
+        #[cfg(target_os = "windows")]
+        let command = {
+            let command = root.join("fake-package-manager.cmd");
+            std::fs::write(
+                &command,
+                "@echo off\r\necho package manager said no 1>&2\r\nexit /b 7\r\n",
+            )
+            .unwrap();
+            command
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let command = {
+            let command = root.join("fake-package-manager.sh");
+            std::fs::write(
+                &command,
+                "#!/usr/bin/env sh\necho 'package manager said no' >&2\nexit 7\n",
+            )
+            .unwrap();
+            make_executable(&command).unwrap();
+            command
+        };
+
+        let err = run_unix_system_package_install_command(&UnixPackageInstallCommandPlan {
+            program: command.display().to_string(),
+            args: Vec::new(),
+        })
+        .unwrap_err();
+
+        assert!(err.to_string().contains("package manager said no"));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
