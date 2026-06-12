@@ -312,7 +312,8 @@ language-specific setup where needed.
 - Linux `chrome-sandbox` repair now checks the current effective UID through Rust instead of spawning `id -u`, removing
   another external command assumption from the native desktop stage.
 - When the Linux bootstrap process is already root, `chrome-sandbox` owner/mode repair now uses libc/Rust filesystem
-  calls instead of spawning `chown` and `chmod`; the sudo fallback remains for non-root installs.
+  calls instead of spawning `chown` and `chmod`; non-root repair now requires non-interactive sudo and runs `sudo -n`
+  so GUI bootstrap cannot block on a password prompt.
 - Windows `platform-sdks` now skips natively when `.env` has no configured messaging platform tokens, and runs
   native-first SDK import checks plus targeted `pip install` recovery when tokens are present, while preserving script
   fallback if the native recovery path fails.
@@ -333,8 +334,8 @@ language-specific setup where needed.
 **Still script-backed:**
 - Recovery tiers remain script-backed for failure cases that still need package-manager or mirror-specific handling:
   dynamic Python known-broken-extra filtering, unknown Linux Playwright system-library recovery, npm install permission
-  diagnostics, privileged Linux `chrome-sandbox` repair, unsupported or failed Unix package-manager recovery, and
-  messaging-platform SDK recovery if the native targeted pip path fails.
+  diagnostics, interactive or denied Linux `chrome-sandbox` privilege escalation, unsupported or failed Unix
+  package-manager recovery, and messaging-platform SDK recovery if the native targeted pip path fails.
 - Fresh archive installs and archive updates do not require Git. Unix Git acquisition now has a native-first package
   manager path for common Linux/macOS/Termux setups, while unsupported distro handling, macOS CLT dialog recovery, and
   package-manager failures remain shell fallbacks.

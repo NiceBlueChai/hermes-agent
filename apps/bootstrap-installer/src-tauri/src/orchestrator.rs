@@ -4194,18 +4194,41 @@ fn configure_linux_chrome_sandbox(install_root: &Path) -> Result<()> {
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Ok(());
     }
-    if current_process_is_root() {
-        apply_linux_chrome_sandbox_root_permissions(&sandbox)?;
-        return Ok(());
+    let path_env = std::env::var_os("PATH").unwrap_or_default();
+    match linux_chrome_sandbox_repair_strategy(
+        current_process_is_root(),
+        noninteractive_sudo_available(&path_env),
+    )? {
+        LinuxChromeSandboxRepairStrategy::Root => {
+            apply_linux_chrome_sandbox_root_permissions(&sandbox)?;
+            Ok(())
+        }
+        LinuxChromeSandboxRepairStrategy::Sudo => {
+            run_privileged_file_command("sudo", ["-n", "chown", "root:root"], &sandbox)?;
+            run_privileged_file_command("sudo", ["-n", "chmod", "4755"], &sandbox)
+        }
     }
-    if find_executable_on_path("sudo", std::env::var_os("PATH").unwrap_or_default(), "").is_none() {
-        return Err(anyhow!(
-            "Cannot configure Electron sandbox helper without sudo: {}",
-            sandbox.display()
-        ));
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinuxChromeSandboxRepairStrategy {
+    Root,
+    Sudo,
+}
+
+fn linux_chrome_sandbox_repair_strategy(
+    user_is_root: bool,
+    sudo_available: bool,
+) -> Result<LinuxChromeSandboxRepairStrategy> {
+    if user_is_root {
+        return Ok(LinuxChromeSandboxRepairStrategy::Root);
     }
-    run_privileged_file_command("sudo", ["chown", "root:root"], &sandbox)?;
-    run_privileged_file_command("sudo", ["chmod", "4755"], &sandbox)
+    if sudo_available {
+        return Ok(LinuxChromeSandboxRepairStrategy::Sudo);
+    }
+    Err(anyhow!(
+        "Cannot configure Electron sandbox helper without non-interactive sudo"
+    ))
 }
 
 fn current_process_is_root() -> bool {
@@ -5929,6 +5952,19 @@ mod tests {
     fn process_euid_root_check_uses_effective_uid_value() {
         assert!(process_euid_is_root(0));
         assert!(!process_euid_is_root(1000));
+    }
+
+    #[test]
+    fn linux_chrome_sandbox_repair_strategy_requires_noninteractive_sudo() {
+        assert_eq!(
+            linux_chrome_sandbox_repair_strategy(true, false).unwrap(),
+            LinuxChromeSandboxRepairStrategy::Root
+        );
+        assert_eq!(
+            linux_chrome_sandbox_repair_strategy(false, true).unwrap(),
+            LinuxChromeSandboxRepairStrategy::Sudo
+        );
+        assert!(linux_chrome_sandbox_repair_strategy(false, false).is_err());
     }
 
     #[test]
