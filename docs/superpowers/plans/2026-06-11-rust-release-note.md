@@ -36,6 +36,8 @@ User-visible behavior:
   copies the local file and records the reviewed URL, target platform, architecture, size, and SHA-256 in the manifest.
 - Release workflows can alternatively use `prepare_bootstrap_tools.py --audited-archive NAME=HTTPS_URL=SHA256` to
   download a maintainer-selected archive only when its checksum matches before writing it to the manifest.
+- The Windows, Linux, and macOS installer workflows expose optional audited-archive inputs for manual release builds,
+  enabling reviewed ffmpeg payloads without making ffmpeg a required bundled dependency.
 - Native bootstrap diagnostics now preserve npm and Unix package-manager failure output, including permission hints for
   Hermes-managed npm cache and `node_modules` paths.
 - Native and script-fallback desktop packaging now direct Electron download/build caches into

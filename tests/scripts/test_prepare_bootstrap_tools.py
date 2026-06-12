@@ -681,6 +681,21 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         for section in upload_sections:
             self.assertIn("if-no-files-found: error", section)
 
+    def test_installer_workflows_accept_optional_audited_archives(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("audited-archive:", windows_workflow)
+        self.assertIn('@("--audited-archive", "$env:HERMES_AUDITED_ARCHIVE")', windows_workflow)
+        self.assertIn("linux-audited-archive:", unix_workflow)
+        self.assertIn("macos-audited-archive:", unix_workflow)
+        self.assertIn("--audited-archive \"${HERMES_AUDITED_ARCHIVE}\"", unix_workflow)
+
     def test_installer_workflows_pin_bootstrap_builds_to_current_commit(self):
         repo_root = Path(__file__).resolve().parents[2]
         windows_workflow = (

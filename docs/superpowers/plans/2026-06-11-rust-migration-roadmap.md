@@ -355,6 +355,8 @@ language-specific setup where needed.
 - `prepare_bootstrap_tools.py --audited-archive NAME=HTTPS_URL=SHA256` now lets release workflows download an
   explicitly checksummed optional archive, verify it before manifesting, and keep ffmpeg bundling source selection in
   release policy rather than installer code.
+- Windows, Linux, and macOS installer workflows now expose optional audited-archive dispatch inputs, so an admin can
+  produce a more self-contained package with reviewed ffmpeg payloads without changing workflow YAML for each release.
 - Linux distro detection now uses both `ID` and `ID_LIKE` from `/etc/os-release`, so derivative distributions can use
   the native apt/dnf/pacman/zypper recovery paths for Git, ffmpeg, and Playwright system libraries.
 - Native Unix Git and package-manager recovery failures now capture stdout/stderr in the Rust error message, so GUI

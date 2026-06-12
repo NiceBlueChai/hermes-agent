@@ -2,6 +2,11 @@ name: Build Windows Installer
 
 on:
   workflow_dispatch:
+    inputs:
+      audited-archive:
+        description: Optional audited bootstrap archive, in NAME=HTTPS_URL=SHA256 form.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -69,7 +74,14 @@ jobs:
           workspaces: apps/bootstrap-installer/src-tauri
 
       - name: Bundle bootstrap tool archives
-        run: python scripts/prepare_bootstrap_tools.py --arch x64
+        env:
+          HERMES_AUDITED_ARCHIVE: ${{ inputs.audited-archive }}
+        run: |
+          $args = @("scripts/prepare_bootstrap_tools.py", "--arch", "x64")
+          if ($env:HERMES_AUDITED_ARCHIVE) {
+            $args += @("--audited-archive", "$env:HERMES_AUDITED_ARCHIVE")
+          }
+          python @args
 
       - name: Validate bootstrap tool archives
         run: >

@@ -4,6 +4,15 @@ name: Build Unix Installers
 
 on:
     workflow_dispatch:
+        inputs:
+            linux-audited-archive:
+                description: Optional Linux bootstrap archive, in NAME=HTTPS_URL=SHA256 form.
+                required: false
+                type: string
+            macos-audited-archive:
+                description: Optional macOS bootstrap archive, in NAME=HTTPS_URL=SHA256 form.
+                required: false
+                type: string
 
 permissions:
     contents: read
@@ -105,10 +114,26 @@ jobs:
                       wget
 
             - name: Bundle bootstrap tool archives
-              run: >
-                  python scripts/prepare_bootstrap_tools.py
-                  --platform ${{ matrix.platform }}
-                  --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+              env:
+                  HERMES_LINUX_AUDITED_ARCHIVE: ${{ inputs.linux-audited-archive }}
+                  HERMES_MACOS_AUDITED_ARCHIVE: ${{ inputs.macos-audited-archive }}
+              run: |
+                  set -euo pipefail
+                  HERMES_AUDITED_ARCHIVE=""
+                  if [ "${{ matrix.platform }}" = "linux" ]; then
+                      HERMES_AUDITED_ARCHIVE="${HERMES_LINUX_AUDITED_ARCHIVE}"
+                  else
+                      HERMES_AUDITED_ARCHIVE="${HERMES_MACOS_AUDITED_ARCHIVE}"
+                  fi
+                  args=(
+                      scripts/prepare_bootstrap_tools.py
+                      --platform "${{ matrix.platform }}"
+                      --arch "${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}"
+                  )
+                  if [ -n "${HERMES_AUDITED_ARCHIVE}" ]; then
+                      args+=(--audited-archive "${HERMES_AUDITED_ARCHIVE}")
+                  fi
+                  python "${args[@]}"
 
             - name: Validate bootstrap tool archives
               run: >
