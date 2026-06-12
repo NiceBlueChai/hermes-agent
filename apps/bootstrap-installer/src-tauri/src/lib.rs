@@ -503,6 +503,8 @@ fn validate_wheelhouse_for_self_check(
         }
     }
 
+    validate_wheelhouse_source_files_for_self_check(&manifest)?;
+
     for entry in std::fs::read_dir(dir)
         .map_err(|err| format!("reading wheelhouse directory failed: {err}"))?
     {
@@ -516,6 +518,39 @@ fn validate_wheelhouse_for_self_check(
         }
     }
     Ok(wheels.len())
+}
+
+fn validate_wheelhouse_source_files_for_self_check(
+    manifest: &serde_json::Value,
+) -> Result<(), String> {
+    let source_files = manifest
+        .get("sourceFiles")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "wheelhouse manifest has no sourceFiles".to_string())?;
+    if source_files.is_empty() {
+        return Err("wheelhouse manifest has no sourceFiles".to_string());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for source in source_files {
+        let path = source
+            .get("path")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "wheelhouse source file is missing path".to_string())?;
+        if !bootstrap_tool_name_is_plain_file(path) {
+            return Err(format!("wheelhouse source file has unsafe path: {path}"));
+        }
+        if !seen.insert(path.to_string()) {
+            return Err(format!("duplicate wheelhouse source file: {path}"));
+        }
+        let sha256 = source
+            .get("sha256")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("wheelhouse source file is missing sha256: {path}"))?;
+        if sha256.len() != 64 || !sha256.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            return Err(format!("wheelhouse source file has invalid sha256: {path}"));
+        }
+    }
+    Ok(())
 }
 
 fn bootstrap_tool_archive_target(name: &str) -> Option<(&'static str, &'static str)> {
@@ -918,6 +953,12 @@ mod tests {
             format!(
                 r#"{{
   "schemaVersion": 1,
+  "sourceFiles": [
+    {{
+      "path": "pyproject.toml",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }}
+  ],
   "wheels": [
     {{
       "arch": "x64",
@@ -1207,6 +1248,12 @@ mod tests {
             format!(
                 r#"{{
   "schemaVersion": 1,
+  "sourceFiles": [
+    {{
+      "path": "pyproject.toml",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }}
+  ],
   "wheels": [
     {{
       "arch": "x64",
@@ -1238,6 +1285,54 @@ mod tests {
             .errors
             .iter()
             .any(|err| err.contains("unexpected wheelhouse platform")));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn self_check_rejects_wheelhouse_manifest_without_source_files() {
+        let root = unique_tmp_dir("wheelhouse-source-files");
+        let wheelhouse = root.join("wheelhouse");
+        std::fs::create_dir_all(&wheelhouse).unwrap();
+        let wheel = wheelhouse.join("demo-0.1-py3-none-any.whl");
+        std::fs::write(&wheel, b"wheel bytes").unwrap();
+        let sha256 = crate::artifact::sha256_hex(b"wheel bytes");
+        std::fs::write(
+            wheelhouse.join("wheelhouse-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "wheels": [
+    {{
+      "arch": "x64",
+      "platform": "windows",
+      "python": "cp311",
+      "name": "demo-0.1-py3-none-any.whl",
+      "sizeBytes": 11,
+      "sha256": "{sha256}"
+    }}
+  ]
+}}
+"#
+            ),
+        )
+        .unwrap();
+
+        let report = bootstrap_self_check_report(
+            Some("abcdef1234567890"),
+            Some("main"),
+            None,
+            None,
+            None,
+            Some(&wheelhouse),
+            Some("windows"),
+            Some("x64"),
+        );
+        assert!(!report.ok);
+        assert!(report
+            .errors
+            .iter()
+            .any(|err| err.contains("wheelhouse manifest has no sourceFiles")));
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1362,6 +1457,12 @@ mod tests {
             format!(
                 r#"{{
   "schemaVersion": 1,
+  "sourceFiles": [
+    {{
+      "path": "pyproject.toml",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }}
+  ],
   "wheels": [
     {{
       "arch": "arm64",

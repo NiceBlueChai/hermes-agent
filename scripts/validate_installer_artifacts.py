@@ -87,11 +87,23 @@ def validate_artifacts(
     elif manifest_paths:
         validate_bootstrap_tools_payload(manifest_paths[0].parent, bootstrap_tools_platform, bootstrap_tools_arch)
     wheelhouse_manifest_paths = [path for path in checked if path.name == WHEELHOUSE_MANIFEST_NAME]
+    wheelhouse_repo_root = root if wheelhouse_source_inputs_exist(root) else None
     if wheelhouse_dir is not None:
-        validate_wheelhouse_payload(wheelhouse_dir, wheelhouse_platform, wheelhouse_arch)
+        validate_wheelhouse_payload(wheelhouse_dir, wheelhouse_platform, wheelhouse_arch, wheelhouse_repo_root)
     elif wheelhouse_manifest_paths:
-        validate_wheelhouse_payload(wheelhouse_manifest_paths[0].parent, wheelhouse_platform, wheelhouse_arch)
+        validate_wheelhouse_payload(
+            wheelhouse_manifest_paths[0].parent,
+            wheelhouse_platform,
+            wheelhouse_arch,
+            wheelhouse_repo_root,
+        )
     return checked
+
+
+def wheelhouse_source_inputs_exist(root: Path) -> bool:
+    """Return whether artifact validation can compare wheelhouse source hashes."""
+
+    return (root / "pyproject.toml").is_file() or (root / "uv.lock").is_file()
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

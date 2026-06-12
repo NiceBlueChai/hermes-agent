@@ -64,6 +64,36 @@ class PreparePythonWheelhouseTests(unittest.TestCase):
             self.assertEqual(payload["wheels"][0]["sizeBytes"], len(b"wheel bytes"))
             self.assertEqual(payload["wheels"][0]["sha256"], module.sha256_file(wheel))
 
+    def test_manifest_records_and_validates_dependency_source_hashes(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp) / "repo"
+            output_dir = Path(tmp) / "wheelhouse"
+            repo_root.mkdir()
+            output_dir.mkdir()
+            (repo_root / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+            (repo_root / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+            wheel = output_dir / "demo-0.1-py3-none-any.whl"
+            wheel.write_bytes(b"wheel bytes")
+
+            prepared = module.prepared_wheel_record("linux", "x64", "cp311", wheel)
+            manifest_path = module.write_manifest(
+                output_dir,
+                [prepared],
+                source_files=module.source_file_records(repo_root),
+            )
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(
+                {entry["path"] for entry in payload["sourceFiles"]},
+                {"pyproject.toml", "uv.lock"},
+            )
+            self.assertEqual(module.validate_manifest(output_dir, repo_root=repo_root), 1)
+
+            (repo_root / "uv.lock").write_text("version = 2\n", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "wheelhouse source hash mismatch"):
+                module.validate_manifest(output_dir, repo_root=repo_root)
+
     def test_validate_manifest_rejects_checksum_mismatch(self):
         module = _load_script_module()
         with tempfile.TemporaryDirectory() as tmp:

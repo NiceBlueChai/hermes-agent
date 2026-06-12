@@ -40,6 +40,14 @@ class PreparedWheel:
     sha256: str
 
 
+@dataclass(frozen=True)
+class SourceFileRecord:
+    """One dependency input file used to prepare the release wheelhouse."""
+
+    path: str
+    sha256: str
+
+
 def sha256_file(path: Path) -> str:
     """Return the SHA-256 digest for one file."""
 
@@ -48,6 +56,19 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def source_file_records(repo_root: Path) -> list[SourceFileRecord]:
+    """Return dependency input file hashes recorded in the wheelhouse manifest."""
+
+    records = []
+    for relative in ("pyproject.toml", "uv.lock"):
+        path = repo_root / relative
+        if path.is_file():
+            records.append(SourceFileRecord(path=relative, sha256=sha256_file(path)))
+    if not records:
+        raise RuntimeError(f"no dependency source files found under {repo_root}")
+    return records
 
 
 def python_tag_from_executable(python: str) -> str:
@@ -102,7 +123,7 @@ def prepare_wheelhouse(
     if not wheels:
         raise RuntimeError(f"no wheels were generated in {output_dir}")
     records = [prepared_wheel_record(platform, arch, python_tag, wheel) for wheel in wheels]
-    manifest_path = write_manifest(output_dir, records)
+    manifest_path = write_manifest(output_dir, records, source_files=source_file_records(repo_root))
     print(f"[wheelhouse] wrote manifest {manifest_path}")
     return records
 
@@ -135,12 +156,23 @@ def prepared_wheel_record(platform: str, arch: str, python: str, path: Path) -> 
     )
 
 
-def write_manifest(output_dir: Path, wheels: list[PreparedWheel]) -> Path:
+def write_manifest(
+    output_dir: Path,
+    wheels: list[PreparedWheel],
+    source_files: list[SourceFileRecord] | None = None,
+) -> Path:
     """Write the wheelhouse manifest consumed by release reviewers."""
 
     payload = {
         "schemaVersion": 1,
         "generatedAtUtc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "sourceFiles": [
+            {
+                "path": source.path,
+                "sha256": source.sha256,
+            }
+            for source in (source_files or [])
+        ],
         "wheels": [
             {
                 "arch": wheel.arch,
@@ -163,10 +195,11 @@ def validate_payload(
     output_dir: Path,
     expected_platform: str | None = None,
     expected_arch: str | None = None,
+    repo_root: Path | None = None,
 ) -> int:
     """Validate the manifest and reject unmanifested wheel payloads."""
 
-    count = validate_manifest(output_dir, expected_platform, expected_arch)
+    count = validate_manifest(output_dir, expected_platform, expected_arch, repo_root)
     payload = json.loads((output_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
     expected = {wheel["name"] for wheel in payload["wheels"]}
     expected.update(ALLOWED_METADATA)
@@ -182,6 +215,7 @@ def validate_manifest(
     output_dir: Path,
     expected_platform: str | None = None,
     expected_arch: str | None = None,
+    repo_root: Path | None = None,
 ) -> int:
     """Validate that the wheelhouse manifest matches wheels in the output directory."""
 
@@ -194,6 +228,8 @@ def validate_manifest(
     wheels = payload.get("wheels")
     if not isinstance(wheels, list) or not wheels:
         raise RuntimeError("wheelhouse manifest has no wheels")
+    if repo_root is not None:
+        validate_source_files(payload, repo_root)
 
     seen_names: set[str] = set()
     for wheel in wheels:
@@ -240,6 +276,34 @@ def validate_manifest(
     return len(wheels)
 
 
+def validate_source_files(payload: dict, repo_root: Path) -> None:
+    """Validate that wheelhouse source hashes match the current dependency files."""
+
+    source_files = payload.get("sourceFiles")
+    if not isinstance(source_files, list) or not source_files:
+        raise RuntimeError("wheelhouse manifest has no sourceFiles")
+    seen_paths: set[str] = set()
+    for source in source_files:
+        relative = source.get("path")
+        if not isinstance(relative, str) or Path(relative).name != relative:
+            raise RuntimeError("wheelhouse source file has unsafe path")
+        if relative in seen_paths:
+            raise RuntimeError(f"duplicate wheelhouse source file: {relative}")
+        seen_paths.add(relative)
+        expected_sha256 = source.get("sha256")
+        if not isinstance(expected_sha256, str) or len(expected_sha256) != 64:
+            raise RuntimeError(f"wheelhouse source file has invalid sha256: {relative}")
+        path = repo_root / relative
+        if not path.is_file():
+            raise RuntimeError(f"wheelhouse source file is missing: {relative}")
+        actual_sha256 = sha256_file(path)
+        if actual_sha256.lower() != expected_sha256.lower():
+            raise RuntimeError(
+                f"wheelhouse source hash mismatch for {relative}: "
+                f"expected {expected_sha256}, got {actual_sha256}"
+            )
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     """Parse command-line options for wheelhouse release automation."""
 
@@ -272,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
     platform = normalized_platform(args.platform)
     try:
         if args.validate_only:
-            count = validate_payload(args.output_dir, platform, args.arch)
+            count = validate_payload(args.output_dir, platform, args.arch, args.repo_root)
             print(f"[wheelhouse] validated {count} wheel(s) in {args.output_dir}")
             return 0
         prepared = prepare_wheelhouse(

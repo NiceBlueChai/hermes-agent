@@ -563,8 +563,13 @@ language-specific setup where needed.
   `uv pip install --no-index --find-links` tier before the existing `uv.lock` and PyPI fallback tiers.
 - Installer workflows now prepare and validate a Tauri-bundled Python wheelhouse, including a retained
   `wheelhouse-manifest.json` with platform, architecture, Python tag, size, and SHA-256 for every wheel.
+- Python wheelhouse manifests now also record dependency input hashes for `pyproject.toml` and `uv.lock`, and the
+  release validate-only and final artifact-validation paths reject stale wheelhouse payloads when those inputs no longer
+  match the current checkout.
 - The no-UI installer self-check now accepts `--self-check-wheelhouse` and validates the bundled wheelhouse manifest,
   every wheel checksum, and unmanifested payloads before release artifacts are accepted.
+- The no-UI installer self-check now also requires wheelhouse `sourceFiles` audit metadata with safe source names and
+  valid SHA-256 values, so packaged installers cannot silently omit dependency-input provenance.
 - Runtime Python dependency planning now trusts a local wheelhouse manifest when present and skips the offline
   wheelhouse tier if any listed wheel size or SHA-256 does not match, while preserving manifestless dev wheelhouses.
 - Runtime Python dependency planning now also requires wheelhouse manifest platform and architecture labels to match
