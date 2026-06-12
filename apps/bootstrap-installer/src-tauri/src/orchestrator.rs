@@ -4471,10 +4471,10 @@ fn resolve_bootstrap_archive_source(
     archive_name: &str,
 ) -> ResolvedBootstrapArchive {
     let cache_path = bootstrap_archive_cache_path(hermes_home, archive_name);
-    let expected_sha256 =
-        bundled_tools_dir.and_then(|dir| bootstrap_tools_manifest_sha256(dir, archive_name));
-    let expected_size_bytes =
-        bundled_tools_dir.and_then(|dir| bootstrap_tools_manifest_size_bytes(dir, archive_name));
+    let manifest_record =
+        bundled_tools_dir.and_then(|dir| bootstrap_tools_manifest_archive(dir, archive_name));
+    let expected_sha256 = manifest_record.as_ref().map(|record| record.sha256.clone());
+    let expected_size_bytes = manifest_record.as_ref().and_then(|record| record.size_bytes);
     let bundled_path = bundled_tools_dir
         .map(|dir| dir.join(archive_name))
         .filter(|path| path.is_file())
@@ -4499,10 +4499,6 @@ fn resolve_bootstrap_archive_source(
 
 fn bootstrap_tools_manifest_sha256(bundled_tools_dir: &Path, archive_name: &str) -> Option<String> {
     bootstrap_tools_manifest_archive(bundled_tools_dir, archive_name).map(|record| record.sha256)
-}
-
-fn bootstrap_tools_manifest_size_bytes(bundled_tools_dir: &Path, archive_name: &str) -> Option<u64> {
-    bootstrap_tools_manifest_archive(bundled_tools_dir, archive_name).and_then(|record| record.size_bytes)
 }
 
 fn bootstrap_tools_manifest_archive(
@@ -4531,6 +4527,7 @@ fn bootstrap_tools_manifest_archive(
         .and_then(|record| {
             let valid = record.sha256.len() == 64
                 && record.sha256.chars().all(|ch| ch.is_ascii_hexdigit())
+                && record.size_bytes.is_some()
                 && record
                     .url
                     .as_deref()
@@ -7500,6 +7497,7 @@ mod tests {
                         "platform": "windows",
                         "name": "uv-x86_64-pc-windows-msvc.zip",
                         "url": "https://example.invalid/uv.zip",
+                        "sizeBytes": 2,
                         "sha256": "e6184ce10e266134fdcfa401e8f1a95005bcd4f18d16b62b757323e2833fe9a9"
                     }
                 ]
@@ -7515,6 +7513,46 @@ mod tests {
             source.expected_sha256.as_deref(),
             Some("e6184ce10e266134fdcfa401e8f1a95005bcd4f18d16b62b757323e2833fe9a9")
         );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn bootstrap_archive_source_rejects_manifest_without_size_bytes() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-bootstrap-archive-missing-size-source-test-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+        let bundled = root.join("resources").join("bootstrap-tools");
+        let archive_name = "uv-x86_64-pc-windows-msvc.zip";
+        std::fs::create_dir_all(&bundled).unwrap();
+        std::fs::write(bundled.join(archive_name), b"uv").unwrap();
+        std::fs::write(
+            bundled.join("bootstrap-tools-manifest.json"),
+            r#"{
+                "schemaVersion": 1,
+                "archives": [
+                    {
+                        "arch": "x64",
+                        "platform": "windows",
+                        "name": "uv-x86_64-pc-windows-msvc.zip",
+                        "url": "https://example.invalid/uv.zip",
+                        "sha256": "e6184ce10e266134fdcfa401e8f1a95005bcd4f18d16b62b757323e2833fe9a9"
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let source = resolve_bootstrap_archive_source(&hermes_home, Some(&bundled), archive_name);
+
+        assert_eq!(source.kind, BootstrapArchiveSourceKind::Cache);
+        assert_eq!(
+            source.path,
+            hermes_home.join("bootstrap-cache").join(archive_name)
+        );
+        assert_eq!(source.expected_sha256, None);
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -7540,6 +7578,7 @@ mod tests {
                         "platform": "windows",
                         "name": "uv-x86_64-pc-windows-msvc.zip",
                         "url": "https://example.invalid/uv.zip",
+                        "sizeBytes": 2,
                         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                     }
                 ]
