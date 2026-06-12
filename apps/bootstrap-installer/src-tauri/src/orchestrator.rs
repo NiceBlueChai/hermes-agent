@@ -464,15 +464,97 @@ fn script_stage_reason(stage: &StageInfo, execution: StageExecutionMode) -> Opti
     match execution {
         StageExecutionMode::Native => None,
         StageExecutionMode::NativeWithScriptFallback => {
-            Some(SCRIPT_REASON_NATIVE_FALLBACK.to_string())
+            Some(stage_specific_native_fallback_reason(&stage.name))
         }
         StageExecutionMode::ProbeThenScript => {
-            Some(SCRIPT_REASON_PROBE_FALLBACK.to_string())
+            Some(stage_specific_probe_fallback_reason(&stage.name))
         }
         StageExecutionMode::Script if stage.needs_user_input => {
             Some(SCRIPT_REASON_INTERACTIVE.to_string())
         }
         StageExecutionMode::Script => Some(SCRIPT_REASON_UNPORTED.to_string()),
+    }
+}
+
+fn stage_specific_native_fallback_reason(stage_name: &str) -> String {
+    match stage_name.to_ascii_lowercase().as_str() {
+        "repository" => {
+            "repository native archive install/update failed; delegated to install script fallback"
+                .to_string()
+        }
+        "python" => {
+            "python native runtime preparation failed; delegated to install script fallback"
+                .to_string()
+        }
+        "venv" => {
+            "venv native virtual environment creation failed; delegated to install script fallback"
+                .to_string()
+        }
+        "dependencies" | "python-deps" => {
+            format!(
+                "{} native Python dependency sync failed; delegated to install script fallback",
+                stage_name
+            )
+        }
+        "platform-sdks" => {
+            "platform-sdks native SDK recovery failed; delegated to install script fallback"
+                .to_string()
+        }
+        "node-deps" => {
+            "node-deps native npm dependency setup failed; delegated to install script fallback"
+                .to_string()
+        }
+        "desktop" => {
+            "desktop native Electron packaging failed; delegated to install script fallback"
+                .to_string()
+        }
+        "node" => {
+            "node native runtime preparation failed; delegated to install script fallback"
+                .to_string()
+        }
+        "uv" => {
+            "uv native runtime preparation failed; delegated to install script fallback"
+                .to_string()
+        }
+        "git" => {
+            "git native runtime preparation failed; delegated to install script fallback"
+                .to_string()
+        }
+        "system-packages" => {
+            "system-packages native recovery failed; delegated to install script fallback"
+                .to_string()
+        }
+        _ => format!("{stage_name} {SCRIPT_REASON_NATIVE_FALLBACK}"),
+    }
+}
+
+fn stage_specific_probe_fallback_reason(stage_name: &str) -> String {
+    match stage_name.to_ascii_lowercase().as_str() {
+        "prerequisites" => {
+            "prerequisites Rust probe found missing tools; delegated to install script fallback"
+                .to_string()
+        }
+        "git" => {
+            "git Rust probe found missing runtime; delegated to install script fallback"
+                .to_string()
+        }
+        "node" => {
+            "node Rust probe found missing or unsupported runtime; delegated to install script fallback"
+                .to_string()
+        }
+        "system-packages" => {
+            "system-packages Rust probe found missing packages; delegated to install script fallback"
+                .to_string()
+        }
+        "node-deps" => {
+            "node-deps Rust probe found missing dependencies; delegated to install script fallback"
+                .to_string()
+        }
+        "desktop" => {
+            "desktop Rust probe found missing build output; delegated to install script fallback"
+                .to_string()
+        }
+        _ => format!("{stage_name} {SCRIPT_REASON_PROBE_FALLBACK}"),
     }
 }
 
@@ -6647,6 +6729,47 @@ mod tests {
         assert!(summary.contains(
             "script_reasons=[legacy=not yet ported to Rust; delegated to install script]"
         ));
+    }
+
+    #[test]
+    fn build_stage_plan_records_stage_specific_script_fallback_reasons() {
+        let stages = vec![
+            stage("repository"),
+            stage("python"),
+            stage("uv"),
+            stage("git"),
+            stage("node"),
+            stage("system-packages"),
+            stage("platform-sdks"),
+            stage("node-deps"),
+            stage("desktop"),
+            stage("venv"),
+            stage("dependencies"),
+            stage("python-deps"),
+        ];
+        let plan = build_stage_plan(&stages, true);
+
+        for planned in &plan {
+            let reason = planned
+                .script_reason
+                .as_deref()
+                .expect("stage should have a fallback reason");
+
+            assert!(
+                reason.contains(&planned.name),
+                "{} fallback reason should name the stage: {}",
+                planned.name,
+                reason
+            );
+            assert_ne!(
+                reason,
+                "native-first stage; delegated to install script on native failure"
+            );
+            assert_ne!(
+                reason,
+                "Rust probes local state; delegated to install script when missing"
+            );
+        }
     }
 
     #[test]
