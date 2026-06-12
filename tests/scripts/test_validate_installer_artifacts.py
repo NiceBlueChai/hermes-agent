@@ -524,6 +524,7 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
                         "files": [
                             {
                                 "name": python.name,
+                                "url": "https://example.invalid/python-runtime.zip",
                                 "sizeBytes": len(b"python runtime"),
                                 "sha256": module.sha256_file(python),
                             }
@@ -566,6 +567,7 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
                         "files": [
                             {
                                 "name": python.name,
+                                "url": "https://example.invalid/python-runtime.zip",
                                 "sizeBytes": len(b"python runtime"),
                                 "sha256": module.sha256_file(python),
                             }

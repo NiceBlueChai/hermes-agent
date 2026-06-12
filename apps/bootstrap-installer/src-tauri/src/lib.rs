@@ -737,6 +737,13 @@ fn validate_python_runtime_for_self_check(
         if !expected.insert(name.to_string()) {
             return Err(format!("duplicate python runtime file: {name}"));
         }
+        let url = file
+            .get("url")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("python runtime file has invalid url: {name}"))?;
+        if !url.starts_with("https://") {
+            return Err(format!("python runtime file has invalid url: {name}"));
+        }
         let bytes = std::fs::read(dir.join(name))
             .map_err(|err| format!("reading python runtime file failed: {name}: {err}"))?;
         let expected_size = file
@@ -1456,6 +1463,7 @@ mod tests {
   "files": [
     {{
       "name": "python.exe",
+      "url": "https://example.invalid/python-runtime.zip",
       "sizeBytes": 14,
       "sha256": "{sha256}"
     }}
@@ -1490,6 +1498,43 @@ mod tests {
             validate_python_runtime_for_self_check(&runtime, Some("windows"), Some("x64"))
                 .unwrap_err();
         assert!(err.contains("unmanifested python runtime payload"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn self_check_rejects_python_runtime_manifest_without_url() {
+        let root = unique_tmp_dir("python-runtime-url");
+        let runtime = root.join("python-runtime");
+        std::fs::create_dir_all(&runtime).unwrap();
+        let python = runtime.join("python.exe");
+        std::fs::write(&python, b"python runtime").unwrap();
+        let sha256 = crate::artifact::sha256_hex(b"python runtime");
+        std::fs::write(
+            runtime.join("python-runtime-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "platform": "windows",
+  "arch": "x64",
+  "pythonTag": "cp311",
+  "files": [
+    {{
+      "name": "python.exe",
+      "sizeBytes": 14,
+      "sha256": "{sha256}"
+    }}
+  ]
+}}
+"#
+            ),
+        )
+        .unwrap();
+
+        let err =
+            validate_python_runtime_for_self_check(&runtime, Some("windows"), Some("x64"))
+                .unwrap_err();
+        assert!(err.contains("python runtime file has invalid url"));
 
         let _ = std::fs::remove_dir_all(&root);
     }

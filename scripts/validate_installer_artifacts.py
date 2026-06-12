@@ -22,12 +22,14 @@ from prepare_python_wheelhouse import (
     MANIFEST_NAME as WHEELHOUSE_MANIFEST_NAME,
     validate_payload as validate_wheelhouse_payload,
 )
+from prepare_python_runtime import (
+    MANIFEST_NAME as PYTHON_RUNTIME_MANIFEST_NAME,
+    validate_payload as validate_python_runtime_payload,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_BOOTSTRAP_TOOLS_METADATA = {".gitignore", "README.md"}
-PYTHON_RUNTIME_MANIFEST_NAME = "python-runtime-manifest.json"
-ALLOWED_PYTHON_RUNTIME_METADATA = {".gitignore", "README.md", PYTHON_RUNTIME_MANIFEST_NAME}
 
 
 def validate_bootstrap_tools_payload(
@@ -149,83 +151,6 @@ def wheelhouse_source_inputs_exist(root: Path) -> bool:
     """Return whether artifact validation can compare wheelhouse source hashes."""
 
     return (root / "pyproject.toml").is_file() or (root / "uv.lock").is_file()
-
-
-def validate_python_runtime_payload(
-    output_dir: Path,
-    expected_platform: str | None = None,
-    expected_arch: str | None = None,
-) -> int:
-    """Validate that the Python runtime directory contains only manifest-owned payloads."""
-
-    file_count = validate_python_runtime_manifest(output_dir, expected_platform, expected_arch)
-    payload = json.loads((output_dir / PYTHON_RUNTIME_MANIFEST_NAME).read_text(encoding="utf-8"))
-    expected = {entry["name"] for entry in payload["files"]}
-    expected.update(ALLOWED_PYTHON_RUNTIME_METADATA)
-
-    for entry in output_dir.iterdir():
-        if entry.name not in expected:
-            raise RuntimeError(f"unmanifested python runtime payload: {entry.name}")
-        if not entry.is_file():
-            raise RuntimeError(f"python runtime payload is not a file: {entry.name}")
-    return file_count
-
-
-def validate_python_runtime_manifest(
-    output_dir: Path,
-    expected_platform: str | None = None,
-    expected_arch: str | None = None,
-) -> int:
-    """Validate the Python runtime manifest and each listed runtime file."""
-
-    manifest_path = output_dir / PYTHON_RUNTIME_MANIFEST_NAME
-    if not manifest_path.is_file():
-        raise RuntimeError(f"missing python runtime manifest: {manifest_path}")
-    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if payload.get("schemaVersion") != 1:
-        raise RuntimeError(f"unsupported python runtime manifest schema: {payload.get('schemaVersion')}")
-    if expected_platform is not None and payload.get("platform") != expected_platform:
-        raise RuntimeError(
-            f"unexpected python runtime platform: expected {expected_platform}, got {payload.get('platform')}"
-        )
-    if expected_arch is not None and payload.get("arch") != expected_arch:
-        raise RuntimeError(f"unexpected python runtime arch: expected {expected_arch}, got {payload.get('arch')}")
-    if not isinstance(payload.get("pythonTag"), str) or not payload["pythonTag"].strip():
-        raise RuntimeError("python runtime manifest has no pythonTag")
-
-    files = payload.get("files")
-    if not isinstance(files, list) or not files:
-        raise RuntimeError("python runtime manifest has no files")
-
-    seen: set[str] = set()
-    for file_record in files:
-        name = file_record.get("name")
-        if not isinstance(name, str) or Path(name).name != name or name.strip() != name:
-            raise RuntimeError("python runtime file has unsafe name")
-        if name in seen:
-            raise RuntimeError(f"duplicate python runtime file: {name}")
-        seen.add(name)
-
-        size = file_record.get("sizeBytes")
-        if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
-            raise RuntimeError(f"python runtime file has invalid size: {name}")
-        sha256 = file_record.get("sha256")
-        if (
-            not isinstance(sha256, str)
-            or len(sha256) != 64
-            or not all(ch in "0123456789abcdefABCDEF" for ch in sha256)
-        ):
-            raise RuntimeError(f"python runtime file has invalid sha256: {name}")
-
-        path = output_dir / name
-        if not path.is_file():
-            raise RuntimeError(f"python runtime file is missing: {name}")
-        if path.stat().st_size != size:
-            raise RuntimeError(f"python runtime file size mismatch: {name}")
-        actual_sha256 = sha256_file(path)
-        if actual_sha256.lower() != sha256.lower():
-            raise RuntimeError(f"python runtime file hash mismatch: {name}")
-    return len(files)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
