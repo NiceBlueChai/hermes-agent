@@ -149,6 +149,13 @@ pub struct WindowsGitRuntimeStagePlan {
     pub is_zip: bool,
 }
 
+/// Command used by the native Unix Git acquisition fallback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnixGitInstallCommandPlan {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
 /// Native Windows ripgrep runtime installation plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowsRipgrepRuntimeStagePlan {
@@ -1440,6 +1447,100 @@ pub fn windows_git_runtime_stage_plan(
     })
 }
 
+fn unix_git_install_command_plan(
+    target_os: &str,
+    distro: &str,
+    user_is_root: bool,
+    sudo_available: bool,
+    brew_available: bool,
+) -> Result<Vec<UnixGitInstallCommandPlan>> {
+    if target_os == "android" || distro == "termux" {
+        return Ok(vec![unix_git_command("pkg", ["install", "-y", "git"])]);
+    }
+    if target_os == "macos" {
+        if brew_available {
+            return Ok(vec![unix_git_command("brew", ["install", "git"])]);
+        }
+        return Err(anyhow!("Homebrew is not available for native Git install"));
+    }
+    if target_os != "linux" {
+        return Err(anyhow!("unsupported Unix Git install target: {target_os}"));
+    }
+    match distro {
+        "ubuntu" | "debian" => Ok(vec![
+            unix_git_apt_command(user_is_root, sudo_available, ["update", "-qq"])?,
+            unix_git_apt_command(
+                user_is_root,
+                sudo_available,
+                ["install", "-y", "-qq", "git"],
+            )?,
+        ]),
+        "fedora" => Ok(vec![unix_git_privileged_command(
+            user_is_root,
+            sudo_available,
+            "dnf",
+            ["install", "-y", "git"],
+        )?]),
+        "arch" => Ok(vec![unix_git_privileged_command(
+            user_is_root,
+            sudo_available,
+            "pacman",
+            ["-S", "--noconfirm", "git"],
+        )?]),
+        other => Err(anyhow!("unsupported Linux Git install distro: {other}")),
+    }
+}
+
+fn unix_git_apt_command<const N: usize>(
+    user_is_root: bool,
+    sudo_available: bool,
+    args: [&str; N],
+) -> Result<UnixGitInstallCommandPlan> {
+    if user_is_root {
+        return Ok(unix_git_command("apt-get", args));
+    }
+    if sudo_available {
+        let mut sudo_args = vec![
+            "env".to_string(),
+            "DEBIAN_FRONTEND=noninteractive".to_string(),
+            "apt-get".to_string(),
+        ];
+        sudo_args.extend(args.into_iter().map(str::to_string));
+        return Ok(UnixGitInstallCommandPlan {
+            program: "sudo".to_string(),
+            args: sudo_args,
+        });
+    }
+    Err(anyhow!("sudo is required for native apt Git install"))
+}
+
+fn unix_git_privileged_command<const N: usize>(
+    user_is_root: bool,
+    sudo_available: bool,
+    program: &str,
+    args: [&str; N],
+) -> Result<UnixGitInstallCommandPlan> {
+    if user_is_root {
+        return Ok(unix_git_command(program, args));
+    }
+    if sudo_available {
+        let mut sudo_args = vec![program.to_string()];
+        sudo_args.extend(args.into_iter().map(str::to_string));
+        return Ok(UnixGitInstallCommandPlan {
+            program: "sudo".to_string(),
+            args: sudo_args,
+        });
+    }
+    Err(anyhow!("sudo is required for native Git install"))
+}
+
+fn unix_git_command<const N: usize>(program: &str, args: [&str; N]) -> UnixGitInstallCommandPlan {
+    UnixGitInstallCommandPlan {
+        program: program.to_string(),
+        args: args.into_iter().map(str::to_string).collect(),
+    }
+}
+
 /// Build a Windows ripgrep runtime plan matching the pinned release asset.
 pub fn windows_ripgrep_runtime_stage_plan(
     hermes_home: &Path,
@@ -1709,6 +1810,104 @@ pub async fn install_windows_git_runtime_stage(
         "archive": install_plan.archive_name,
         "archiveSource": archive_source.kind.as_str(),
     }))
+}
+
+/// Install or verify Git natively on Unix before falling back to the shell script.
+pub async fn install_unix_git_runtime_stage() -> Result<serde_json::Value> {
+    if cfg!(target_os = "windows") {
+        return Err(anyhow!("native Unix Git stage is not available on Windows"));
+    }
+    let path_env = std::env::var_os("PATH").unwrap_or_default();
+    if let Some(git) = usable_git_on_path(&path_env) {
+        return Ok(serde_json::json!({
+            "git": git,
+            "skipped": true,
+            "reason": "Git already available",
+        }));
+    }
+
+    let termux = is_termux_environment();
+    let target_os = if termux { "android" } else { std::env::consts::OS };
+    let distro = if termux {
+        "termux".to_string()
+    } else if target_os == "linux" {
+        current_linux_distro_id().unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let commands = unix_git_install_command_plan(
+        target_os,
+        &distro,
+        current_process_is_root(),
+        find_executable_on_path("sudo", &path_env, "").is_some(),
+        find_executable_on_path("brew", &path_env, "").is_some(),
+    )?;
+    for command in &commands {
+        run_unix_git_install_command(command)?;
+    }
+
+    let refreshed_path = std::env::var_os("PATH").unwrap_or_default();
+    let git = usable_git_on_path(&refreshed_path)
+        .ok_or_else(|| anyhow!("Git install command completed but git is still unavailable"))?;
+    Ok(serde_json::json!({
+        "git": git,
+        "commands": commands
+            .iter()
+            .map(unix_git_command_display)
+            .collect::<Vec<_>>(),
+    }))
+}
+
+fn usable_git_on_path<P>(path_env: P) -> Option<PathBuf>
+where
+    P: AsRef<OsStr>,
+{
+    let git = find_executable_on_path("git", path_env, "")?;
+    let status = Command::new(&git)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .ok()?;
+    status.success().then_some(git)
+}
+
+fn run_unix_git_install_command(command: &UnixGitInstallCommandPlan) -> Result<()> {
+    let status = Command::new(&command.program)
+        .args(&command.args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .with_context(|| format!("running {}", unix_git_command_display(command)))?;
+    if status.success() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "{} failed with exit {:?}",
+        unix_git_command_display(command),
+        status.code()
+    ))
+}
+
+fn unix_git_command_display(command: &UnixGitInstallCommandPlan) -> String {
+    if command.args.is_empty() {
+        return command.program.clone();
+    }
+    format!("{} {}", command.program, command.args.join(" "))
+}
+
+fn current_linux_distro_id() -> Option<String> {
+    linux_distro_id_from_os_release(&std::fs::read_to_string("/etc/os-release").ok()?)
+}
+
+fn linux_distro_id_from_os_release(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let Some(value) = line.strip_prefix("ID=") else {
+            continue;
+        };
+        return Some(value.trim_matches('"').to_ascii_lowercase());
+    }
+    None
 }
 
 /// Build the native Python virtual environment stage plan.
@@ -4958,6 +5157,67 @@ mod tests {
         assert_eq!(x86.is_zip, true);
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unix_git_install_command_plan_matches_shell_fallbacks() {
+        let debian = unix_git_install_command_plan("linux", "debian", false, true, false)
+            .expect("Debian with sudo should install Git");
+        assert_eq!(
+            debian,
+            vec![
+                UnixGitInstallCommandPlan {
+                    program: "sudo".to_string(),
+                    args: vec![
+                        "env".to_string(),
+                        "DEBIAN_FRONTEND=noninteractive".to_string(),
+                        "apt-get".to_string(),
+                        "update".to_string(),
+                        "-qq".to_string(),
+                    ],
+                },
+                UnixGitInstallCommandPlan {
+                    program: "sudo".to_string(),
+                    args: vec![
+                        "env".to_string(),
+                        "DEBIAN_FRONTEND=noninteractive".to_string(),
+                        "apt-get".to_string(),
+                        "install".to_string(),
+                        "-y".to_string(),
+                        "-qq".to_string(),
+                        "git".to_string(),
+                    ],
+                },
+            ]
+        );
+
+        let debian_root = unix_git_install_command_plan("linux", "ubuntu", true, false, false)
+            .expect("root Ubuntu should install Git without sudo");
+        assert_eq!(debian_root[0].program, "apt-get");
+        assert_eq!(debian_root[0].args, vec!["update".to_string(), "-qq".to_string()]);
+        assert_eq!(debian_root[1].program, "apt-get");
+
+        let fedora = unix_git_install_command_plan("linux", "fedora", true, false, false)
+            .expect("Fedora should install Git through dnf");
+        assert_eq!(fedora[0].program, "dnf");
+        assert_eq!(fedora[0].args, vec!["install", "-y", "git"]);
+
+        let arch = unix_git_install_command_plan("linux", "arch", true, false, false)
+            .expect("Arch should install Git through pacman");
+        assert_eq!(arch[0].program, "pacman");
+        assert_eq!(arch[0].args, vec!["-S", "--noconfirm", "git"]);
+
+        let macos = unix_git_install_command_plan("macos", "", false, false, true)
+            .expect("macOS with Homebrew should install Git through brew");
+        assert_eq!(macos[0].program, "brew");
+        assert_eq!(macos[0].args, vec!["install", "git"]);
+
+        let termux = unix_git_install_command_plan("android", "termux", false, false, false)
+            .expect("Termux should install Git through pkg");
+        assert_eq!(termux[0].program, "pkg");
+        assert_eq!(termux[0].args, vec!["install", "-y", "git"]);
+
+        assert!(unix_git_install_command_plan("linux", "opensuse", false, false, false).is_err());
     }
 
     #[test]

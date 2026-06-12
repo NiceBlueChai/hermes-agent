@@ -214,6 +214,9 @@ language-specific setup where needed.
   downloading PortableGit or 32-bit MinGit into `$HERMES_HOME/git`, updating current/User PATH entries, and persisting
   `HERMES_GIT_BASH_PATH` when Bash is available; the PowerShell stage remains fallback for download/extraction/PATH
   failures.
+- Unix `git` now has a Rust native-first availability/acquisition path: existing usable Git skips the shell stage, and
+  missing Git can be installed through Rust-planned `apt-get`, `dnf`, `pacman`, Homebrew, or Termux `pkg` commands before
+  falling back to `install.sh` for unsupported distros, macOS CLT prompts, or package-manager failures.
 - Windows `node` now has a Rust native-first portable ZIP path for Node.js v22, including official index resolution,
   ZIP download/extraction into `$HERMES_HOME/node`, current-process PATH update, and User PATH persistence; the
   PowerShell stage remains fallback for download, extraction, PATH, or version-verification failures.
@@ -299,8 +302,9 @@ language-specific setup where needed.
   Python dependency fallback when `uv sync --locked` cannot complete, Linux Playwright system-library recovery,
   Electron/npm cache purge and mirror recovery, privileged Linux `chrome-sandbox` repair, ffmpeg/package-manager
   recovery, and messaging-platform SDK recovery if the native targeted pip path fails.
-- Git is still installed natively only on Windows. Fresh archive installs and archive updates do not require Git, but
-  Unix Git acquisition remains a shell fallback when archive recovery is unavailable or direct script installs are used.
+- Fresh archive installs and archive updates do not require Git. Unix Git acquisition now has a native-first package
+  manager path for common Linux/macOS/Termux setups, while unsupported distro handling, macOS CLT dialog recovery, and
+  package-manager failures remain shell fallbacks.
 - Remaining platform shell/profile edge cases that are not covered by the current Rust path-stage helpers, plus direct
   `install.ps1` / `install.sh` invocation paths that intentionally stay supported for one release cycle.
 

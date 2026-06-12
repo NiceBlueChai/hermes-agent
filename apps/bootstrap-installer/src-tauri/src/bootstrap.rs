@@ -717,6 +717,8 @@ async fn run_bootstrap(
                     )
                     .await,
                 )
+            } else if !cfg!(target_os = "windows") && stage.name.eq_ignore_ascii_case("git") {
+                Some(crate::orchestrator::install_unix_git_runtime_stage().await)
             } else if cfg!(target_os = "windows")
                 && stage.name.eq_ignore_ascii_case("system-packages")
             {
@@ -1147,6 +1149,7 @@ fn should_fallback_native_stage(stage_name: &str, install_root: &std::path::Path
         || stage_name.eq_ignore_ascii_case("venv")
         || stage_name.eq_ignore_ascii_case("uv")
         || (cfg!(target_os = "windows") && stage_name.eq_ignore_ascii_case("git"))
+        || (!cfg!(target_os = "windows") && stage_name.eq_ignore_ascii_case("git"))
         || stage_name.eq_ignore_ascii_case("system-packages")
         || stage_name.eq_ignore_ascii_case("python")
         || (cfg!(target_os = "windows") && stage_name.eq_ignore_ascii_case("node"))
