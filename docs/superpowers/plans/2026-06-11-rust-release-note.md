@@ -18,12 +18,15 @@ User-visible behavior:
 - Native-first setup covers managed `uv`, Node.js, Python 3.11 probing, venv creation, Python dependency fallback
   tiers, npm/Playwright/TUI dependencies, desktop packaging recovery, platform SDK recovery, ripgrep, common Unix Git
   acquisition, and common Unix `ffmpeg` package-manager recovery.
+- Browser setup now reuses an existing Chrome/Chromium/Edge installation when available by writing
+  `AGENT_BROWSER_EXECUTABLE_PATH`, avoiding an unnecessary Playwright Chromium download without disabling browser tools.
 - Release packages can bundle reviewed Node.js, `uv`, Git for Windows, and ripgrep archives under `bootstrap-tools/`.
   The installer validates their manifest schema, HTTPS URLs, target architecture labels, size, and SHA-256 before use.
 - Native bootstrap diagnostics now preserve npm and Unix package-manager failure output, including permission hints for
   Hermes-managed npm cache and `node_modules` paths.
 - Release staging writes a checksummed bundled manifest beside the Rust manager binary and retains a
-  `bootstrap-tools-manifest.json` artifact for packaged runtime archives.
+  `bootstrap-tools-manifest.json` artifact for packaged runtime archives. Installer workflows now run a no-UI binary
+  self-check against the just-built setup executable, embedded install scripts, commit pin, and bootstrap-tools manifest.
 
 Compatibility and fallback:
 
@@ -34,8 +37,9 @@ Compatibility and fallback:
 - Script fallback is still used for unsupported platforms, denied or interactive privilege escalation, unrecognized
   package managers/distributions, failed package-manager recovery, and cases where both native pip and uv targeted SDK
   installs fail.
-- `ffmpeg`, Python wheels, Playwright browser downloads, and Electron caches are not bundled by default; they remain
-  download or package-manager work unless the release-size and security-update tradeoff is explicitly accepted later.
+- `ffmpeg`, Python wheels, Playwright browser downloads when no system browser is available, and Electron caches are not
+  bundled by default; they remain download or package-manager work unless the release-size and security-update tradeoff
+  is explicitly accepted later.
 
 Operational note:
 
