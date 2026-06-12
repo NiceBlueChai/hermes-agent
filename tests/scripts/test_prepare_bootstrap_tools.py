@@ -641,9 +641,21 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         )
         self.assertIn("--self-check-wheelhouse-arch x64", windows_workflow)
         self.assertIn("--self-check-wheelhouse-arch ${{ runner.arch", unix_workflow)
+        self.assertIn("Smoke built installer lifecycle", windows_workflow)
+        self.assertIn("Smoke built installer lifecycle", unix_workflow)
+        self.assertIn("Hermes-Setup.exe --self-check-lifecycle", windows_workflow)
+        self.assertIn("Hermes-Setup --self-check-lifecycle", unix_workflow)
         self.assertGreater(
             windows_workflow.index("- name: Smoke built installer binary"),
             windows_workflow.index("- name: Sign Hermes-Setup.exe with Azure Artifact Signing"),
+        )
+        self.assertGreater(
+            windows_workflow.index("- name: Smoke built installer lifecycle"),
+            windows_workflow.index("- name: Smoke built installer binary"),
+        )
+        self.assertGreater(
+            unix_workflow.index("- name: Smoke built installer lifecycle"),
+            unix_workflow.index("- name: Smoke built installer binary"),
         )
 
     def test_lifecycle_workflow_smokes_bootstrap_release_binary(self):

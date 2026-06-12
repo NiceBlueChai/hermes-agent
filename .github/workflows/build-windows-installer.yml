@@ -131,6 +131,10 @@ jobs:
           --self-check-wheelhouse-platform windows
           --self-check-wheelhouse-arch x64
 
+      - name: Smoke built installer lifecycle
+        run: >
+          .\apps\bootstrap-installer\src-tauri\target\release\Hermes-Setup.exe --self-check-lifecycle
+
       - name: Validate installer artifacts
         run: >
           python scripts/validate_installer_artifacts.py

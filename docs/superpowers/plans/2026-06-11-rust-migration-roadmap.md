@@ -361,6 +361,8 @@ language-specific setup where needed.
   against it, extending coverage from library tests toward the actual release executable entry point.
 - The bootstrap installer release binary now also exposes `--self-check-lifecycle`, running the local archive refresh,
   repair-clean, and lite-uninstall smoke through the actual executable in the Windows/Linux/macOS lifecycle matrix.
+- Windows, Linux, and macOS release installer workflows now also run the built `Hermes-Setup --self-check-lifecycle`
+  before artifact validation and upload, so manually triggered packaged builds exercise the same lifecycle smoke.
 
 **Still script-backed:**
 - Recovery tiers remain script-backed for failure cases that still need package-manager or mirror-specific handling:
