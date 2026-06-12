@@ -1291,6 +1291,25 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             workflow.index("- name: Validate macOS installer artifacts"),
         )
 
+    def test_windows_installer_workflow_verifies_signed_artifacts(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Verify signed installer artifacts", workflow)
+        self.assertIn("Get-AuthenticodeSignature", workflow)
+        self.assertIn("target/release/Hermes-Setup.exe", workflow)
+        self.assertIn("target/release/bundle/nsis/*.exe", workflow)
+        self.assertGreater(
+            workflow.index("- name: Verify signed installer artifacts"),
+            workflow.index("- name: Sign Hermes-Setup.exe with Azure Artifact Signing"),
+        )
+        self.assertLess(
+            workflow.index("- name: Verify signed installer artifacts"),
+            workflow.index("- name: Smoke built installer binary"),
+        )
+
     def test_tauri_bundle_declares_self_contained_resources(self):
         repo_root = Path(__file__).resolve().parents[2]
         config_path = repo_root / "apps" / "bootstrap-installer" / "src-tauri" / "tauri.conf.json"

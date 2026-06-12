@@ -139,6 +139,21 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
+      - name: Verify signed installer artifacts
+        run: |
+          $artifacts = @(
+            Get-Item "apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup.exe"
+            Get-ChildItem "apps/bootstrap-installer/src-tauri/target/release/bundle/nsis/*.exe"
+          )
+          foreach ($artifact in $artifacts) {
+            $signature = Get-AuthenticodeSignature $artifact.FullName
+            if ($signature.Status -ne "Valid") {
+              Write-Error "Invalid signature for $($artifact.FullName): $($signature.Status)"
+              exit 1
+            }
+            Write-Host "Valid signature: $($artifact.FullName)"
+          }
+
       - name: Smoke built installer binary
         run: >
           .\apps\bootstrap-installer\src-tauri\target\release\Hermes-Setup.exe --self-check
