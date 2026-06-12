@@ -49,6 +49,8 @@ User-visible behavior:
   Hermes-managed npm cache and `node_modules` paths.
 - Bootstrap diagnostics now report why every stage that can still invoke `install.ps1` or `install.sh` may do so,
   making native-first, probe-then-script, interactive, and unported fallback paths explicit in logs.
+- Bootstrap diagnostics now also report the total number of script-fallback-capable stages separately from pure
+  script-only stages, so release review can track shell dependency reduction more accurately.
 - If Node dependency or desktop build setup falls back to the install scripts, the Rust bootstrapper now passes its
   bundled bootstrap-tools path through so script recovery can restore npm-cache, Playwright browser, and Electron cache
   archives before network downloads.

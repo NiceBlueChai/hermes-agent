@@ -1008,6 +1008,7 @@ pub fn summarize_plan(report: &InstallStateReport, plan: &[PlannedStage]) -> Str
         .iter()
         .filter(|stage| stage.execution == StageExecutionMode::Script)
         .count();
+    let script_fallback_count = plan.iter().filter(|stage| stage.script_fallback).count();
     let script_reasons = plan
         .iter()
         .filter_map(|stage| {
@@ -1021,7 +1022,8 @@ pub fn summarize_plan(report: &InstallStateReport, plan: &[PlannedStage]) -> Str
     format!(
         concat!(
             "[bootstrap] rust orchestrator: install_root={} marker_exists={} ",
-            "native_stages={} probe_stages={} script_stages={} total_stages={} tools=[{}] ",
+            "native_stages={} probe_stages={} script_stages={} script_fallback_stages={} ",
+            "total_stages={} tools=[{}] ",
             "script_reasons=[{}]"
         ),
         report.install_root.display(),
@@ -1029,6 +1031,7 @@ pub fn summarize_plan(report: &InstallStateReport, plan: &[PlannedStage]) -> Str
         native_count,
         probe_count,
         script_count,
+        script_fallback_count,
         plan.len(),
         tool_summary,
         script_reasons
@@ -6563,6 +6566,7 @@ mod tests {
         assert!(summary.contains(&format!("native_stages={native_count}")));
         assert!(summary.contains(&format!("probe_stages={probe_count}")));
         assert!(summary.contains("script_stages=0"));
+        assert!(summary.contains("script_fallback_stages=3"));
         assert!(summary.contains("total_stages=4"));
         assert!(summary.contains("uv=missing"));
     }

@@ -250,6 +250,8 @@ language-specific setup where needed.
   the bootstrap orchestrator summary, distinguishing post-install UI stages from unported script fallbacks.
 - Stage planning now records a reason for every stage that can still invoke the install scripts, including
   native-first and probe-then-script fallbacks, so packaged bootstrap logs expose the remaining shell budget explicitly.
+- Bootstrap plan summaries now report both pure script stages and total script-fallback-capable stages, making the
+  remaining shell budget visible even when the normal path is native-first.
 - Bootstrap stage manifests are now generated in Rust for both Windows and Unix scripts, so setup no longer starts
   PowerShell or bash just to discover the stage list.
 - Non-interactive post-install stages that require user input are now skipped in Rust with the same successful skipped
