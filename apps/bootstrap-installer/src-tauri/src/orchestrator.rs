@@ -2861,53 +2861,103 @@ where
 }
 
 fn system_browser_command_candidates() -> &'static [&'static str] {
-    if cfg!(target_os = "windows") {
-        &[]
-    } else {
-        &[
+    system_browser_command_candidates_for_target(std::env::consts::OS)
+}
+
+fn system_browser_command_candidates_for_target(target_os: &str) -> &'static [&'static str] {
+    match target_os {
+        "windows" => &[
+            "chrome.exe",
+            "chrome",
+            "chromium.exe",
+            "chromium",
+            "brave.exe",
+            "brave",
+            "msedge.exe",
+            "msedge",
+        ],
+        "linux" => &[
             "google-chrome",
             "google-chrome-stable",
-            "chromium",
             "chromium-browser",
-            "chrome",
-        ]
+            "chromium",
+            "brave-browser",
+            "brave-browser-stable",
+            "brave",
+            "microsoft-edge",
+            "microsoft-edge-stable",
+            "msedge",
+        ],
+        _ => &[],
     }
 }
 
 fn system_browser_file_candidates() -> Vec<PathBuf> {
+    let roots = ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"]
+        .into_iter()
+        .filter_map(|name| std::env::var(name).ok().map(|value| (name, value)))
+        .collect::<Vec<_>>();
+    system_browser_file_candidates_for_target(std::env::consts::OS, roots)
+}
+
+fn system_browser_file_candidates_for_target<I, K, V>(target_os: &str, env_roots: I) -> Vec<PathBuf>
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
     let mut candidates = Vec::new();
-    if cfg!(target_os = "windows") {
-        for base in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
-            if let Ok(root) = std::env::var(base) {
-                candidates.push(
-                    PathBuf::from(&root)
-                        .join("Google")
-                        .join("Chrome")
-                        .join("Application")
-                        .join("chrome.exe"),
-                );
-                candidates.push(
-                    PathBuf::from(&root)
-                        .join("Microsoft")
-                        .join("Edge")
-                        .join("Application")
-                        .join("msedge.exe"),
-                );
-                candidates.push(
-                    PathBuf::from(&root)
-                        .join("Chromium")
-                        .join("Application")
-                        .join("chrome.exe"),
-                );
+    match target_os {
+        "windows" => {
+            for (_, root) in env_roots {
+                let root = root.as_ref();
+                if root.is_empty() {
+                    continue;
+                }
+                for parts in [
+                    &["Google", "Chrome", "Application", "chrome.exe"][..],
+                    &["Chromium", "Application", "chrome.exe"],
+                    &["Chromium", "Application", "chromium.exe"],
+                    &["BraveSoftware", "Brave-Browser", "Application", "brave.exe"],
+                    &["Microsoft", "Edge", "Application", "msedge.exe"],
+                ] {
+                    let mut path = PathBuf::from(root);
+                    for part in parts {
+                        path.push(part);
+                    }
+                    candidates.push(path);
+                }
             }
         }
-    } else if cfg!(target_os = "macos") {
-        candidates.push(PathBuf::from(
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        ));
-        candidates.push(PathBuf::from(
-            "/Applications/Chromium.app/Contents/MacOS/Chromium",
-        ));
+        "macos" => {
+            candidates.extend([
+                PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+                PathBuf::from("/Applications/Chromium.app/Contents/MacOS/Chromium"),
+                PathBuf::from("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
+                PathBuf::from("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+            ]);
+        }
+        "linux" => {
+            candidates.extend([
+                PathBuf::from("/opt/google/chrome/chrome"),
+                PathBuf::from("/usr/bin/google-chrome"),
+                PathBuf::from("/usr/bin/google-chrome-stable"),
+                PathBuf::from("/usr/bin/chromium-browser"),
+                PathBuf::from("/usr/bin/chromium"),
+                PathBuf::from("/usr/bin/brave-browser"),
+                PathBuf::from("/usr/bin/brave-browser-stable"),
+                PathBuf::from("/usr/bin/brave"),
+                PathBuf::from("/snap/bin/brave"),
+                PathBuf::from("/opt/brave.com/brave/brave-browser"),
+                PathBuf::from("/opt/brave.com/brave/brave"),
+                PathBuf::from("/opt/brave-bin/brave"),
+                PathBuf::from("/usr/bin/microsoft-edge"),
+                PathBuf::from("/usr/bin/microsoft-edge-stable"),
+                PathBuf::from("/opt/microsoft/msedge/microsoft-edge"),
+                PathBuf::from("/opt/microsoft/msedge/msedge"),
+            ]);
+        }
+        _ => {}
     }
     candidates
 }
@@ -6376,6 +6426,39 @@ mod tests {
         assert_eq!(decision.system_browser, Some(browser));
         assert!(decision.playwright.is_none());
         assert_eq!(decision.system_deps, "system-browser");
+    }
+
+    #[test]
+    fn system_browser_candidates_include_common_chromium_browsers() {
+        let linux_commands = system_browser_command_candidates_for_target("linux");
+        assert!(linux_commands.contains(&"brave-browser"));
+        assert!(linux_commands.contains(&"microsoft-edge"));
+
+        let macos_files = system_browser_file_candidates_for_target(
+            "macos",
+            [("ProgramFiles", ""), ("ProgramFiles(x86)", ""), ("LOCALAPPDATA", "")],
+        );
+        assert!(macos_files
+            .iter()
+            .any(|path| path.ends_with("Brave Browser.app/Contents/MacOS/Brave Browser")));
+        assert!(macos_files
+            .iter()
+            .any(|path| path.ends_with("Microsoft Edge.app/Contents/MacOS/Microsoft Edge")));
+
+        let windows_files = system_browser_file_candidates_for_target(
+            "windows",
+            [
+                ("ProgramFiles", "C:/Program Files"),
+                ("ProgramFiles(x86)", "C:/Program Files (x86)"),
+                ("LOCALAPPDATA", "C:/Users/Alice/AppData/Local"),
+            ],
+        );
+        assert!(windows_files.iter().any(|path| {
+            path.ends_with("BraveSoftware/Brave-Browser/Application/brave.exe")
+        }));
+        assert!(windows_files
+            .iter()
+            .any(|path| path.ends_with("Microsoft/Edge/Application/msedge.exe")));
     }
 
     #[test]
