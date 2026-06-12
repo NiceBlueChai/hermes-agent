@@ -505,6 +505,87 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
                     wheelhouse_arch="x64",
                 )
 
+    def test_validate_artifacts_accepts_python_runtime_manifest(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "python-runtime"
+            python = runtime / "python.exe"
+            manifest = runtime / "python-runtime-manifest.json"
+            runtime.mkdir(parents=True)
+            python.write_bytes(b"python runtime")
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "platform": "windows",
+                        "arch": "x64",
+                        "pythonTag": "cp311",
+                        "files": [
+                            {
+                                "name": python.name,
+                                "sizeBytes": len(b"python runtime"),
+                                "sha256": module.sha256_file(python),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            checked = module.validate_artifacts(
+                root,
+                ["python-runtime/python-runtime-manifest.json"],
+                python_runtime_dir=runtime,
+                python_runtime_platform="windows",
+                python_runtime_arch="x64",
+            )
+
+            self.assertEqual(checked, [manifest])
+
+    def test_validate_artifacts_rejects_unmanifested_python_runtime_payload(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "python-runtime"
+            python = runtime / "python.exe"
+            rogue = runtime / "rogue.dll"
+            manifest = runtime / "python-runtime-manifest.json"
+            runtime.mkdir(parents=True)
+            python.write_bytes(b"python runtime")
+            rogue.write_bytes(b"rogue")
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "platform": "windows",
+                        "arch": "x64",
+                        "pythonTag": "cp311",
+                        "files": [
+                            {
+                                "name": python.name,
+                                "sizeBytes": len(b"python runtime"),
+                                "sha256": module.sha256_file(python),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "unmanifested python runtime payload"):
+                module.validate_artifacts(
+                    root,
+                    ["python-runtime/python-runtime-manifest.json"],
+                    python_runtime_dir=runtime,
+                    python_runtime_platform="windows",
+                    python_runtime_arch="x64",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
