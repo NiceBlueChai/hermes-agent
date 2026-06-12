@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import sys
 import tarfile
 import unittest
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def _load_script_module():
@@ -451,6 +453,73 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                 entry.unlink()
             output_dir.rmdir()
             root.rmdir()
+
+    def test_populate_npm_cache_reuses_existing_npm_cache(self):
+        module = _load_script_module()
+        root = Path("tmp-bootstrap-tools-npm-cache-reuse-test")
+        source_cache = root / "source-cache"
+        target_cache = root / "target-cache"
+        cached_file = source_cache / "_cacache" / "content-v2" / "sha512" / "aa" / "bb"
+        cached_file.parent.mkdir(parents=True, exist_ok=True)
+        cached_file.write_bytes(b"cached package")
+        original_run = module.subprocess.run
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(list(args))
+            if list(args) == ["npm", "config", "get", "cache"]:
+                return SimpleNamespace(stdout=f"{source_cache}\n")
+            raise AssertionError(f"unexpected npm install command: {args!r}")
+
+        module.subprocess.run = fake_run
+        try:
+            module.populate_npm_cache(target_cache, Path.cwd())
+
+            self.assertEqual(
+                (target_cache / "_cacache" / "content-v2" / "sha512" / "aa" / "bb").read_bytes(),
+                b"cached package",
+            )
+            self.assertEqual(calls, [["npm", "config", "get", "cache"]])
+        finally:
+            module.subprocess.run = original_run
+            if root.exists():
+                shutil.rmtree(root)
+
+    def test_populate_npm_cache_falls_back_to_npm_ci_when_existing_cache_is_empty(self):
+        module = _load_script_module()
+        root = Path("tmp-bootstrap-tools-npm-cache-fallback-test")
+        source_cache = root / "empty-source-cache"
+        target_cache = root / "target-cache"
+        source_cache.mkdir(parents=True, exist_ok=True)
+        original_run = module.subprocess.run
+        calls = []
+
+        def fake_run(args, **kwargs):
+            args_list = list(args)
+            calls.append(args_list)
+            if args_list == ["npm", "config", "get", "cache"]:
+                return SimpleNamespace(stdout=f"{source_cache}\n")
+            self.assertEqual(args_list[:2], ["npm", "ci"])
+            self.assertEqual(Path(kwargs["env"]["npm_config_cache"]), target_cache)
+            cached_file = target_cache / "_cacache" / "content-v2" / "sha512" / "aa" / "bb"
+            cached_file.parent.mkdir(parents=True, exist_ok=True)
+            cached_file.write_bytes(b"fresh cached package")
+            return SimpleNamespace(stdout="")
+
+        module.subprocess.run = fake_run
+        try:
+            module.populate_npm_cache(target_cache, Path.cwd())
+
+            self.assertEqual(
+                (target_cache / "_cacache" / "content-v2" / "sha512" / "aa" / "bb").read_bytes(),
+                b"fresh cached package",
+            )
+            self.assertEqual(calls[0], ["npm", "config", "get", "cache"])
+            self.assertEqual(calls[1][:2], ["npm", "ci"])
+        finally:
+            module.subprocess.run = original_run
+            if root.exists():
+                shutil.rmtree(root)
 
     def test_manifest_records_archive_platform_size_and_sha256(self):
         module = _load_script_module()

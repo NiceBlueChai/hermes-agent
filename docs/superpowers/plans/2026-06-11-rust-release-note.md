@@ -42,6 +42,8 @@ User-visible behavior:
   enabling reviewed ffmpeg payloads without making ffmpeg a required bundled dependency.
 - Native bootstrap diagnostics now preserve npm and Unix package-manager failure output, including permission hints for
   Hermes-managed npm cache and `node_modules` paths.
+- Release npm-cache archive preparation reuses an existing populated workflow npm cache before falling back to
+  `npm ci`, reducing release packaging time and avoidable registry traffic.
 - Native and script-fallback desktop packaging now direct Electron download/build caches into
   `HERMES_HOME/electron-cache`, so repair and lite uninstall can remove that installer-owned cache without touching
   unrelated user-wide Electron caches.

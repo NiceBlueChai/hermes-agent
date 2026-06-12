@@ -689,6 +689,12 @@ def npm_cache_archive_name(platform: str, arch: str) -> str:
 def populate_npm_cache(cache_dir: Path, cwd: Path) -> None:
     """Populate one npm cache by installing the locked workspace dependencies."""
 
+    existing_cache = npm_config_cache_dir(cwd)
+    if existing_cache and existing_cache.resolve() != cache_dir.resolve() and npm_cache_has_content(existing_cache):
+        shutil.copytree(existing_cache, cache_dir, dirs_exist_ok=True)
+        if npm_cache_has_content(cache_dir):
+            return
+
     env = os.environ.copy()
     env["npm_config_cache"] = str(cache_dir)
     subprocess.run(
@@ -697,6 +703,26 @@ def populate_npm_cache(cache_dir: Path, cwd: Path) -> None:
         env=env,
         check=True,
     )
+
+
+def npm_config_cache_dir(cwd: Path) -> Path | None:
+    """Return the npm cache directory for the current workspace, if npm reports one."""
+
+    try:
+        result = subprocess.run(
+            ["npm", "config", "get", "cache"],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+    value = result.stdout.strip()
+    if not value:
+        return None
+    return Path(value).expanduser()
 
 
 def npm_cache_has_content(cache_dir: Path) -> bool:

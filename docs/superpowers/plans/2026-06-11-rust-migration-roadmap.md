@@ -306,6 +306,8 @@ language-specific setup where needed.
 - Native `node-deps` can now consume optional manifest-verified `npm-cache-<platform>-<arch>` archives from
   `bootstrap-tools/` before running npm commands, so release packages can pre-seed the Hermes-managed npm cache while
   keeping normal npm registry fallback.
+- npm cache archive preparation now reuses the current workflow npm cache when it already contains package content,
+  avoiding a second full `npm ci` during release packaging while keeping the registry-backed fallback.
 - Script fallback for Python, venv, dependency, and platform-SDK stages now receives the same managed uv and pip cache
   environment as the native Rust path, keeping retry/recovery installs under Hermes-owned runtime directories.
 - `venv` now runs native-first through Rust by invoking `uv venv venv --python 3.11` in the checkout, with script
