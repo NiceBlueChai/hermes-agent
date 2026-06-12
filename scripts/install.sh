@@ -1454,6 +1454,8 @@ if expected_hash != sha256_file(archive).lower():
     raise RuntimeError(f"archive checksum mismatch: {archive.name}")
 
 def safe_member(name: str) -> bool:
+    if not name.strip():
+        return False
     path = Path(name)
     return not path.is_absolute() and ".." not in path.parts
 

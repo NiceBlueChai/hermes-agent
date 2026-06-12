@@ -25,6 +25,11 @@ def _load_script_module():
     return module
 
 
+def _read_install_sh() -> str:
+    repo_root = Path(__file__).resolve().parents[2]
+    return (repo_root / "scripts" / "install.sh").read_text(encoding="utf-8")
+
+
 class PrepareBootstrapToolsTests(unittest.TestCase):
     """Validate archive naming logic used by the release preparation helper."""
 
@@ -90,6 +95,11 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                 "PortableGit-2.54.0-arm64.7z.exe",
             ],
         )
+
+    def test_install_sh_cache_archive_guard_rejects_blank_member_names(self):
+        script = _read_install_sh()
+
+        self.assertIn("if not name.strip():", script)
 
     def test_archive_specs_reject_unknown_architecture(self):
         module = _load_script_module()

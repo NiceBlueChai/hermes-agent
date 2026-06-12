@@ -741,6 +741,8 @@ language-specific setup where needed.
   archives can only install regular files and directories.
 - Shell-script cache-archive fallback now applies the same regular-file/directory-only tar extraction rule, keeping
   fallback behavior aligned with the Rust installer path.
+- Shell-script cache-archive fallback now rejects blank archive member names before extraction, matching the Rust
+  installer archive path boundary.
 - PowerShell cache-archive fallback now validates ZIP member paths before `Expand-Archive`, keeping Windows script
   fallback aligned with the Rust installer ZIP extraction boundary.
 - Installer artifact validation now receives the expected release platform from the Windows/Linux/macOS workflows and
