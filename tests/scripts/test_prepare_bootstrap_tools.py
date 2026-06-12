@@ -616,8 +616,14 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         self.assertIn("cargo build --release --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml", workflow)
         self.assertIn("Run bootstrap release binary self-check", workflow)
         self.assertIn("--self-check-expect-commit \"${{ github.sha }}\"", workflow)
+        self.assertIn("Run bootstrap release binary lifecycle self-check", workflow)
+        self.assertIn("--self-check-lifecycle", workflow)
         self.assertGreater(
             workflow.index("- name: Run bootstrap release binary self-check"),
+            workflow.index("- name: Build bootstrap release binary"),
+        )
+        self.assertGreater(
+            workflow.index("- name: Run bootstrap release binary lifecycle self-check"),
             workflow.index("- name: Build bootstrap release binary"),
         )
 

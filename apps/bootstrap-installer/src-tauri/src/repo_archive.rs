@@ -5,7 +5,10 @@
 //! the managed checkout directory without overwriting user data.
 
 use anyhow::{anyhow, Context, Result};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+use zip::write::SimpleFileOptions;
 
 /// Source marker written into archive-created checkouts.
 pub const SOURCE_MARKER_NAME: &str = ".hermes-source.json";
@@ -38,6 +41,143 @@ impl RepoArchiveSpec {
         }
         Err(anyhow!("repo archive requires a commit or branch ref"))
     }
+}
+
+/// Run a local no-network archive/update/repair/uninstall lifecycle smoke.
+pub fn archive_lifecycle_self_check() -> Result<serde_json::Value> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!(
+        "hermes-repo-archive-self-check-{}-{stamp}",
+        std::process::id()
+    ));
+    let result = archive_lifecycle_self_check_in(&root);
+    let cleanup_result = std::fs::remove_dir_all(&root);
+    let report = result?;
+    if let Err(err) = cleanup_result {
+        if err.kind() != std::io::ErrorKind::NotFound {
+            return Err(err).with_context(|| format!("cleaning self-check root {}", root.display()));
+        }
+    }
+    Ok(report)
+}
+
+fn archive_lifecycle_self_check_in(root: &Path) -> Result<serde_json::Value> {
+    let hermes_home = root.join("home");
+    let install_root = hermes_home.join("hermes-agent");
+    let archive = root.join("fresh.zip");
+    let update_archive = root.join("update.zip");
+    std::fs::create_dir_all(root)
+        .with_context(|| format!("creating self-check root {}", root.display()))?;
+    write_local_zip(
+        &archive,
+        &[
+            ("hermes-agent-main/README.md", b"fresh"),
+            ("hermes-agent-main/scripts/install.sh", b"#!/bin/sh\n"),
+        ],
+    )?;
+    write_local_zip(
+        &update_archive,
+        &[
+            ("hermes-agent-main/README.md", b"updated"),
+            ("hermes-agent-main/scripts/install.sh", b"#!/bin/sh\necho update\n"),
+        ],
+    )?;
+
+    extract_repo_archive_to_install_root(&archive, &install_root)?;
+    let spec = RepoArchiveSpec {
+        owner: "NousResearch".into(),
+        repo: "hermes-agent".into(),
+        commit: None,
+        branch: Some("main".into()),
+    };
+    write_archive_source_marker(&install_root, &spec, &archive, false)?;
+    let source_marker_before = std::fs::read(install_root.join(SOURCE_MARKER_NAME))
+        .context("reading source marker before refresh")?;
+    seed_managed_runtime_state(&hermes_home)?;
+    std::fs::write(hermes_home.join("config.yaml"), b"model: test\n")
+        .context("writing preserved config")?;
+    hermes_manager::commands::install_metadata(&hermes_home).context("recording install metadata")?;
+
+    refresh_existing_checkout_from_archive(&update_archive, &install_root)?;
+    let readme = std::fs::read(install_root.join("README.md")).context("reading refreshed README")?;
+    if readme != b"updated" {
+        return Err(anyhow!("archive refresh did not update repository contents"));
+    }
+    let source_marker_after = std::fs::read(install_root.join(SOURCE_MARKER_NAME))
+        .context("reading source marker after refresh")?;
+    if source_marker_after != source_marker_before {
+        return Err(anyhow!("archive refresh changed the source marker"));
+    }
+    if !hermes_home.join("config.yaml").exists() {
+        return Err(anyhow!("archive refresh removed user config"));
+    }
+
+    let repaired = hermes_manager::commands::repair_clean(&hermes_home).context("running repair-clean")?;
+    if !repaired.iter().any(|path| path.ends_with("hermes-agent")) {
+        return Err(anyhow!("repair-clean did not remove the checkout"));
+    }
+    if !repaired.iter().any(|path| path.ends_with("bootstrap-cache")) {
+        return Err(anyhow!("repair-clean did not remove bootstrap-cache"));
+    }
+    if install_root.exists() {
+        return Err(anyhow!("repair-clean left the checkout behind"));
+    }
+    if !hermes_home.join("config.yaml").exists() {
+        return Err(anyhow!("repair-clean removed user config"));
+    }
+
+    seed_managed_runtime_state(&hermes_home)?;
+    hermes_manager::commands::install_metadata(&hermes_home).context("recording install metadata after repair")?;
+    let planned =
+        hermes_manager::commands::uninstall_lite_plan(&hermes_home).context("planning lite uninstall")?;
+    let removed = hermes_manager::commands::uninstall_lite(&hermes_home).context("running lite uninstall")?;
+    if removed != planned {
+        return Err(anyhow!("lite uninstall removed a different set than it planned"));
+    }
+    if !hermes_home.join("config.yaml").exists() {
+        return Err(anyhow!("lite uninstall removed user config"));
+    }
+    if install_root.exists() || hermes_home.join("bootstrap-cache").exists() {
+        return Err(anyhow!("lite uninstall left managed install state behind"));
+    }
+
+    Ok(serde_json::json!({
+        "archiveLifecycle": "ok",
+        "plannedRemovals": planned.len(),
+        "repairRemovals": repaired.len(),
+    }))
+}
+
+fn seed_managed_runtime_state(hermes_home: &Path) -> Result<()> {
+    for runtime_root in hermes_manager::paths::managed_runtime_roots(hermes_home) {
+        std::fs::create_dir_all(&runtime_root)
+            .with_context(|| format!("creating managed runtime root {}", runtime_root.display()))?;
+    }
+    for runtime_file in hermes_manager::paths::managed_runtime_files(hermes_home) {
+        if let Some(parent) = runtime_file.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating runtime file parent {}", parent.display()))?;
+        }
+        std::fs::write(&runtime_file, b"managed")
+            .with_context(|| format!("writing managed runtime file {}", runtime_file.display()))?;
+    }
+    Ok(())
+}
+
+fn write_local_zip(path: &Path, entries: &[(&str, &[u8])]) -> Result<()> {
+    let file = std::fs::File::create(path).with_context(|| format!("creating {}", path.display()))?;
+    let mut zip = zip::ZipWriter::new(file);
+    for (name, bytes) in entries {
+        zip.start_file(*name, SimpleFileOptions::default())
+            .with_context(|| format!("adding zip entry {name}"))?;
+        zip.write_all(bytes)
+            .with_context(|| format!("writing zip entry {name}"))?;
+    }
+    zip.finish().context("finishing zip archive")?;
+    Ok(())
 }
 
 /// Download a GitHub repository archive and extract it into a fresh install root.
@@ -246,18 +386,9 @@ fn remove_dir_if_exists(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use zip::write::SimpleFileOptions;
 
     fn write_test_zip(path: &std::path::Path, entries: &[(&str, &[u8])]) {
-        let file = std::fs::File::create(path).unwrap();
-        let mut zip = zip::ZipWriter::new(file);
-        for (name, bytes) in entries {
-            zip.start_file(*name, SimpleFileOptions::default())
-                .unwrap();
-            zip.write_all(bytes).unwrap();
-        }
-        zip.finish().unwrap();
+        write_local_zip(path, entries).unwrap();
     }
 
     #[test]
@@ -498,6 +629,14 @@ mod tests {
         assert!(!install_root.exists());
         assert!(!hermes_home.join("bootstrap-cache").exists());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn archive_lifecycle_self_check_returns_report() {
+        let report = archive_lifecycle_self_check().unwrap();
+        assert_eq!(report["archiveLifecycle"], "ok");
+        assert!(report["plannedRemovals"].as_u64().unwrap() > 0);
+        assert!(report["repairRemovals"].as_u64().unwrap() > 0);
     }
 }
 

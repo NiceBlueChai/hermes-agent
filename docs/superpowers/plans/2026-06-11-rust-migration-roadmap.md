@@ -351,6 +351,8 @@ language-specific setup where needed.
   Windows/Linux/macOS installer lifecycle smoke matrix runs the manager and archive lifecycle smoke tests on each OS.
 - The same lifecycle smoke matrix now builds the bootstrap installer release binary and runs `Hermes-Setup --self-check`
   against it, extending coverage from library tests toward the actual release executable entry point.
+- The bootstrap installer release binary now also exposes `--self-check-lifecycle`, running the local archive refresh,
+  repair-clean, and lite-uninstall smoke through the actual executable in the Windows/Linux/macOS lifecycle matrix.
 
 **Still script-backed:**
 - Recovery tiers remain script-backed for failure cases that still need package-manager or mirror-specific handling:

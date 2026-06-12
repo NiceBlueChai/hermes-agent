@@ -197,6 +197,16 @@ jobs:
           fi
           "$setup_bin" --self-check --self-check-expect-commit "${{ github.sha }}"
 
+      - name: Run bootstrap release binary lifecycle self-check
+        shell: bash
+        run: |
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+              setup_bin="apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup.exe"
+          else
+              setup_bin="apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup"
+          fi
+          "$setup_bin" --self-check-lifecycle
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30

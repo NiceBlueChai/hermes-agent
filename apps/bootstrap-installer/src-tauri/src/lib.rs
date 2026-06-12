@@ -593,6 +593,30 @@ fn write_self_check_and_exit(args: &[String]) {
     std::process::exit(if report.ok { 0 } else { 1 });
 }
 
+fn write_lifecycle_self_check_and_exit() {
+    let report = match repo_archive::archive_lifecycle_self_check() {
+        Ok(details) => serde_json::json!({
+            "ok": true,
+            "details": details,
+            "errors": [],
+        }),
+        Err(err) => serde_json::json!({
+            "ok": false,
+            "details": null,
+            "errors": [format!("{err:#}")],
+        }),
+    };
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report).expect("lifecycle self-check report serializes")
+    );
+    std::process::exit(if report["ok"].as_bool().unwrap_or(false) {
+        0
+    } else {
+        1
+    });
+}
+
 /// Process-wide install state, shared across Tauri commands.
 ///
 /// The bootstrap is a one-shot, single-tenant process — we only need one
@@ -623,6 +647,9 @@ fn get_mode(state: tauri::State<'_, Arc<AppState>>) -> AppMode {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--self-check-lifecycle") {
+        write_lifecycle_self_check_and_exit();
+    }
     if args.iter().any(|arg| arg == "--self-check") {
         write_self_check_and_exit(&args);
     }
