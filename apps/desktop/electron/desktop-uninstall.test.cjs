@@ -161,6 +161,42 @@ test('modeRequiresPythonUninstaller allows lite uninstall to run with only the R
   assert.equal(modeRequiresPythonUninstaller('full', managerCommand), true)
 })
 
+test('modeRequiresPythonUninstaller lets packaged macOS and Windows GUI cleanup use Rust only', () => {
+  const managerCommand = {
+    command: '/resources/hermes-manager/hermes-manager',
+    args: ['uninstall-gui-build', '--user-data']
+  }
+
+  assert.equal(
+    modeRequiresPythonUninstaller('gui', managerCommand, {
+      appPath: '/Applications/Hermes.app',
+      platform: 'darwin'
+    }),
+    false
+  )
+  assert.equal(
+    modeRequiresPythonUninstaller('gui', managerCommand, {
+      appPath: 'C:\\Users\\x\\AppData\\Local\\Programs\\Hermes',
+      platform: 'win32'
+    }),
+    false
+  )
+  assert.equal(
+    modeRequiresPythonUninstaller('gui', managerCommand, {
+      appPath: '/home/x/Apps/Hermes.AppImage',
+      platform: 'linux'
+    }),
+    true
+  )
+  assert.equal(
+    modeRequiresPythonUninstaller('gui', managerCommand, {
+      appPath: null,
+      platform: 'darwin'
+    }),
+    true
+  )
+})
+
 // --- modeRemovesAgent / modeRemovesUserData ---
 
 test('mode predicates classify what each mode removes', () => {

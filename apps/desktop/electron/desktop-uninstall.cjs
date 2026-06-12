@@ -109,8 +109,15 @@ function buildInstallMetadataCommand({ managerPath, hermesHome, managerExists = 
 /**
  * True when a mode still needs the Python uninstaller before cleanup can run.
  */
-function modeRequiresPythonUninstaller(mode, managerCommand = null) {
-  return mode !== 'lite' || !managerCommand
+function modeRequiresPythonUninstaller(mode, managerCommand = null, options = {}) {
+  if (mode === 'lite') {
+    return !managerCommand
+  }
+  if (mode === 'gui') {
+    const platform = options.platform || process.platform
+    return !managerCommand || !options.appPath || platform === 'linux'
+  }
+  return true
 }
 
 /** True when `mode` removes the agent (lite/full), false for gui-only. */

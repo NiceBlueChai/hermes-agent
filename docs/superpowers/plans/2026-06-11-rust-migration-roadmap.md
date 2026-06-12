@@ -373,6 +373,9 @@ language-specific setup where needed.
 - `hermes-manager uninstall-gui-build --user-data` now resolves the Electron desktop `userData` directory with
   platform-native rules and removes it as part of GUI-only desktop cleanup, while preserving `$HERMES_HOME` config and
   sessions.
+- Packaged macOS/Windows GUI-only cleanup can now continue with the Rust manager when the Python venv is missing, as
+  long as the running app bundle/install directory is resolvable; Linux still keeps the Python path until `.desktop`
+  entry cleanup has Rust parity.
 - `hermes-manager repair-clean` now removes the same Hermes-managed runtime roots as repairable install state, so
   broken managed Node/Python/uv/pip/Git/bootstrap-cache directories and staged updater binaries are recreated by the
   next bootstrap while user config and data stay intact.

@@ -134,7 +134,8 @@ if (REMOTE_DISPLAY_REASON) {
   // with only --disable-gpu: force compositing onto the CPU too.
   app.commandLine.appendSwitch('disable-gpu-compositing')
   console.log(
-    `[hermes] remote display detected (${REMOTE_DISPLAY_REASON}); disabling GPU hardware acceleration to prevent flicker`
+    `[hermes] remote display detected (${REMOTE_DISPLAY_REASON}); ` +
+      'disabling GPU hardware acceleration to prevent flicker'
   )
 }
 
@@ -183,7 +184,8 @@ function loadInstallStamp() {
       if (parsed && typeof parsed === 'object' && typeof parsed.commit === 'string' && parsed.commit.length >= 7) {
         if (parsed.schemaVersion !== INSTALL_STAMP_SCHEMA_VERSION) {
           console.warn(
-            `[hermes] install-stamp.json schemaVersion ${parsed.schemaVersion} != expected ${INSTALL_STAMP_SCHEMA_VERSION}; ignoring`
+            `[hermes] install-stamp.json schemaVersion ${parsed.schemaVersion} != ` +
+              `expected ${INSTALL_STAMP_SCHEMA_VERSION}; ignoring`
           )
           continue
         }
@@ -206,13 +208,16 @@ function loadInstallStamp() {
 const INSTALL_STAMP = loadInstallStamp()
 if (INSTALL_STAMP) {
   console.log(
-    `[hermes] install stamp: ${INSTALL_STAMP.commit.slice(0, 12)}${INSTALL_STAMP.branch ? ` (${INSTALL_STAMP.branch})` : ''}${INSTALL_STAMP.dirty ? ' [DIRTY]' : ''} from ${INSTALL_STAMP.source || 'unknown'}`
+    `[hermes] install stamp: ${INSTALL_STAMP.commit.slice(0, 12)}` +
+      `${INSTALL_STAMP.branch ? ` (${INSTALL_STAMP.branch})` : ''}` +
+      `${INSTALL_STAMP.dirty ? ' [DIRTY]' : ''} from ${INSTALL_STAMP.source || 'unknown'}`
   )
 } else if (IS_PACKAGED) {
   // Dev builds without a stamp are normal; packaged builds without one
   // mean the bootstrap won't know what to clone. Surface clearly.
   console.error(
-    '[hermes] WARNING: no install-stamp.json found in packaged build. First-launch bootstrap will not have a pinned ref to install.'
+    '[hermes] WARNING: no install-stamp.json found in packaged build. ' +
+      'First-launch bootstrap will not have a pinned ref to install.'
   )
 }
 
@@ -808,7 +813,11 @@ function ensureWslWindowsFonts() {
     fs.mkdirSync(confDir, { recursive: true })
     fs.writeFileSync(
       confPath,
-      `<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n<fontconfig>\n  <dir>${fontsDir}</dir>\n</fontconfig>\n`
+      '<?xml version="1.0"?>\n' +
+        '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n' +
+        '<fontconfig>\n' +
+        `  <dir>${fontsDir}</dir>\n` +
+        '</fontconfig>\n'
     )
     rememberLog(`[fonts] wired WSL Windows fonts for renderer: ${fontsDir}`)
 
@@ -1153,10 +1162,14 @@ function findSystemPython() {
   if (pyExe) {
     for (const version of SUPPORTED_VERSIONS) {
       try {
-        const out = execFileSync(pyExe, [`-${version}`, '-c', 'import sys; print(sys.executable)'], hiddenWindowsChildOptions({
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'ignore']
-        }))
+        const out = execFileSync(
+          pyExe,
+          [`-${version}`, '-c', 'import sys; print(sys.executable)'],
+          hiddenWindowsChildOptions({
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore']
+          })
+        )
         const candidate = out.trim()
         if (candidate && fileExists(candidate)) return candidate
       } catch {
@@ -1291,11 +1304,15 @@ function resolveUpdateRoot() {
 
 function runGit(args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(resolveGitBinary(), IS_WINDOWS ? ['-c', 'windows.appendAtomically=false', ...args] : args, hiddenWindowsChildOptions({
-      cwd: options.cwd,
-      env: { ...process.env, ...(options.env || {}), GIT_TERMINAL_PROMPT: '0' },
-      stdio: ['ignore', 'pipe', 'pipe']
-    }))
+    const child = spawn(
+      resolveGitBinary(),
+      IS_WINDOWS ? ['-c', 'windows.appendAtomically=false', ...args] : args,
+      hiddenWindowsChildOptions({
+        cwd: options.cwd,
+        env: { ...process.env, ...(options.env || {}), GIT_TERMINAL_PROMPT: '0' },
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+    )
 
     let stdout = ''
     let stderr = ''
@@ -4793,7 +4810,8 @@ async function startHermes() {
         )
         rejectBackendStart?.(
           new Error(
-            `Hermes backend exited before it became ready (${signal || code}). Log: ${DESKTOP_LOG_PATH}\n${recentHermesLog()}`
+            `Hermes backend exited before it became ready (${signal || code}). ` +
+              `Log: ${DESKTOP_LOG_PATH}\n${recentHermesLog()}`
           )
         )
       }
@@ -4998,7 +5016,8 @@ function createWindow() {
 
       if (rendererReloadTimes.length >= RENDERER_RELOAD_MAX) {
         rememberLog(
-          `[renderer] suppressing reload: ${rendererReloadTimes.length} crashes within ${RENDERER_RELOAD_WINDOW_MS}ms (likely a crash loop)`
+          `[renderer] suppressing reload: ${rendererReloadTimes.length} crashes within ` +
+            `${RENDERER_RELOAD_WINDOW_MS}ms (likely a crash loop)`
         )
 
         return
@@ -6066,9 +6085,14 @@ async function runDesktopUninstall(mode) {
     managerPath,
     hermesHome: HERMES_HOME
   })
+  const appPath = resolveRemovableAppPath(process.execPath, process.platform, process.env)
+  const removeBundle = shouldRemoveAppBundle(IS_PACKAGED, appPath) ? appPath : null
   const venvPy = uninstallVenvPython()
   const hasVenvPython = fileExists(venvPy)
-  if (!hasVenvPython && modeRequiresPythonUninstaller(mode, managerCommand)) {
+  if (!hasVenvPython && modeRequiresPythonUninstaller(mode, managerCommand, {
+    appPath: removeBundle,
+    platform: process.platform
+  })) {
     return {
       ok: false,
       error: 'agent-missing',
@@ -6102,8 +6126,6 @@ async function runDesktopUninstall(mode) {
     }
   }
 
-  const appPath = resolveRemovableAppPath(process.execPath, process.platform, process.env)
-  const removeBundle = shouldRemoveAppBundle(IS_PACKAGED, appPath) ? appPath : null
   const cleanupCwd = app.getPath('temp')
 
   // CRITICAL (Windows): tear down every backend the desktop owns and wait for
@@ -6163,7 +6185,8 @@ async function runDesktopUninstall(mode) {
 
   rememberLog(
     `[uninstall] launched detached cleanup (${mode}): ${scriptPath} ` +
-      `(removesAgent=${modeRemovesAgent(mode)} removesUserData=${modeRemovesUserData(mode)} bundle=${removeBundle || 'none'})`
+      `(removesAgent=${modeRemovesAgent(mode)} removesUserData=${modeRemovesUserData(mode)} ` +
+      `bundle=${removeBundle || 'none'})`
   )
 
   // Give the renderer a beat to show its "uninstalling…" state, then quit so
