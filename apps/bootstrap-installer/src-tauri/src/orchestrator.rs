@@ -4810,7 +4810,8 @@ fn stage_execution_mode(name: &str) -> StageExecutionMode {
         && name.eq_ignore_ascii_case("desktop") {
         return StageExecutionMode::NativeWithScriptFallback;
     }
-    if name.eq_ignore_ascii_case("node") {
+    if node_stage_is_native_first_for_target(std::env::consts::OS)
+        && name.eq_ignore_ascii_case("node") {
         return StageExecutionMode::NativeWithScriptFallback;
     }
     if name.eq_ignore_ascii_case("uv") {
@@ -4844,6 +4845,10 @@ fn stage_execution_mode(name: &str) -> StageExecutionMode {
 }
 
 fn node_deps_stage_is_native_first_for_target(target_os: &str) -> bool {
+    matches!(target_os, "windows" | "macos" | "linux")
+}
+
+fn node_stage_is_native_first_for_target(target_os: &str) -> bool {
     matches!(target_os, "windows" | "macos" | "linux")
 }
 
@@ -4984,14 +4989,15 @@ mod tests {
         assert_eq!(plan[4].execution, git_execution);
         assert_eq!(plan[4].rust_probe, !cfg!(target_os = "windows"));
         assert_eq!(plan[4].script_fallback, true);
-        let node_execution = if cfg!(target_os = "windows") {
+        let node_native = node_stage_is_native_first_for_target(std::env::consts::OS);
+        let node_execution = if node_native {
             StageExecutionMode::NativeWithScriptFallback
         } else {
             StageExecutionMode::ProbeThenScript
         };
         assert_eq!(plan[5].name, "node");
         assert_eq!(plan[5].execution, node_execution);
-        assert_eq!(plan[5].rust_probe, !cfg!(target_os = "windows"));
+        assert_eq!(plan[5].rust_probe, !node_native);
         assert_eq!(plan[5].script_fallback, true);
         assert_eq!(plan[6].name, "system-packages");
         assert_eq!(plan[6].execution, StageExecutionMode::NativeWithScriptFallback);
@@ -5076,6 +5082,17 @@ mod tests {
             );
         }
         assert!(!desktop_stage_is_native_first_for_target("freebsd"));
+    }
+
+    #[test]
+    fn node_stage_is_native_first_on_packaged_platforms() {
+        for target_os in ["windows", "macos", "linux"] {
+            assert!(
+                node_stage_is_native_first_for_target(target_os),
+                "{target_os} should run Node natively before script fallback"
+            );
+        }
+        assert!(!node_stage_is_native_first_for_target("freebsd"));
     }
 
     #[test]
