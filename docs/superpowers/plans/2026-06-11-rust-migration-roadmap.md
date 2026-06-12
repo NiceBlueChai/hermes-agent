@@ -48,6 +48,23 @@ scripts should become recovery paths instead of the normal first-run path.
 6. Add release manifests and smoke tests so every bundled binary has an owner, checksum, and update path.
 7. Only after installer parity, evaluate larger Rust runtime candidates with measurable dependency or reliability wins.
 
+**Execution ladder from the current branch:**
+1. Finish the normal packaged-installer path first: repository archive, Git recovery, Node, `uv`, Python, venv,
+   locked Python dependencies, npm dependencies, Playwright browser download, desktop build, config, PATH, shortcuts,
+   metadata, and completion stages should all be Rust-native or native-first.
+2. Move recovery branches one at a time after the normal path is native-first. The current priority order is Unix
+   `ffmpeg` package-manager recovery, Linux Playwright system-library recovery, Electron/npm cache and mirror recovery,
+   Python dependency fallback tiers, remaining privileged `chrome-sandbox` repair, and platform SDK fallback recovery.
+3. Keep direct `install.ps1` and `install.sh` supported for one release cycle, but make packaged desktop/bootstrap
+   paths reach them only for unsupported platforms, denied privileges, mirror/package-manager failures, or explicitly
+   interactive recovery.
+4. Expand bundled resources only when they clearly reduce first-run work. Node, `uv`, Git for Windows, and ripgrep are
+   appropriate bootstrap-owned tools; `ffmpeg`, Python wheels, Playwright browsers, and Electron caches need explicit
+   size, patch cadence, and security-update justification before bundling.
+5. Promote the release artifact smoke from local archive lifecycle tests to real packaged installer tests before
+   removing any fallback. A stage is considered "highest" only when the packaged artifact includes the needed binary or
+   native recovery path, verifies it, records ownership metadata, and can uninstall/repair it without Python.
+
 **Never-rust-first areas for this roadmap:**
 - Model/provider orchestration, conversation state, plugin/skill execution, and fast-changing agent features.
 - Messaging gateway platform behavior unless a low-level helper has a stable API and a clear dependency payoff.
@@ -289,6 +306,9 @@ language-specific setup where needed.
 - Unix bootstrap manifests now expose the same `platform-sdks` stage after config preparation, so Linux and macOS GUI
   installs also skip SDK work when no messaging platform tokens are configured and run native-first targeted SDK
   recovery when tokens are present.
+- Unix `system-packages` now installs missing `ffmpeg` through Rust-planned package-manager commands on common
+  Linux/macOS/Termux targets after the native ripgrep archive path runs, preserving shell fallback for unsupported
+  distributions, denied privileges, and package-manager failures.
 - `bootstrap-marker` now runs as a native Rust stage in the Tauri bootstrapper on Windows and Unix manifests.
 - `config-templates` and the Unix `config` stage now run as native Rust stages while preserving Python
   `tools/skills_sync.py` when available and retaining the existing bundled-skill copy fallback.
@@ -300,8 +320,8 @@ language-specific setup where needed.
 **Still script-backed:**
 - Recovery tiers remain script-backed for failure cases that still need package-manager or mirror-specific handling:
   Python dependency fallback when `uv sync --locked` cannot complete, Linux Playwright system-library recovery,
-  Electron/npm cache purge and mirror recovery, privileged Linux `chrome-sandbox` repair, ffmpeg/package-manager
-  recovery, and messaging-platform SDK recovery if the native targeted pip path fails.
+  Electron/npm cache purge and mirror recovery, privileged Linux `chrome-sandbox` repair, unsupported or failed Unix
+  package-manager recovery, and messaging-platform SDK recovery if the native targeted pip path fails.
 - Fresh archive installs and archive updates do not require Git. Unix Git acquisition now has a native-first package
   manager path for common Linux/macOS/Termux setups, while unsupported distro handling, macOS CLT dialog recovery, and
   package-manager failures remain shell fallbacks.

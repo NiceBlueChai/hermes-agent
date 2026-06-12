@@ -156,6 +156,13 @@ pub struct UnixGitInstallCommandPlan {
     pub args: Vec<String>,
 }
 
+/// Command used by native Unix package-manager recovery stages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnixPackageInstallCommandPlan {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
 /// Native Windows ripgrep runtime installation plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowsRipgrepRuntimeStagePlan {
@@ -1541,6 +1548,132 @@ fn unix_git_command<const N: usize>(program: &str, args: [&str; N]) -> UnixGitIn
     }
 }
 
+fn unix_system_package_install_command_plan(
+    target_os: &str,
+    distro: &str,
+    packages: &[&str],
+    user_is_root: bool,
+    sudo_available: bool,
+    brew_available: bool,
+) -> Result<Vec<UnixPackageInstallCommandPlan>> {
+    if packages.is_empty() {
+        return Err(anyhow!("at least one Unix package is required"));
+    }
+    if target_os == "android" || distro == "termux" {
+        return Ok(vec![unix_package_command_with_packages(
+            "pkg",
+            &["install", "-y"],
+            packages,
+        )]);
+    }
+    if target_os == "macos" {
+        if brew_available {
+            return Ok(vec![unix_package_command_with_packages(
+                "brew",
+                &["install"],
+                packages,
+            )]);
+        }
+        return Err(anyhow!(
+            "Homebrew is not available for native Unix package install"
+        ));
+    }
+    if target_os != "linux" {
+        return Err(anyhow!("unsupported Unix package install target: {target_os}"));
+    }
+    match distro {
+        "ubuntu" | "debian" => Ok(vec![unix_apt_package_install_command(
+            user_is_root,
+            sudo_available,
+            packages,
+        )?]),
+        "fedora" => Ok(vec![unix_privileged_package_install_command(
+            user_is_root,
+            sudo_available,
+            "dnf",
+            &["install", "-y"],
+            packages,
+        )?]),
+        "arch" => Ok(vec![unix_privileged_package_install_command(
+            user_is_root,
+            sudo_available,
+            "pacman",
+            &["-S", "--noconfirm"],
+            packages,
+        )?]),
+        other => Err(anyhow!("unsupported Linux package install distro: {other}")),
+    }
+}
+
+fn unix_apt_package_install_command(
+    user_is_root: bool,
+    sudo_available: bool,
+    packages: &[&str],
+) -> Result<UnixPackageInstallCommandPlan> {
+    if user_is_root {
+        return Ok(unix_package_command_with_packages(
+            "apt-get",
+            &["install", "-y", "-qq"],
+            packages,
+        ));
+    }
+    if sudo_available {
+        let mut args = vec![
+            "env".to_string(),
+            "DEBIAN_FRONTEND=noninteractive".to_string(),
+            "NEEDRESTART_MODE=a".to_string(),
+            "apt-get".to_string(),
+            "install".to_string(),
+            "-y".to_string(),
+            "-qq".to_string(),
+        ];
+        args.extend(packages.iter().map(|package| (*package).to_string()));
+        return Ok(UnixPackageInstallCommandPlan {
+            program: "sudo".to_string(),
+            args,
+        });
+    }
+    Err(anyhow!("sudo is required for native apt package install"))
+}
+
+fn unix_privileged_package_install_command(
+    user_is_root: bool,
+    sudo_available: bool,
+    program: &str,
+    prefix_args: &[&str],
+    packages: &[&str],
+) -> Result<UnixPackageInstallCommandPlan> {
+    if user_is_root {
+        return Ok(unix_package_command_with_packages(program, prefix_args, packages));
+    }
+    if sudo_available {
+        let mut args = vec![program.to_string()];
+        args.extend(prefix_args.iter().map(|arg| (*arg).to_string()));
+        args.extend(packages.iter().map(|package| (*package).to_string()));
+        return Ok(UnixPackageInstallCommandPlan {
+            program: "sudo".to_string(),
+            args,
+        });
+    }
+    Err(anyhow!("sudo is required for native Unix package install"))
+}
+
+fn unix_package_command_with_packages(
+    program: &str,
+    prefix_args: &[&str],
+    packages: &[&str],
+) -> UnixPackageInstallCommandPlan {
+    let mut args = prefix_args
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect::<Vec<_>>();
+    args.extend(packages.iter().map(|package| (*package).to_string()));
+    UnixPackageInstallCommandPlan {
+        program: program.to_string(),
+        args,
+    }
+}
+
 /// Build a Windows ripgrep runtime plan matching the pinned release asset.
 pub fn windows_ripgrep_runtime_stage_plan(
     hermes_home: &Path,
@@ -1742,15 +1875,47 @@ pub async fn install_unix_system_packages_stage(
         prepend_process_path(&hermes_home.join("bin"));
     }
 
-    let refreshed_path = std::env::var_os("PATH").unwrap_or_default();
-    let ffmpeg = find_executable_on_path("ffmpeg", &refreshed_path, "");
+    let mut refreshed_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut ffmpeg = find_executable_on_path("ffmpeg", &refreshed_path, "");
+    let mut ffmpeg_commands = Vec::new();
     if ffmpeg.is_none() {
-        return Err(anyhow!("ffmpeg is not available; shell fallback required"));
+        let termux = is_termux_environment();
+        let target_os = if termux { "android" } else { std::env::consts::OS };
+        let distro = if termux {
+            "termux".to_string()
+        } else if target_os == "linux" {
+            current_linux_distro_id().unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let commands = unix_system_package_install_command_plan(
+            target_os,
+            &distro,
+            &["ffmpeg"],
+            current_process_is_root(),
+            find_executable_on_path("sudo", &refreshed_path, "").is_some(),
+            find_executable_on_path("brew", &refreshed_path, "").is_some(),
+        )?;
+        for command in &commands {
+            run_unix_system_package_install_command(command)?;
+        }
+        refreshed_path = std::env::var_os("PATH").unwrap_or_default();
+        ffmpeg = find_executable_on_path("ffmpeg", &refreshed_path, "");
+        if ffmpeg.is_none() {
+            return Err(anyhow!(
+                "ffmpeg install command completed but ffmpeg is still unavailable"
+            ));
+        }
+        ffmpeg_commands = commands
+            .iter()
+            .map(unix_package_command_display)
+            .collect::<Vec<_>>();
     }
 
     Ok(serde_json::json!({
         "ripgrep": find_executable_on_path("rg", &refreshed_path, ""),
         "ffmpeg": ffmpeg,
+        "ffmpegCommands": ffmpeg_commands,
         "archive": archive_name,
         "archiveSource": archive_source_kind,
     }))
@@ -1890,6 +2055,30 @@ fn run_unix_git_install_command(command: &UnixGitInstallCommandPlan) -> Result<(
 }
 
 fn unix_git_command_display(command: &UnixGitInstallCommandPlan) -> String {
+    if command.args.is_empty() {
+        return command.program.clone();
+    }
+    format!("{} {}", command.program, command.args.join(" "))
+}
+
+fn run_unix_system_package_install_command(command: &UnixPackageInstallCommandPlan) -> Result<()> {
+    let status = Command::new(&command.program)
+        .args(&command.args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .with_context(|| format!("running {}", unix_package_command_display(command)))?;
+    if status.success() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "{} failed with exit {:?}",
+        unix_package_command_display(command),
+        status.code()
+    ))
+}
+
+fn unix_package_command_display(command: &UnixPackageInstallCommandPlan) -> String {
     if command.args.is_empty() {
         return command.program.clone();
     }
@@ -5218,6 +5407,75 @@ mod tests {
         assert_eq!(termux[0].args, vec!["install", "-y", "git"]);
 
         assert!(unix_git_install_command_plan("linux", "opensuse", false, false, false).is_err());
+    }
+
+    #[test]
+    fn unix_system_package_install_command_plan_matches_shell_recovery() {
+        let debian = unix_system_package_install_command_plan(
+            "linux",
+            "debian",
+            &["ffmpeg"],
+            false,
+            true,
+            false,
+        )
+        .expect("Debian with sudo should install ffmpeg");
+        assert_eq!(
+            debian,
+            vec![UnixPackageInstallCommandPlan {
+                program: "sudo".to_string(),
+                args: vec![
+                    "env".to_string(),
+                    "DEBIAN_FRONTEND=noninteractive".to_string(),
+                    "NEEDRESTART_MODE=a".to_string(),
+                    "apt-get".to_string(),
+                    "install".to_string(),
+                    "-y".to_string(),
+                    "-qq".to_string(),
+                    "ffmpeg".to_string(),
+                ],
+            }]
+        );
+
+        let debian_root =
+            unix_system_package_install_command_plan("linux", "ubuntu", &["ffmpeg"], true, false, false)
+                .expect("root Ubuntu should install ffmpeg without sudo");
+        assert_eq!(debian_root[0].program, "apt-get");
+        assert_eq!(debian_root[0].args, vec!["install", "-y", "-qq", "ffmpeg"]);
+
+        let fedora =
+            unix_system_package_install_command_plan("linux", "fedora", &["ffmpeg"], true, false, false)
+                .expect("Fedora should install ffmpeg through dnf");
+        assert_eq!(fedora[0].program, "dnf");
+        assert_eq!(fedora[0].args, vec!["install", "-y", "ffmpeg"]);
+
+        let arch =
+            unix_system_package_install_command_plan("linux", "arch", &["ffmpeg"], true, false, false)
+                .expect("Arch should install ffmpeg through pacman");
+        assert_eq!(arch[0].program, "pacman");
+        assert_eq!(arch[0].args, vec!["-S", "--noconfirm", "ffmpeg"]);
+
+        let macos =
+            unix_system_package_install_command_plan("macos", "", &["ffmpeg"], false, false, true)
+                .expect("macOS with Homebrew should install ffmpeg through brew");
+        assert_eq!(macos[0].program, "brew");
+        assert_eq!(macos[0].args, vec!["install", "ffmpeg"]);
+
+        let termux =
+            unix_system_package_install_command_plan("android", "termux", &["ffmpeg"], false, false, false)
+                .expect("Termux should install ffmpeg through pkg");
+        assert_eq!(termux[0].program, "pkg");
+        assert_eq!(termux[0].args, vec!["install", "-y", "ffmpeg"]);
+
+        assert!(unix_system_package_install_command_plan(
+            "linux",
+            "opensuse",
+            &["ffmpeg"],
+            false,
+            false,
+            false,
+        )
+        .is_err());
     }
 
     #[test]
