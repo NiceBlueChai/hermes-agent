@@ -546,6 +546,8 @@ language-specific setup where needed.
   mixed Windows/Linux/macOS bootstrap-tool bundles.
 - Bootstrap-tools manifests now also retain an explicit target platform per archive, and both the release helper and
   Rust binary self-check reject archive records that omit it.
+- Runtime bootstrap archive selection now rejects bundled archives whose manifest platform or architecture label does
+  not match the selected archive name, keeping packaged payload identity checks aligned with release validation.
 - Duplicate archive names are rejected by the validate-only gate, keeping each bundled runtime archive's ownership,
   checksum, and update source unambiguous.
 - Manifest archive names must be plain file names with no path separators or parent traversal, matching the runtime

@@ -305,9 +305,17 @@ struct BootstrapToolsManifest {
 #[derive(Debug, Deserialize)]
 struct BootstrapToolsManifestArchive {
     name: String,
+    platform: Option<String>,
+    arch: Option<String>,
     #[serde(rename = "sizeBytes", default)]
     size_bytes: Option<u64>,
     sha256: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BootstrapArchiveTarget {
+    platform: &'static str,
+    arch: &'static str,
 }
 
 /// Build the bootstrap stage manifest without invoking the platform script.
@@ -3643,9 +3651,91 @@ fn bootstrap_tools_manifest_archive(
         })
         .and_then(|record| {
             let valid = record.sha256.len() == 64
-                && record.sha256.chars().all(|ch| ch.is_ascii_hexdigit());
+                && record.sha256.chars().all(|ch| ch.is_ascii_hexdigit())
+                && bootstrap_tools_manifest_archive_matches_target(&record, archive_name);
             valid.then_some(record)
         })
+}
+
+fn bootstrap_tools_manifest_archive_matches_target(
+    record: &BootstrapToolsManifestArchive,
+    archive_name: &str,
+) -> bool {
+    let Some(target) = bootstrap_archive_target_from_name(archive_name) else {
+        return record
+            .platform
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+            && record
+                .arch
+                .as_deref()
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false);
+    };
+    record.platform.as_deref() == Some(target.platform)
+        && record.arch.as_deref() == Some(target.arch)
+}
+
+fn bootstrap_archive_target_from_name(name: &str) -> Option<BootstrapArchiveTarget> {
+    for (suffix, platform, arch) in [
+        ("-win-x64.zip", "windows", "x64"),
+        ("-win-arm64.zip", "windows", "arm64"),
+        ("-win-x86.zip", "windows", "x86"),
+        ("-linux-x64.tar.gz", "linux", "x64"),
+        ("-linux-arm64.tar.gz", "linux", "arm64"),
+        ("-linux-x64.tar.xz", "linux", "x64"),
+        ("-linux-arm64.tar.xz", "linux", "arm64"),
+        ("-darwin-x64.tar.gz", "macos", "x64"),
+        ("-darwin-arm64.tar.gz", "macos", "arm64"),
+        ("-darwin-x64.tar.xz", "macos", "x64"),
+        ("-darwin-arm64.tar.xz", "macos", "arm64"),
+    ] {
+        if name.starts_with("node-v") && name.ends_with(suffix) {
+            return Some(BootstrapArchiveTarget { platform, arch });
+        }
+    }
+    match name {
+        "uv-x86_64-pc-windows-msvc.zip"
+        | "ripgrep-15.1.0-x86_64-pc-windows-msvc.zip"
+        | "PortableGit-2.54.0-64-bit.7z.exe" => Some(BootstrapArchiveTarget {
+            platform: "windows",
+            arch: "x64",
+        }),
+        "uv-aarch64-pc-windows-msvc.zip"
+        | "ripgrep-15.1.0-aarch64-pc-windows-msvc.zip"
+        | "PortableGit-2.54.0-arm64.7z.exe" => Some(BootstrapArchiveTarget {
+            platform: "windows",
+            arch: "arm64",
+        }),
+        "uv-i686-pc-windows-msvc.zip"
+        | "ripgrep-15.1.0-i686-pc-windows-msvc.zip"
+        | "MinGit-2.54.0-32-bit.zip" => Some(BootstrapArchiveTarget {
+            platform: "windows",
+            arch: "x86",
+        }),
+        "uv-x86_64-unknown-linux-gnu.tar.gz"
+        | "ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "linux",
+            arch: "x64",
+        }),
+        "uv-aarch64-unknown-linux-gnu.tar.gz"
+        | "ripgrep-15.1.0-aarch64-unknown-linux-gnu.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "linux",
+            arch: "arm64",
+        }),
+        "uv-x86_64-apple-darwin.tar.gz"
+        | "ripgrep-15.1.0-x86_64-apple-darwin.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "macos",
+            arch: "x64",
+        }),
+        "uv-aarch64-apple-darwin.tar.gz"
+        | "ripgrep-15.1.0-aarch64-apple-darwin.tar.gz" => Some(BootstrapArchiveTarget {
+            platform: "macos",
+            arch: "arm64",
+        }),
+        _ => None,
+    }
 }
 
 fn bootstrap_archive_name_is_plain_file(name: &str) -> bool {
@@ -5633,6 +5723,8 @@ mod tests {
                 "schemaVersion": 1,
                 "archives": [
                     {
+                        "arch": "x64",
+                        "platform": "windows",
                         "name": "uv-x86_64-pc-windows-msvc.zip",
                         "sha256": "e6184ce10e266134fdcfa401e8f1a95005bcd4f18d16b62b757323e2833fe9a9"
                     }
@@ -5670,6 +5762,8 @@ mod tests {
                 "schemaVersion": 1,
                 "archives": [
                     {
+                        "arch": "x64",
+                        "platform": "windows",
                         "name": "uv-x86_64-pc-windows-msvc.zip",
                         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                     }
@@ -5689,6 +5783,41 @@ mod tests {
             source.expected_sha256.as_deref(),
             Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn bootstrap_archive_source_rejects_manifest_target_mismatch() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-bootstrap-archive-target-source-test-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+        let bundled = root.join("resources").join("bootstrap-tools");
+        let archive_name = "uv-x86_64-pc-windows-msvc.zip";
+        std::fs::create_dir_all(&bundled).unwrap();
+        std::fs::write(bundled.join(archive_name), b"uv").unwrap();
+        std::fs::write(
+            bundled.join("bootstrap-tools-manifest.json"),
+            r#"{
+                "schemaVersion": 1,
+                "archives": [
+                    {
+                        "arch": "x64",
+                        "platform": "linux",
+                        "name": "uv-x86_64-pc-windows-msvc.zip",
+                        "sha256": "e6184ce10e266134fdcfa401e8f1a95005bcd4f18d16b62b757323e2833fe9a9"
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let source = resolve_bootstrap_archive_source(&hermes_home, Some(&bundled), archive_name);
+
+        assert_eq!(source.kind, BootstrapArchiveSourceKind::Cache);
+        assert_eq!(source.expected_sha256, None);
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -5773,6 +5902,8 @@ mod tests {
                 "schemaVersion": 1,
                 "archives": [
                     {
+                        "arch": "x64",
+                        "platform": "windows",
                         "name": "uv-x86_64-pc-windows-msvc.zip",
                         "sizeBytes": 99,
                         "sha256": "e6184ce10e266134fdcfa401e8f1a95005bcd4f18d16b62b757323e2833fe9a9"
@@ -5865,6 +5996,8 @@ mod tests {
                 "schemaVersion": 1,
                 "archives": [
                     {
+                        "arch": "x64",
+                        "platform": "windows",
                         "name": "node-v22.19.1-win-x64.zip",
                         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                     }
