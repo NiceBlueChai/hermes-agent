@@ -725,6 +725,7 @@ mod tests {
         let bin_dir = hermes_home.join("bin");
         let uv_cache = hermes_home.join("uv-cache");
         let pip_cache = hermes_home.join("pip-cache");
+        let electron_cache = hermes_home.join("electron-cache");
         let node_dir = hermes_home.join("node");
         let python_dir = hermes_home.join("python");
         let git_dir = hermes_home.join("git");
@@ -737,6 +738,7 @@ mod tests {
         fs::create_dir_all(&bin_dir).expect("bin dir should be created");
         fs::create_dir_all(&uv_cache).expect("uv cache should be created");
         fs::create_dir_all(&pip_cache).expect("pip cache should be created");
+        fs::create_dir_all(&electron_cache).expect("electron cache should be created");
         fs::create_dir_all(&node_dir).expect("node dir should be created");
         fs::create_dir_all(&python_dir).expect("python dir should be created");
         fs::create_dir_all(&git_dir).expect("git dir should be created");
@@ -762,6 +764,7 @@ mod tests {
                 bin_dir,
                 uv_cache,
                 pip_cache,
+                electron_cache,
                 node_dir,
                 python_dir,
                 git_dir,
@@ -1156,6 +1159,7 @@ mod tests {
         let bin_dir = hermes_home.join("bin");
         let uv_cache = hermes_home.join("uv-cache");
         let pip_cache = hermes_home.join("pip-cache");
+        let electron_cache = hermes_home.join("electron-cache");
         let node_dir = hermes_home.join("node");
         let python_dir = hermes_home.join("python");
         let git_dir = hermes_home.join("git");
@@ -1166,6 +1170,7 @@ mod tests {
         fs::create_dir_all(&bin_dir).expect("bin dir should be created");
         fs::create_dir_all(&uv_cache).expect("uv cache should be created");
         fs::create_dir_all(&pip_cache).expect("pip cache should be created");
+        fs::create_dir_all(&electron_cache).expect("electron cache should be created");
         fs::create_dir_all(&node_dir).expect("node dir should be created");
         fs::create_dir_all(&python_dir).expect("python dir should be created");
         fs::create_dir_all(&git_dir).expect("git dir should be created");
@@ -1181,6 +1186,7 @@ mod tests {
                 bin_dir.display().to_string(),
                 uv_cache.display().to_string(),
                 pip_cache.display().to_string(),
+                electron_cache.display().to_string(),
                 node_dir.display().to_string(),
                 python_dir.display().to_string(),
                 git_dir.display().to_string(),
@@ -1196,6 +1202,7 @@ mod tests {
         assert!(!bin_dir.exists());
         assert!(!uv_cache.exists());
         assert!(!pip_cache.exists());
+        assert!(!electron_cache.exists());
         assert!(!node_dir.exists());
         assert!(!python_dir.exists());
         assert!(!git_dir.exists());

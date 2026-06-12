@@ -140,6 +140,7 @@ pub struct DesktopBuildStagePlan {
     pub npm: PathBuf,
     pub cwd: PathBuf,
     pub npm_cache_dir: PathBuf,
+    pub electron_cache_dir: PathBuf,
     pub desktop_dir: PathBuf,
 }
 
@@ -2982,6 +2983,7 @@ where
         npm,
         cwd: install_root.to_path_buf(),
         npm_cache_dir: hermes_home.join("npm-cache"),
+        electron_cache_dir: hermes_home.join("electron-cache"),
         desktop_dir,
     })
 }
@@ -2998,7 +3000,12 @@ pub fn build_desktop_stage(
         run_node_dependency_command(&plan.npm, ["install"], &plan.cwd, &plan.npm_cache_dir, None)
             .context("installing desktop workspace Node dependencies")?;
     }
-    run_desktop_pack_command(&plan.npm, &plan.desktop_dir, &plan.npm_cache_dir)?;
+    run_desktop_pack_command(
+        &plan.npm,
+        &plan.desktop_dir,
+        &plan.npm_cache_dir,
+        &plan.electron_cache_dir,
+    )?;
     let desktop_app = find_built_desktop_app(install_root, std::env::consts::OS)
         .ok_or_else(|| anyhow!("desktop build completed but no app was found"))?;
     if cfg!(target_os = "linux") {
@@ -3007,6 +3014,7 @@ pub fn build_desktop_stage(
     let mut result = serde_json::json!({
         "npm": plan.npm,
         "npmCacheDir": plan.npm_cache_dir,
+        "electronCacheDir": plan.electron_cache_dir,
         "desktopDir": plan.desktop_dir,
         "desktopApp": &desktop_app,
     });
@@ -4453,12 +4461,18 @@ fn npm_permission_diagnostic(
     ))
 }
 
-fn run_desktop_pack_command(npm: &Path, desktop_dir: &Path, npm_cache_dir: &Path) -> Result<()> {
+fn run_desktop_pack_command(
+    npm: &Path,
+    desktop_dir: &Path,
+    npm_cache_dir: &Path,
+    electron_cache_dir: &Path,
+) -> Result<()> {
     let user_mirror_is_set = std::env::var_os("ELECTRON_MIRROR").is_some();
     run_desktop_pack_command_with_mirror_policy(
         npm,
         desktop_dir,
         npm_cache_dir,
+        electron_cache_dir,
         user_mirror_is_set,
     )
     .map(|_| ())
@@ -4468,13 +4482,16 @@ fn run_desktop_pack_command_with_mirror_policy(
     npm: &Path,
     desktop_dir: &Path,
     npm_cache_dir: &Path,
+    electron_cache_dir: &Path,
     user_mirror_is_set: bool,
 ) -> Result<DesktopPackResult> {
-    let electron_cache_dirs = electron_cache_dirs_from_env(std::env::consts::OS);
+    let mut electron_cache_dirs = vec![electron_cache_dir.to_path_buf()];
+    electron_cache_dirs.extend(electron_cache_dirs_from_env(std::env::consts::OS));
     run_desktop_pack_command_with_recovery_policy(
         npm,
         desktop_dir,
         npm_cache_dir,
+        electron_cache_dir,
         user_mirror_is_set,
         &electron_cache_dirs,
     )
@@ -4484,6 +4501,7 @@ fn run_desktop_pack_command_with_recovery_policy(
     npm: &Path,
     desktop_dir: &Path,
     npm_cache_dir: &Path,
+    electron_cache_dir: &Path,
     user_mirror_is_set: bool,
     electron_cache_dirs: &[PathBuf],
 ) -> Result<DesktopPackResult> {
@@ -4491,6 +4509,7 @@ fn run_desktop_pack_command_with_recovery_policy(
         npm,
         desktop_dir,
         npm_cache_dir,
+        electron_cache_dir,
         None,
         !user_mirror_is_set,
     )?;
@@ -4506,6 +4525,7 @@ fn run_desktop_pack_command_with_recovery_policy(
             npm,
             desktop_dir,
             npm_cache_dir,
+            electron_cache_dir,
             None,
             !user_mirror_is_set,
         )?;
@@ -4521,6 +4541,7 @@ fn run_desktop_pack_command_with_recovery_policy(
             npm,
             desktop_dir,
             npm_cache_dir,
+            electron_cache_dir,
             Some(DESKTOP_ELECTRON_FALLBACK_MIRROR),
             false,
         )?;
@@ -4598,6 +4619,7 @@ fn electron_cache_dirs_from_env(target_os: &str) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     push_unique_env_path(&mut dirs, "electron_config_cache");
     push_unique_env_path(&mut dirs, "ELECTRON_CACHE");
+    push_unique_env_path(&mut dirs, "ELECTRON_BUILDER_CACHE");
     match target_os {
         "windows" => {
             if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
@@ -4646,6 +4668,7 @@ fn run_desktop_pack_attempt(
     npm: &Path,
     desktop_dir: &Path,
     npm_cache_dir: &Path,
+    electron_cache_dir: &Path,
     electron_mirror: Option<&str>,
     clear_electron_mirror: bool,
 ) -> Result<ExitStatus> {
@@ -4654,6 +4677,9 @@ fn run_desktop_pack_attempt(
         .args(["run", "pack"])
         .current_dir(desktop_dir)
         .env("npm_config_cache", npm_cache_dir)
+        .env("electron_config_cache", electron_cache_dir)
+        .env("ELECTRON_CACHE", electron_cache_dir)
+        .env("ELECTRON_BUILDER_CACHE", electron_cache_dir)
         .env("CSC_IDENTITY_AUTO_DISCOVERY", "false")
         .env("WIN_CSC_LINK", "")
         .env("WIN_CSC_KEY_PASSWORD", "");
@@ -6400,7 +6426,79 @@ mod tests {
         assert_eq!(plan.npm, npm);
         assert_eq!(plan.cwd, install_root);
         assert_eq!(plan.npm_cache_dir, hermes_home.join("npm-cache"));
+        assert_eq!(plan.electron_cache_dir, hermes_home.join("electron-cache"));
         assert_eq!(plan.desktop_dir, desktop_dir);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn desktop_pack_command_sets_managed_electron_cache_env() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-desktop-pack-env-test-{}",
+            std::process::id()
+        ));
+        let desktop_dir = root.join("desktop");
+        let npm_cache = root.join("npm-cache");
+        let electron_cache = root.join("electron-cache");
+        let electron_config_output = root.join("electron-config-cache.txt");
+        let electron_output = root.join("electron-cache.txt");
+        let builder_output = root.join("electron-builder-cache.txt");
+        std::fs::create_dir_all(&desktop_dir).unwrap();
+        std::fs::create_dir_all(&npm_cache).unwrap();
+        std::fs::create_dir_all(&electron_cache).unwrap();
+
+        #[cfg(target_os = "windows")]
+        let command = {
+            let command = root.join("fake-npm-electron-cache.cmd");
+            let script = format!(
+                concat!(
+                    "@echo off\r\n",
+                    "> \"{electron_config}\" echo(%electron_config_cache%\r\n",
+                    "> \"{electron}\" echo(%ELECTRON_CACHE%\r\n",
+                    "> \"{builder}\" echo(%ELECTRON_BUILDER_CACHE%\r\n",
+                    "exit /b 0\r\n"
+                ),
+                electron_config = electron_config_output.display(),
+                electron = electron_output.display(),
+                builder = builder_output.display(),
+            );
+            std::fs::write(&command, script).unwrap();
+            command
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let command = {
+            let command = root.join("fake-npm-electron-cache.sh");
+            let script = format!(
+                concat!(
+                    "#!/usr/bin/env sh\n",
+                    "printf '%s' \"$electron_config_cache\" > '{electron_config}'\n",
+                    "printf '%s' \"$ELECTRON_CACHE\" > '{electron}'\n",
+                    "printf '%s' \"$ELECTRON_BUILDER_CACHE\" > '{builder}'\n",
+                    "exit 0\n"
+                ),
+                electron_config = electron_config_output.display(),
+                electron = electron_output.display(),
+                builder = builder_output.display(),
+            );
+            std::fs::write(&command, script).unwrap();
+            make_executable(&command).unwrap();
+            command
+        };
+
+        run_desktop_pack_command(
+            &command,
+            &desktop_dir,
+            &npm_cache,
+            &electron_cache,
+        )
+        .unwrap();
+
+        let expected = electron_cache.display().to_string();
+        assert_eq!(std::fs::read_to_string(&electron_config_output).unwrap().trim(), expected);
+        assert_eq!(std::fs::read_to_string(&electron_output).unwrap().trim(), expected);
+        assert_eq!(std::fs::read_to_string(&builder_output).unwrap().trim(), expected);
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -6413,6 +6511,7 @@ mod tests {
         ));
         let desktop_dir = root.join("desktop");
         let cache = root.join("npm-cache");
+        let electron_cache = root.join("electron-cache");
         let count_file = root.join("attempt.txt");
         let first_mirror = root.join("first-mirror.txt");
         let second_mirror = root.join("second-mirror.txt");
@@ -6469,8 +6568,14 @@ mod tests {
         };
 
         let result =
-            run_desktop_pack_command_with_mirror_policy(&command, &desktop_dir, &cache, false)
-                .unwrap();
+            run_desktop_pack_command_with_mirror_policy(
+                &command,
+                &desktop_dir,
+                &cache,
+                &electron_cache,
+                false,
+            )
+            .unwrap();
 
         assert_eq!(std::fs::read_to_string(&first_mirror).unwrap().trim(), "");
         assert_eq!(
@@ -6551,6 +6656,7 @@ mod tests {
             &command,
             &desktop_dir,
             &npm_cache,
+            &electron_cache,
             false,
             &[electron_cache.clone()],
         )
