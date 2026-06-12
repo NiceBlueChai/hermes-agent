@@ -115,8 +115,8 @@ jobs:
 
             - name: Bundle bootstrap tool archives
               env:
-                  HERMES_LINUX_AUDITED_ARCHIVE: ${{ inputs.linux-audited-archive }}
-                  HERMES_MACOS_AUDITED_ARCHIVE: ${{ inputs.macos-audited-archive }}
+                  HERMES_LINUX_AUDITED_ARCHIVE: ${{ inputs['linux-audited-archive'] }}
+                  HERMES_MACOS_AUDITED_ARCHIVE: ${{ inputs['macos-audited-archive'] }}
               run: |
                   set -euo pipefail
                   HERMES_AUDITED_ARCHIVE=""

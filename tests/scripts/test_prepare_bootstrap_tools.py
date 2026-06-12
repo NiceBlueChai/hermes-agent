@@ -691,9 +691,24 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("audited-archive:", windows_workflow)
+        self.assertIn(
+            "HERMES_AUDITED_ARCHIVE: ${{ inputs['audited-archive'] }}",
+            windows_workflow,
+        )
+        self.assertNotIn("inputs.audited-archive", windows_workflow)
         self.assertIn('@("--audited-archive", "$env:HERMES_AUDITED_ARCHIVE")', windows_workflow)
         self.assertIn("linux-audited-archive:", unix_workflow)
         self.assertIn("macos-audited-archive:", unix_workflow)
+        self.assertIn(
+            "HERMES_LINUX_AUDITED_ARCHIVE: ${{ inputs['linux-audited-archive'] }}",
+            unix_workflow,
+        )
+        self.assertIn(
+            "HERMES_MACOS_AUDITED_ARCHIVE: ${{ inputs['macos-audited-archive'] }}",
+            unix_workflow,
+        )
+        self.assertNotIn("inputs.linux-audited-archive", unix_workflow)
+        self.assertNotIn("inputs.macos-audited-archive", unix_workflow)
         self.assertIn("--audited-archive \"${HERMES_AUDITED_ARCHIVE}\"", unix_workflow)
 
     def test_installer_workflows_pin_bootstrap_builds_to_current_commit(self):

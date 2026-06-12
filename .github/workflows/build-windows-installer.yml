@@ -75,7 +75,7 @@ jobs:
 
       - name: Bundle bootstrap tool archives
         env:
-          HERMES_AUDITED_ARCHIVE: ${{ inputs.audited-archive }}
+          HERMES_AUDITED_ARCHIVE: ${{ inputs['audited-archive'] }}
         run: |
           $args = @("scripts/prepare_bootstrap_tools.py", "--arch", "x64")
           if ($env:HERMES_AUDITED_ARCHIVE) {
