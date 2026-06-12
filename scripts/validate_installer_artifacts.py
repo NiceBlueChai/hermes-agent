@@ -107,6 +107,8 @@ def validate_artifact_path(path: Path) -> None:
     if path.is_dir():
         if not any(path.rglob("*")):
             raise RuntimeError(f"installer artifact directory is empty: {path}")
+        if not any(child.is_file() for child in path.rglob("*")):
+            raise RuntimeError(f"installer artifact directory has no files: {path}")
         return
     raise RuntimeError(f"installer artifact is not a file or directory: {path}")
 

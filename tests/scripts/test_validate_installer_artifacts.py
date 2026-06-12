@@ -120,6 +120,21 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
                     ],
                 )
 
+    def test_validate_artifacts_rejects_directory_artifact_with_only_empty_dirs(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_bundle = root / "target" / "release" / "bundle" / "macos" / "Hermes.app"
+            (app_bundle / "Contents" / "MacOS").mkdir(parents=True)
+
+            with self.assertRaisesRegex(RuntimeError, "installer artifact directory has no files"):
+                module.validate_artifacts(
+                    root,
+                    [
+                        "target/release/bundle/macos/*.app",
+                    ],
+                )
+
     def test_validate_artifacts_allows_bootstrap_readme_and_gitignore(self):
         module = _load_script_module()
         with tempfile.TemporaryDirectory() as tmp:
