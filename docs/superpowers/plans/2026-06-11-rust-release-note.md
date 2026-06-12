@@ -108,6 +108,7 @@ User-visible behavior:
 - Python wheelhouse validation now rejects blank or padded wheel names in both release helper and Rust runtime checks.
 - Built-installer self-check now applies the same plain-file name guard to bootstrap-tools and wheelhouse resources.
 - Native bootstrap manifest tests now guard against reintroducing pure script-only stages in release manifests.
+- Unix installer builds now smoke the packaged AppImage and macOS `.app` executable with lifecycle self-checks before upload.
 
 Compatibility and fallback:
 

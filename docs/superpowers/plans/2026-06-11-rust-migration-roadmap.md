@@ -755,6 +755,8 @@ language-specific setup where needed.
   wheelhouse source records, so release resource validation matches runtime manifest trust boundaries.
 - Native bootstrap manifest tests now fail if Windows or Unix release manifests introduce pure script-only stages,
   preserving the normal packaged path as native-first or explicitly fallback-only.
+- Unix installer workflow now also runs `--self-check` and `--self-check-lifecycle` through the packaged Linux AppImage
+  and macOS `.app` executable before artifact validation, moving lifecycle smoke closer to real release binaries.
 - Installer artifact validation now receives the expected release platform from the Windows/Linux/macOS workflows and
   rejects `bootstrap-tools` manifests whose archive records target a different platform.
 - Duplicate archive names are rejected by the validate-only gate, keeping each bundled runtime archive's ownership,
