@@ -122,6 +122,13 @@ struct PlaywrightInstallPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct BrowserInstallDecision {
+    system_browser: Option<PathBuf>,
+    playwright: Option<PlaywrightInstallPlan>,
+    system_deps: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct DesktopPackResult {
     fallback_mirror_used: bool,
     purged_paths: Vec<PathBuf>,
@@ -2643,6 +2650,149 @@ fn playwright_install_plan(
     })
 }
 
+fn browser_install_decision(
+    system_browser: Option<PathBuf>,
+    target_os: &str,
+    distro: &str,
+    user_is_root: bool,
+    sudo_available: bool,
+) -> Result<BrowserInstallDecision> {
+    if let Some(browser) = system_browser {
+        return Ok(BrowserInstallDecision {
+            system_browser: Some(browser),
+            playwright: None,
+            system_deps: "system-browser".to_string(),
+        });
+    }
+    let playwright = playwright_install_plan(target_os, distro, user_is_root, sudo_available)?;
+    Ok(BrowserInstallDecision {
+        system_browser: None,
+        system_deps: playwright.system_deps.clone(),
+        playwright: Some(playwright),
+    })
+}
+
+fn find_system_browser<P>(path_env: P, pathext: &str) -> Option<PathBuf>
+where
+    P: AsRef<OsStr>,
+{
+    let configured = std::env::var("AGENT_BROWSER_EXECUTABLE_PATH").ok();
+    find_system_browser_with_config(configured.as_deref(), path_env, pathext)
+}
+
+fn find_system_browser_with_config<P>(
+    configured_browser: Option<&str>,
+    path_env: P,
+    pathext: &str,
+) -> Option<PathBuf>
+where
+    P: AsRef<OsStr>,
+{
+    if let Some(value) = configured_browser {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            let configured = PathBuf::from(trimmed);
+            if configured.is_file() {
+                return Some(configured);
+            }
+            if let Some(found) = find_executable_on_path(trimmed, path_env.as_ref(), pathext) {
+                return Some(found);
+            }
+        }
+    }
+
+    for candidate in system_browser_command_candidates() {
+        if let Some(found) = find_executable_on_path(candidate, path_env.as_ref(), pathext) {
+            return Some(found);
+        }
+    }
+    for candidate in system_browser_file_candidates() {
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn system_browser_command_candidates() -> &'static [&'static str] {
+    if cfg!(target_os = "windows") {
+        &[]
+    } else {
+        &[
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium",
+            "chromium-browser",
+            "chrome",
+        ]
+    }
+}
+
+fn system_browser_file_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if cfg!(target_os = "windows") {
+        for base in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
+            if let Ok(root) = std::env::var(base) {
+                candidates.push(
+                    PathBuf::from(&root)
+                        .join("Google")
+                        .join("Chrome")
+                        .join("Application")
+                        .join("chrome.exe"),
+                );
+                candidates.push(
+                    PathBuf::from(&root)
+                        .join("Microsoft")
+                        .join("Edge")
+                        .join("Application")
+                        .join("msedge.exe"),
+                );
+                candidates.push(
+                    PathBuf::from(&root)
+                        .join("Chromium")
+                        .join("Application")
+                        .join("chrome.exe"),
+                );
+            }
+        }
+    } else if cfg!(target_os = "macos") {
+        candidates.push(PathBuf::from(
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        ));
+        candidates.push(PathBuf::from(
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ));
+    }
+    candidates
+}
+
+fn write_browser_env_from_system_browser(hermes_home: &Path, browser: &Path) -> Result<bool> {
+    fs::create_dir_all(hermes_home)
+        .with_context(|| format!("creating Hermes home {}", hermes_home.display()))?;
+    let env_file = hermes_home.join(".env");
+    let existing = fs::read_to_string(&env_file).unwrap_or_default();
+    if existing
+        .lines()
+        .any(|line| line.trim_start().starts_with("AGENT_BROWSER_EXECUTABLE_PATH="))
+    {
+        return Ok(false);
+    }
+
+    let mut next = existing;
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push('\n');
+    }
+    if !next.is_empty() {
+        next.push('\n');
+    }
+    next.push_str("# Hermes Agent browser tools - use the system Chrome/Chromium binary.\n");
+    next.push_str("AGENT_BROWSER_EXECUTABLE_PATH=");
+    next.push_str(&browser.display().to_string());
+    next.push('\n');
+    fs::write(&env_file, next).with_context(|| format!("writing {}", env_file.display()))?;
+    Ok(true)
+}
+
 fn playwright_apt_distro_supports_with_deps(distro: &str) -> bool {
     distro_matches(
         distro,
@@ -2739,39 +2889,45 @@ pub fn install_node_dependencies_stage(
             Some(&plan.playwright_browsers_dir),
         )
             .context("installing root Node dependencies")?;
-        let npx = plan
-            .npx
-            .as_ref()
-            .ok_or_else(|| anyhow!("npx is not available"))?;
         let distro = if std::env::consts::OS == "linux" {
             current_linux_distro_family()
         } else {
             String::new()
         };
-        let playwright_plan = playwright_install_plan(
+        let browser_decision = browser_install_decision(
+            find_system_browser(&path_env, &pathext),
             std::env::consts::OS,
             &distro,
             current_process_is_root(),
             noninteractive_sudo_available(&path_env),
         )?;
-        for command in &playwright_plan.system_package_commands {
-            run_unix_system_package_install_command(command)
-                .context("installing Playwright system dependencies")?;
+        playwright_system_deps = browser_decision.system_deps.clone();
+        if let Some(browser) = browser_decision.system_browser {
+            write_browser_env_from_system_browser(hermes_home, &browser)
+                .context("configuring system browser for browser tools")?;
+        } else if let Some(playwright_plan) = browser_decision.playwright {
+            let npx = plan
+                .npx
+                .as_ref()
+                .ok_or_else(|| anyhow!("npx is not available"))?;
+            for command in &playwright_plan.system_package_commands {
+                run_unix_system_package_install_command(command)
+                    .context("installing Playwright system dependencies")?;
+            }
+            playwright_system_commands = playwright_plan
+                .system_package_commands
+                .iter()
+                .map(unix_package_command_display)
+                .collect::<Vec<_>>();
+            run_node_dependency_command_args(
+                npx,
+                &playwright_plan.npx_args,
+                &plan.cwd,
+                &plan.npm_cache_dir,
+                Some(&plan.playwright_browsers_dir),
+            )
+            .context("installing Playwright Chromium")?;
         }
-        playwright_system_deps = playwright_plan.system_deps.clone();
-        playwright_system_commands = playwright_plan
-            .system_package_commands
-            .iter()
-            .map(unix_package_command_display)
-            .collect::<Vec<_>>();
-        run_node_dependency_command_args(
-            npx,
-            &playwright_plan.npx_args,
-            &plan.cwd,
-            &plan.npm_cache_dir,
-            Some(&plan.playwright_browsers_dir),
-        )
-        .context("installing Playwright Chromium")?;
     }
     if let Some(tui_dir) = &plan.tui_dir {
         run_node_dependency_command(
@@ -5896,6 +6052,83 @@ mod tests {
             .expect("macOS should keep browser-only install");
         assert_eq!(macos.npx_args, vec!["--yes", "playwright", "install", "chromium"]);
         assert_eq!(macos.system_package_commands, Vec::new());
+    }
+
+    #[test]
+    fn browser_install_decision_uses_system_browser_without_playwright_download() {
+        let browser = PathBuf::from("/usr/bin/google-chrome");
+        let decision = browser_install_decision(Some(browser.clone()), "linux", "ubuntu", false, true)
+            .expect("system browser should not need Playwright planning");
+
+        assert_eq!(decision.system_browser, Some(browser));
+        assert!(decision.playwright.is_none());
+        assert_eq!(decision.system_deps, "system-browser");
+    }
+
+    #[test]
+    fn system_browser_probe_honors_configured_path_or_command() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-browser-probe-test-{}",
+            std::process::id()
+        ));
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+
+        #[cfg(target_os = "windows")]
+        let browser_command = {
+            let command = bin.join("custom-browser.cmd");
+            std::fs::write(&command, "@echo off\r\n").unwrap();
+            command
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let browser_command = {
+            let command = bin.join("custom-browser");
+            std::fs::write(&command, "#!/usr/bin/env sh\n").unwrap();
+            make_executable(&command).unwrap();
+            command
+        };
+
+        let absolute = find_system_browser_with_config(
+            Some(browser_command.display().to_string().as_str()),
+            "",
+            ".COM;.EXE;.BAT;.CMD",
+        );
+        assert_eq!(absolute, Some(browser_command.clone()));
+
+        let command_name = browser_command.file_name().unwrap().to_string_lossy();
+        let from_path = find_system_browser_with_config(
+            Some(command_name.as_ref()),
+            bin.display().to_string(),
+            ".COM;.EXE;.BAT;.CMD",
+        );
+        assert_eq!(from_path, Some(browser_command));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn browser_env_writer_appends_system_browser_without_overwriting() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-browser-env-test-{}",
+            std::process::id()
+        ));
+        let home = root.join("home");
+        let browser = root.join("chrome");
+
+        let changed = write_browser_env_from_system_browser(&home, &browser).unwrap();
+        assert!(changed);
+        assert!(std::fs::read_to_string(home.join(".env"))
+            .unwrap()
+            .contains("AGENT_BROWSER_EXECUTABLE_PATH="));
+
+        let changed = write_browser_env_from_system_browser(&home, &PathBuf::from("/other")).unwrap();
+        assert!(!changed);
+        assert!(std::fs::read_to_string(home.join(".env"))
+            .unwrap()
+            .contains(&browser.display().to_string()));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

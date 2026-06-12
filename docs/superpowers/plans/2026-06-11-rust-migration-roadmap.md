@@ -298,6 +298,8 @@ language-specific setup where needed.
 - macOS `node-deps` now uses the same Rust native-first npm/Playwright/TUI dependency path as Windows, while Linux
   now uses the same native-first path; Linux keeps script fallback for failed npm/Playwright commands and for RPM,
   zypper, or unknown distribution Playwright system-library recovery.
+- Rust native `node-deps` now mirrors the script browser optimization: if a system Chrome/Chromium browser is already
+  available, it writes `AGENT_BROWSER_EXECUTABLE_PATH` to `$HERMES_HOME/.env` and skips the Playwright Chromium download.
 - `desktop` now uses a Rust no-op skip when `apps/desktop/package.json` is absent, matching the existing script
   behavior without starting PowerShell or bash for a stage that can only skip.
 - Windows `desktop` now has a Rust native-first build path for workspace npm install and `npm run pack`, verifies the
