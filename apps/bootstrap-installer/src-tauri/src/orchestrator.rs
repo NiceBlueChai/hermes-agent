@@ -23,6 +23,10 @@ const ALLOWED_WHEELHOUSE_METADATA: [&str; 2] = [".gitignore", "README.md"];
 const DESKTOP_ELECTRON_FALLBACK_MIRROR: &str = "https://npmmirror.com/mirrors/electron/";
 const PYTHON_KNOWN_BROKEN_EXTRAS: &[&str] = &[];
 const SCRIPT_REASON_INTERACTIVE: &str = "requires user input; handled by post-install UI";
+const SCRIPT_REASON_NATIVE_FALLBACK: &str =
+    "native-first stage; delegated to install script on native failure";
+const SCRIPT_REASON_PROBE_FALLBACK: &str =
+    "Rust probes local state; delegated to install script when missing";
 const SCRIPT_REASON_UNPORTED: &str = "not yet ported to Rust; delegated to install script";
 
 /// PATH probe result for one external tool.
@@ -451,13 +455,18 @@ pub fn build_stage_plan(stages: &[StageInfo], _include_desktop: bool) -> Vec<Pla
 }
 
 fn script_stage_reason(stage: &StageInfo, execution: StageExecutionMode) -> Option<String> {
-    if execution != StageExecutionMode::Script {
-        return None;
-    }
-    if stage.needs_user_input {
-        Some(SCRIPT_REASON_INTERACTIVE.to_string())
-    } else {
-        Some(SCRIPT_REASON_UNPORTED.to_string())
+    match execution {
+        StageExecutionMode::Native => None,
+        StageExecutionMode::NativeWithScriptFallback => {
+            Some(SCRIPT_REASON_NATIVE_FALLBACK.to_string())
+        }
+        StageExecutionMode::ProbeThenScript => {
+            Some(SCRIPT_REASON_PROBE_FALLBACK.to_string())
+        }
+        StageExecutionMode::Script if stage.needs_user_input => {
+            Some(SCRIPT_REASON_INTERACTIVE.to_string())
+        }
+        StageExecutionMode::Script => Some(SCRIPT_REASON_UNPORTED.to_string()),
     }
 }
 
@@ -6467,6 +6476,28 @@ mod tests {
             plan[1].script_reason.as_deref(),
             Some("not yet ported to Rust; delegated to install script")
         );
+    }
+
+    #[test]
+    fn build_stage_plan_records_reason_for_every_script_fallback() {
+        let stages = vec![
+            stage("repository"),
+            stage("git"),
+            stage("node"),
+            stage("legacy"),
+        ];
+        let plan = build_stage_plan(&stages, false);
+
+        for planned in plan.iter().filter(|stage| stage.script_fallback) {
+            assert!(
+                planned
+                    .script_reason
+                    .as_deref()
+                    .is_some_and(|reason| !reason.trim().is_empty()),
+                "{} should report why a script can still run",
+                planned.name
+            );
+        }
     }
 
     #[test]

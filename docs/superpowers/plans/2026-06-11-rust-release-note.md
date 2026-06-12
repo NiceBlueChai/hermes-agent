@@ -47,6 +47,8 @@ User-visible behavior:
   enabling reviewed ffmpeg payloads without making ffmpeg a required bundled dependency.
 - Native bootstrap diagnostics now preserve npm and Unix package-manager failure output, including permission hints for
   Hermes-managed npm cache and `node_modules` paths.
+- Bootstrap diagnostics now report why every stage that can still invoke `install.ps1` or `install.sh` may do so,
+  making native-first, probe-then-script, interactive, and unported fallback paths explicit in logs.
 - If Node dependency or desktop build setup falls back to the install scripts, the Rust bootstrapper now passes its
   bundled bootstrap-tools path through so script recovery can restore npm-cache, Playwright browser, and Electron cache
   archives before network downloads.
