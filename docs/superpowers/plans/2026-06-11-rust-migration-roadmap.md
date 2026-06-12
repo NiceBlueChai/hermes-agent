@@ -213,6 +213,8 @@ language-specific setup where needed.
 - Windows `system-packages` now installs ripgrep natively from a bundled or cached release ZIP before falling back to
   PowerShell for ffmpeg/package-manager recovery, reducing one common package-manager dependency without dropping TTS
   voice-message support.
+- Windows `system-packages` now also attempts ffmpeg recovery through Rust-planned winget, Chocolatey, and Scoop
+  commands before using PowerShell fallback, matching the direct script package-manager order.
 - Unix `system-packages` now mirrors that native-first ripgrep path with pinned Linux/macOS tarballs, then falls back to
   `install.sh` for ffmpeg/package-manager recovery so voice-message support remains intact.
 - Unix Node, uv, and ripgrep `.tar.gz` extraction now run through Rust instead of spawning system `tar`; Unix Node

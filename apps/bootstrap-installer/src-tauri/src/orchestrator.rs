@@ -207,6 +207,14 @@ pub struct UnixPackageInstallCommandPlan {
     pub args: Vec<String>,
 }
 
+/// Command used by native Windows package-manager recovery stages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowsPackageInstallCommandPlan {
+    pub program: String,
+    pub args: Vec<String>,
+    pub path_after_install: Option<PathBuf>,
+}
+
 /// Native Windows ripgrep runtime installation plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowsRipgrepRuntimeStagePlan {
@@ -1880,6 +1888,71 @@ fn unix_package_command_with_packages(
     }
 }
 
+fn windows_system_package_install_command_plan(
+    packages: &[&str],
+    winget_available: bool,
+    choco_available: bool,
+    scoop_available: bool,
+    local_app_data: Option<&Path>,
+) -> Result<Vec<WindowsPackageInstallCommandPlan>> {
+    if packages.is_empty() {
+        return Err(anyhow!("at least one Windows package is required"));
+    }
+
+    let mut commands = Vec::new();
+    if winget_available {
+        for package in packages {
+            let package_id = windows_winget_package_id(package)?;
+            commands.push(WindowsPackageInstallCommandPlan {
+                program: "winget".to_string(),
+                args: vec![
+                    "install".to_string(),
+                    "--exact".to_string(),
+                    "--id".to_string(),
+                    package_id.to_string(),
+                    "--source".to_string(),
+                    "winget".to_string(),
+                    "--silent".to_string(),
+                    "--accept-package-agreements".to_string(),
+                    "--accept-source-agreements".to_string(),
+                ],
+                path_after_install: local_app_data
+                    .map(|path| path.join("Microsoft").join("WinGet").join("Links")),
+            });
+        }
+    }
+    if choco_available {
+        for package in packages {
+            commands.push(WindowsPackageInstallCommandPlan {
+                program: "choco".to_string(),
+                args: vec!["install".to_string(), (*package).to_string(), "-y".to_string()],
+                path_after_install: None,
+            });
+        }
+    }
+    if scoop_available {
+        for package in packages {
+            commands.push(WindowsPackageInstallCommandPlan {
+                program: "scoop".to_string(),
+                args: vec!["install".to_string(), (*package).to_string()],
+                path_after_install: None,
+            });
+        }
+    }
+    if commands.is_empty() {
+        return Err(anyhow!("no Windows package manager is available"));
+    }
+    Ok(commands)
+}
+
+fn windows_winget_package_id(package: &str) -> Result<&'static str> {
+    match package {
+        "ffmpeg" => Ok("Gyan.FFmpeg"),
+        "ripgrep" => Ok("BurntSushi.ripgrep.MSVC"),
+        other => Err(anyhow!("unsupported Windows winget package: {other}")),
+    }
+}
+
 /// Build a Windows ripgrep runtime plan matching the pinned release asset.
 pub fn windows_ripgrep_runtime_stage_plan(
     hermes_home: &Path,
@@ -2007,15 +2080,56 @@ pub async fn install_windows_system_packages_stage(
         persist_windows_path_entries(&[bin_dir])?;
     }
 
-    let refreshed_path = std::env::var_os("PATH").unwrap_or_default();
-    let ffmpeg = find_executable_on_path("ffmpeg", &refreshed_path, &pathext);
+    let mut refreshed_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut ffmpeg = find_executable_on_path("ffmpeg", &refreshed_path, &pathext);
+    let mut ffmpeg_commands = Vec::new();
     if ffmpeg.is_none() {
-        return Err(anyhow!("ffmpeg is not available; script fallback required"));
+        let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+        let commands = windows_system_package_install_command_plan(
+            &["ffmpeg"],
+            find_executable_on_path("winget", &refreshed_path, &pathext).is_some(),
+            find_executable_on_path("choco", &refreshed_path, &pathext).is_some(),
+            find_executable_on_path("scoop", &refreshed_path, &pathext).is_some(),
+            local_app_data.as_deref(),
+        )?;
+        let mut errors = Vec::new();
+        for command in &commands {
+            match run_windows_system_package_install_command(command) {
+                Ok(()) => {
+                    if let Some(path) = &command.path_after_install {
+                        if path.is_dir() {
+                            prepend_process_path(path);
+                        }
+                    }
+                    refreshed_path = std::env::var_os("PATH").unwrap_or_default();
+                    ffmpeg = find_executable_on_path("ffmpeg", &refreshed_path, &pathext);
+                    if ffmpeg.is_some() {
+                        break;
+                    }
+                    errors.push(format!(
+                        "{} completed but ffmpeg is still unavailable",
+                        windows_package_command_display(command)
+                    ));
+                }
+                Err(err) => errors.push(err.to_string()),
+            }
+        }
+        ffmpeg_commands = commands
+            .iter()
+            .map(windows_package_command_display)
+            .collect::<Vec<_>>();
+        if ffmpeg.is_none() {
+            return Err(anyhow!(
+                "ffmpeg is not available after native Windows package recovery: {}",
+                errors.join("; ")
+            ));
+        }
     }
 
     Ok(serde_json::json!({
         "ripgrep": find_executable_on_path("rg", &refreshed_path, &pathext),
         "ffmpeg": ffmpeg,
+        "ffmpegCommands": ffmpeg_commands,
         "archive": archive_name,
         "archiveSource": archive_source_kind,
     }))
@@ -2296,6 +2410,29 @@ fn run_unix_system_package_install_command(command: &UnixPackageInstallCommandPl
 }
 
 fn unix_package_command_display(command: &UnixPackageInstallCommandPlan) -> String {
+    if command.args.is_empty() {
+        return command.program.clone();
+    }
+    format!("{} {}", command.program, command.args.join(" "))
+}
+
+fn run_windows_system_package_install_command(command: &WindowsPackageInstallCommandPlan) -> Result<()> {
+    let output = Command::new(&command.program)
+        .args(&command.args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .with_context(|| format!("running {}", windows_package_command_display(command)))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(anyhow!(process_failure_message(
+        &windows_package_command_display(command),
+        &output,
+    )))
+}
+
+fn windows_package_command_display(command: &WindowsPackageInstallCommandPlan) -> String {
     if command.args.is_empty() {
         return command.program.clone();
     }
@@ -7288,6 +7425,53 @@ mod tests {
             false,
         )
         .is_err());
+    }
+
+    #[test]
+    fn windows_system_package_install_command_plan_matches_shell_recovery() {
+        let local_app_data = PathBuf::from("C:/Users/alice/AppData/Local");
+        let commands = windows_system_package_install_command_plan(
+            &["ffmpeg"],
+            true,
+            true,
+            true,
+            Some(local_app_data.as_path()),
+        )
+        .expect("Windows package managers should plan ffmpeg recovery");
+
+        assert_eq!(commands.len(), 3);
+        assert_eq!(commands[0].program, "winget");
+        assert_eq!(
+            commands[0].args,
+            vec![
+                "install",
+                "--exact",
+                "--id",
+                "Gyan.FFmpeg",
+                "--source",
+                "winget",
+                "--silent",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+            ]
+        );
+        assert_eq!(
+            commands[0].path_after_install,
+            Some(PathBuf::from("C:/Users/alice/AppData/Local/Microsoft/WinGet/Links"))
+        );
+        assert_eq!(commands[1].program, "choco");
+        assert_eq!(commands[1].args, vec!["install", "ffmpeg", "-y"]);
+        assert_eq!(commands[2].program, "scoop");
+        assert_eq!(commands[2].args, vec!["install", "ffmpeg"]);
+
+        let no_manager = windows_system_package_install_command_plan(
+            &["ffmpeg"],
+            false,
+            false,
+            false,
+            None,
+        );
+        assert!(no_manager.is_err());
     }
 
     #[test]
