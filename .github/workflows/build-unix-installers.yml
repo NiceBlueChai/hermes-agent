@@ -139,6 +139,7 @@ jobs:
                   --self-check-expect-commit "${{ github.sha }}"
                   --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
                   --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse
+                  --self-check-wheelhouse-platform ${{ matrix.platform }}
 
             - name: Validate Linux installer artifacts
               if: matrix.platform == 'linux'

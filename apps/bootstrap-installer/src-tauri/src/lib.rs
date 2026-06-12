@@ -91,6 +91,7 @@ pub fn bootstrap_self_check_report(
     branch: Option<&str>,
     bootstrap_tools_dir: Option<&Path>,
     wheelhouse_dir: Option<&Path>,
+    wheelhouse_platform: Option<&str>,
 ) -> BootstrapSelfCheckReport {
     let embedded_scripts = install_script::bundled_script_manifest();
     let mut errors = Vec::new();
@@ -123,7 +124,7 @@ pub fn bootstrap_self_check_report(
         }
     }
     if let Some(dir) = wheelhouse_dir {
-        match validate_wheelhouse_for_self_check(dir) {
+        match validate_wheelhouse_for_self_check(dir, wheelhouse_platform) {
             Ok(count) => python_wheelhouse_wheels = Some(count),
             Err(err) => errors.push(err),
         }
@@ -188,6 +189,24 @@ where
         }
         if arg == "--self-check-wheelhouse" {
             return iter.next().map(|value| PathBuf::from(value.as_ref()));
+        }
+    }
+    None
+}
+
+fn self_check_wheelhouse_platform<I, S>(args: I) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        let arg = arg.as_ref();
+        if let Some(value) = arg.strip_prefix("--self-check-wheelhouse-platform=") {
+            return Some(value.to_string());
+        }
+        if arg == "--self-check-wheelhouse-platform" {
+            return iter.next().map(|value| value.as_ref().to_string());
         }
     }
     None
@@ -302,7 +321,10 @@ fn validate_bootstrap_tools_for_self_check(dir: &Path) -> Result<usize, String> 
     Ok(archives.len())
 }
 
-fn validate_wheelhouse_for_self_check(dir: &Path) -> Result<usize, String> {
+fn validate_wheelhouse_for_self_check(
+    dir: &Path,
+    expected_platform: Option<&str>,
+) -> Result<usize, String> {
     let manifest_path = dir.join(WHEELHOUSE_MANIFEST);
     let manifest_text = std::fs::read_to_string(&manifest_path)
         .map_err(|err| format!("reading wheelhouse manifest failed: {err}"))?;
@@ -347,6 +369,13 @@ fn validate_wheelhouse_for_self_check(dir: &Path) -> Result<usize, String> {
             .ok_or_else(|| format!("wheelhouse wheel is missing platform: {name}"))?;
         if !matches!(platform, "windows" | "linux" | "macos") {
             return Err(format!("wheelhouse wheel is missing platform: {name}"));
+        }
+        if let Some(expected) = expected_platform {
+            if platform != expected {
+                return Err(format!(
+                    "unexpected wheelhouse platform for {name}: expected {expected}, got {platform}"
+                ));
+            }
         }
         let python = wheel
             .get("python")
@@ -460,6 +489,7 @@ fn write_self_check_and_exit(args: &[String]) {
         option_env!("BUILD_PIN_BRANCH"),
         self_check_bootstrap_tools_dir(args).as_deref(),
         self_check_wheelhouse_dir(args).as_deref(),
+        self_check_wheelhouse_platform(args).as_deref(),
     );
     if let Some(expected) = expected_self_check_commit(args) {
         if report.commit.as_deref() != Some(expected.as_str()) {
@@ -609,7 +639,7 @@ pub fn run() {
 mod tests {
     use super::{
         bootstrap_self_check_report, expected_self_check_commit, force_setup_from_args,
-        self_check_wheelhouse_dir, AppMode,
+        self_check_wheelhouse_dir, self_check_wheelhouse_platform, AppMode,
     };
     use std::path::PathBuf;
 
@@ -665,14 +695,15 @@ mod tests {
 
     #[test]
     fn self_check_requires_commit_pin_and_embedded_scripts() {
-        let missing_commit = bootstrap_self_check_report(None, Some("main"), None, None);
+        let missing_commit = bootstrap_self_check_report(None, Some("main"), None, None, None);
         assert!(!missing_commit.ok);
         assert!(missing_commit
             .errors
             .iter()
             .any(|err| err.contains("commit pin")));
 
-        let report = bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), None, None);
+        let report =
+            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), None, None, None);
         assert!(report.ok, "{:?}", report.errors);
         assert_eq!(report.commit.as_deref(), Some("abcdef1234567890"));
         assert!(report.embedded_scripts.len() >= 2);
@@ -716,13 +747,25 @@ mod tests {
         .unwrap();
 
         let report =
-            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools), None);
+            bootstrap_self_check_report(
+                Some("abcdef1234567890"),
+                Some("main"),
+                Some(&tools),
+                None,
+                None,
+            );
         assert!(report.ok, "{:?}", report.errors);
         assert_eq!(report.bootstrap_tools_archives, Some(1));
 
         std::fs::write(tools.join("rogue.zip"), b"rogue").unwrap();
         let report =
-            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools), None);
+            bootstrap_self_check_report(
+                Some("abcdef1234567890"),
+                Some("main"),
+                Some(&tools),
+                None,
+                None,
+            );
         assert!(!report.ok);
         assert!(report
             .errors
@@ -766,6 +809,7 @@ mod tests {
             Some("main"),
             None,
             Some(&wheelhouse),
+            None,
         );
         assert!(report.ok, "{:?}", report.errors);
         assert_eq!(report.python_wheelhouse_wheels, Some(1));
@@ -776,6 +820,7 @@ mod tests {
             Some("main"),
             None,
             Some(&wheelhouse),
+            None,
         );
         assert!(!report.ok);
         assert!(report
@@ -813,7 +858,13 @@ mod tests {
         .unwrap();
 
         let report =
-            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools), None);
+            bootstrap_self_check_report(
+                Some("abcdef1234567890"),
+                Some("main"),
+                Some(&tools),
+                None,
+                None,
+            );
         assert!(!report.ok);
         assert!(report
             .errors
@@ -840,7 +891,13 @@ mod tests {
         )
         .unwrap();
         let report =
-            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools), None);
+            bootstrap_self_check_report(
+                Some("abcdef1234567890"),
+                Some("main"),
+                Some(&tools),
+                None,
+                None,
+            );
         assert!(!report.ok);
         assert!(report
             .errors
@@ -868,7 +925,13 @@ mod tests {
         )
         .unwrap();
         let report =
-            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools), None);
+            bootstrap_self_check_report(
+                Some("abcdef1234567890"),
+                Some("main"),
+                Some(&tools),
+                None,
+                None,
+            );
         assert!(!report.ok);
         assert!(report
             .errors
@@ -896,7 +959,13 @@ mod tests {
         )
         .unwrap();
         let report =
-            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools), None);
+            bootstrap_self_check_report(
+                Some("abcdef1234567890"),
+                Some("main"),
+                Some(&tools),
+                None,
+                None,
+            );
         assert!(!report.ok);
         assert!(report
             .errors
@@ -932,7 +1001,13 @@ mod tests {
         )
         .unwrap();
         let report =
-            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools), None);
+            bootstrap_self_check_report(
+                Some("abcdef1234567890"),
+                Some("main"),
+                Some(&tools),
+                None,
+                None,
+            );
         assert!(!report.ok);
         assert!(report
             .errors
@@ -966,5 +1041,67 @@ mod tests {
             Some(PathBuf::from("wheels2"))
         );
         assert_eq!(self_check_wheelhouse_dir(["--self-check"]), None);
+    }
+
+    #[test]
+    fn self_check_wheelhouse_platform_rejects_wrong_release_payload() {
+        let root = unique_tmp_dir("wheelhouse-platform");
+        let wheelhouse = root.join("wheelhouse");
+        std::fs::create_dir_all(&wheelhouse).unwrap();
+        let wheel = wheelhouse.join("demo-0.1-py3-none-any.whl");
+        std::fs::write(&wheel, b"wheel bytes").unwrap();
+        let sha256 = crate::artifact::sha256_hex(b"wheel bytes");
+        std::fs::write(
+            wheelhouse.join("wheelhouse-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "wheels": [
+    {{
+      "arch": "x64",
+      "platform": "windows",
+      "python": "cp311",
+      "name": "demo-0.1-py3-none-any.whl",
+      "sizeBytes": 11,
+      "sha256": "{sha256}"
+    }}
+  ]
+}}
+"#
+            ),
+        )
+        .unwrap();
+
+        let report = bootstrap_self_check_report(
+            Some("abcdef1234567890"),
+            Some("main"),
+            None,
+            Some(&wheelhouse),
+            Some("linux"),
+        );
+        assert!(!report.ok);
+        assert!(report
+            .errors
+            .iter()
+            .any(|err| err.contains("unexpected wheelhouse platform")));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn self_check_wheelhouse_platform_parses_space_or_equals_forms() {
+        assert_eq!(
+            self_check_wheelhouse_platform([
+                "--self-check",
+                "--self-check-wheelhouse-platform",
+                "windows"
+            ]),
+            Some("windows".to_string())
+        );
+        assert_eq!(
+            self_check_wheelhouse_platform(["--self-check-wheelhouse-platform=linux"]),
+            Some("linux".to_string())
+        );
+        assert_eq!(self_check_wheelhouse_platform(["--self-check"]), None);
     }
 }
