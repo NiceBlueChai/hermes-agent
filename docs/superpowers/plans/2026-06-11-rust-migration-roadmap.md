@@ -360,6 +360,8 @@ language-specific setup where needed.
   `pip-cache`, `npm-cache`, `playwright-browsers`, `node`, `python`, `git`, and `bootstrap-cache` in addition to the
   source checkout, and records the staged `hermes-setup(.exe)` updater when present. Lite uninstall accepts only those
   runtime roots/files while continuing to reject user config and data paths.
+- `hermes-manager install-metadata`, `uninstall-lite`, and `repair-clean` now also treat
+  `$HERMES_HOME/gateway-service` as a managed runtime artifact, matching the Python uninstall cleanup list.
 - `hermes-manager repair-clean` now removes the same Hermes-managed runtime roots as repairable install state, so
   broken managed Node/Python/uv/pip/Git/bootstrap-cache directories and staged updater binaries are recreated by the
   next bootstrap while user config and data stay intact.

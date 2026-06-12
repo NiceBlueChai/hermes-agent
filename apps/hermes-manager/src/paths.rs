@@ -117,6 +117,7 @@ pub fn managed_runtime_roots(hermes_home: &std::path::Path) -> Vec<PathBuf> {
         hermes_home.join("node"),
         hermes_home.join("python"),
         hermes_home.join("git"),
+        hermes_home.join("gateway-service"),
         hermes_home.join("bootstrap-cache"),
     ]
 }
@@ -172,6 +173,7 @@ mod tests {
                 PathBuf::from("/tmp/hermes/node"),
                 PathBuf::from("/tmp/hermes/python"),
                 PathBuf::from("/tmp/hermes/git"),
+                PathBuf::from("/tmp/hermes/gateway-service"),
                 PathBuf::from("/tmp/hermes/bootstrap-cache"),
             ]
         );

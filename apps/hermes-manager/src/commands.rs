@@ -523,6 +523,7 @@ mod tests {
         let node_dir = hermes_home.join("node");
         let python_dir = hermes_home.join("python");
         let git_dir = hermes_home.join("git");
+        let gateway_service_dir = hermes_home.join("gateway-service");
         let bootstrap_cache = hermes_home.join("bootstrap-cache");
         let installer = paths::managed_runtime_files(&hermes_home)[0].clone();
         let user_config = hermes_home.join("config.yaml");
@@ -533,6 +534,7 @@ mod tests {
         fs::create_dir_all(&node_dir).expect("node dir should be created");
         fs::create_dir_all(&python_dir).expect("python dir should be created");
         fs::create_dir_all(&git_dir).expect("git dir should be created");
+        fs::create_dir_all(&gateway_service_dir).expect("gateway-service dir should be created");
         fs::create_dir_all(&bootstrap_cache).expect("bootstrap cache should be created");
         fs::write(&installer, "setup").expect("installer should be created");
         fs::write(&user_config, "model: test").expect("user config should be created");
@@ -556,6 +558,7 @@ mod tests {
                 node_dir,
                 python_dir,
                 git_dir,
+                gateway_service_dir,
                 bootstrap_cache,
                 installer,
             ]
