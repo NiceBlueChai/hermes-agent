@@ -24,10 +24,13 @@ pub fn doctor(hermes_home: &Path) -> Vec<String> {
 /// Create manager state and an initial installed-files manifest if missing.
 pub fn install_metadata(hermes_home: &Path) -> Result<()> {
     let manifest_path = paths::installed_manifest_path(hermes_home);
-    if manifest_path.exists() {
-        return Ok(());
-    }
-    let mut manifest = InstalledManifest::new(hermes_home.to_path_buf());
+    let mut manifest = if manifest_path.exists() {
+        let manifest = InstalledManifest::read(&manifest_path)?;
+        validate_manifest_home(hermes_home, &manifest)?;
+        manifest
+    } else {
+        InstalledManifest::new(hermes_home.to_path_buf())
+    };
     for runtime_root in paths::managed_runtime_roots(hermes_home) {
         if runtime_root == paths::agent_root(hermes_home) || runtime_root.exists() {
             manifest.add_entry(runtime_root, InstalledKind::Directory);
@@ -775,6 +778,37 @@ mod tests {
             ]
         );
         assert!(!paths.contains(&user_config));
+    }
+
+    #[test]
+    fn install_metadata_updates_existing_manifest_with_new_managed_runtime_paths() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let hermes_home = dir.path().join("hermes");
+        let agent_root = paths::agent_root(&hermes_home);
+        let npm_cache = hermes_home.join("npm-cache");
+        let installer = paths::managed_runtime_files(&hermes_home)[0].clone();
+        fs::create_dir_all(&agent_root).expect("agent root should be created");
+        fs::create_dir_all(&npm_cache).expect("npm cache should be created");
+        fs::write(&installer, "setup").expect("installer should be created");
+
+        let manifest_path = paths::installed_manifest_path(&hermes_home);
+        let mut manifest = InstalledManifest::new(hermes_home.clone());
+        manifest.add_entry(agent_root.clone(), InstalledKind::Directory);
+        manifest
+            .write_atomic(&manifest_path)
+            .expect("legacy manifest should be written");
+
+        super::install_metadata(&hermes_home).expect("install metadata should be updated");
+
+        let manifest = InstalledManifest::read(&manifest_path).expect("manifest should be read");
+        let paths = manifest
+            .entries
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>();
+        assert!(paths.contains(&agent_root));
+        assert!(paths.contains(&npm_cache));
+        assert!(paths.contains(&installer));
     }
 
     #[test]

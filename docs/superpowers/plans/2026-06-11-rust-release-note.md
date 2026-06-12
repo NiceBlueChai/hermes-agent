@@ -12,6 +12,8 @@ User-visible behavior:
   Linux desktop entries, and Electron `userData` even when the Python environment is broken or missing.
 - Fresh desktop/bootstrap-installer installs record manager metadata under `HERMES_HOME/manager/installed-files.json`,
   including managed runtime/tool/cache directories and the staged bootstrap installer.
+- Existing install metadata is refreshed with newly introduced managed runtime paths, so lite uninstall and repair
+  cleanup can remove caches added by later installer versions.
 - The Tauri bootstrap installer now handles repository archive installs and archive-based updates, install state
   probing, bootstrap marker creation, install-method stamping, config templates, PATH/profile setup, Windows shortcuts,
   and native runtime setup before falling back to direct install scripts.
