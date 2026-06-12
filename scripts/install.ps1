@@ -2606,9 +2606,24 @@ function Install-PlatformSdks {
         }
 
         foreach ($sdk in $missing) {
-            Write-Info "  Installing $($sdk.Spec) ..."
-            & $pythonExe -m pip install $sdk.Spec 2>&1 | ForEach-Object { Write-Host "    $_" }
-            if ($LASTEXITCODE -eq 0) {
+            $installedSdk = $false
+            $wheelhouseDir = Join-Path $InstallDir "resources\wheelhouse"
+            if (Test-LocalWheelhouseManifest -WheelhouseDir $wheelhouseDir) {
+                Write-Info "  Installing $($sdk.Spec) from local wheelhouse ..."
+                & $pythonExe -m pip install --no-index --find-links $wheelhouseDir $sdk.Spec 2>&1 |
+                    ForEach-Object { Write-Host "    $_" }
+                if ($LASTEXITCODE -eq 0) {
+                    $installedSdk = $true
+                } else {
+                    Write-Warn "  Local wheelhouse install failed for $($sdk.Spec); trying network pip..."
+                }
+            }
+            if (-not $installedSdk) {
+                Write-Info "  Installing $($sdk.Spec) ..."
+                & $pythonExe -m pip install $sdk.Spec 2>&1 | ForEach-Object { Write-Host "    $_" }
+                $installedSdk = $LASTEXITCODE -eq 0
+            }
+            if ($installedSdk) {
                 Write-Success "  Installed $($sdk.Import)"
             } else {
                 Write-Warn "  Failed to install $($sdk.Spec). Recover manually: $pythonExe -m pip install `"$($sdk.Spec)`""

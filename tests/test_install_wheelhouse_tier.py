@@ -46,6 +46,30 @@ class InstallWheelhouseTierTests(unittest.TestCase):
         self.assertIn("arch -ne $expectedArch", text)
         self.assertIn("Get-FileHash", text)
 
+    def test_install_sh_platform_sdks_try_wheelhouse_before_network_pip(self) -> None:
+        """install.sh platform SDK recovery should try wheelhouse before network pip."""
+        text = _read(INSTALL_SH)
+        function_pos = text.index("install_platform_sdks()")
+        wheelhouse_pos = text.index("wheelhouse_arg", function_pos)
+        fallback_pos = text.index('"pip", "install", spec', function_pos)
+        function_text = text[function_pos:]
+
+        self.assertLess(wheelhouse_pos, fallback_pos)
+        self.assertIn('"--no-index"', function_text)
+        self.assertIn('"--find-links"', function_text)
+        self.assertIn("str(wheelhouse)", function_text)
+
+    def test_install_ps1_platform_sdks_try_wheelhouse_before_network_pip(self) -> None:
+        """install.ps1 platform SDK recovery should try wheelhouse before network pip."""
+        text = _read(INSTALL_PS1)
+        function_pos = text.index("function Install-PlatformSdks")
+        wheelhouse_pos = text.index("Test-LocalWheelhouseManifest", function_pos)
+        fallback_pos = text.index("-m pip install $sdk.Spec", function_pos)
+
+        self.assertLess(wheelhouse_pos, fallback_pos)
+        self.assertIn("--no-index", text[function_pos:])
+        self.assertIn("--find-links", text[function_pos:])
+
 
 if __name__ == "__main__":
     unittest.main()

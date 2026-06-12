@@ -1896,6 +1896,7 @@ SOUL_EOF
 install_platform_sdks() {
     local env_file="$HERMES_HOME/.env"
     local python_path="$INSTALL_DIR/venv/bin/python"
+    local wheelhouse_arg=""
 
     if [ ! -f "$env_file" ]; then
         log_info "Skipping messaging platform SDK check (no ~/.hermes/.env)"
@@ -1905,8 +1906,11 @@ install_platform_sdks() {
         log_warn "Skipping messaging platform SDK check (venv Python missing)"
         return 0
     fi
+    if local_wheelhouse_manifest_is_valid "$INSTALL_DIR/resources/wheelhouse"; then
+        wheelhouse_arg="$INSTALL_DIR/resources/wheelhouse"
+    fi
 
-    "$python_path" - "$env_file" <<'PY'
+    "$python_path" - "$env_file" "$wheelhouse_arg" <<'PY'
 import importlib.util
 import subprocess
 import sys
@@ -1939,6 +1943,7 @@ def configured(value):
 
 
 values = env_values(sys.argv[1])
+wheelhouse = Path(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else None
 required = [(module, spec) for key, module, spec in SDK_MAP if configured(values.get(key, ""))]
 if not required:
     print("No messaging platform tokens configured; skipping SDK check.")
@@ -1953,8 +1958,28 @@ if subprocess.call([sys.executable, "-m", "pip", "--version"]) != 0:
     subprocess.check_call([sys.executable, "-m", "ensurepip", "--upgrade"])
 
 for module, spec in missing:
-    print(f"Installing {spec} for missing import {module} ...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", spec])
+    installed = False
+    if wheelhouse is not None:
+        print(f"Installing {spec} for missing import {module} from local wheelhouse ...")
+        try:
+            subprocess.check_call(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--no-index",
+                    "--find-links",
+                    str(wheelhouse),
+                    spec,
+                ]
+            )
+            installed = True
+        except subprocess.CalledProcessError:
+            print(f"Local wheelhouse install failed for {spec}; trying network pip...")
+    if not installed:
+        print(f"Installing {spec} for missing import {module} ...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", spec])
 PY
 }
 
