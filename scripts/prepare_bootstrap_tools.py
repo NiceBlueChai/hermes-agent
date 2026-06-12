@@ -307,7 +307,11 @@ def write_manifest(output_dir: Path, archives: list[PreparedArchive]) -> Path:
     return manifest_path
 
 
-def validate_manifest(output_dir: Path) -> int:
+def validate_manifest(
+    output_dir: Path,
+    expected_platform: str | None = None,
+    expected_arch: str | None = None,
+) -> int:
     """Validate that the tool manifest matches archives in the output directory."""
 
     manifest_path = output_dir / MANIFEST_NAME
@@ -333,9 +337,15 @@ def validate_manifest(output_dir: Path) -> int:
         arch = archive.get("arch")
         if not isinstance(arch, str) or not arch:
             raise RuntimeError(f"manifest archive is missing arch: {name}")
+        if expected_arch is not None and arch != expected_arch:
+            raise RuntimeError(f"unexpected bootstrap tools arch for {name}: expected {expected_arch}, got {arch}")
         platform = archive.get("platform")
         if platform not in {"windows", "linux", "macos"}:
             raise RuntimeError(f"manifest archive is missing platform: {name}")
+        if expected_platform is not None and platform != expected_platform:
+            raise RuntimeError(
+                f"unexpected bootstrap tools platform for {name}: expected {expected_platform}, got {platform}"
+            )
         target = archive_target_from_name(name)
         if target is not None and target != (platform, arch):
             raise RuntimeError(f"manifest archive target mismatch: {name}")
@@ -432,7 +442,7 @@ def main(argv: list[str] | None = None) -> int:
     arches = args.arch or ["x64"]
     try:
         if args.validate_only:
-            count = validate_manifest(args.output_dir)
+            count = validate_manifest(args.output_dir, args.platform, arches[0] if len(arches) == 1 else None)
             print(f"[bootstrap-tools] validated {count} archive(s) in {args.output_dir}")
             return 0
         prepared = prepare_archives(args.output_dir, arches, args.force, args.dry_run, args.platform)

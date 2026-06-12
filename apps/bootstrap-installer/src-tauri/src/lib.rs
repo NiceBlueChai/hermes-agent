@@ -91,8 +91,10 @@ pub fn bootstrap_self_check_report(
     branch: Option<&str>,
     bootstrap_tools_dir: Option<&Path>,
     bootstrap_tools_platform: Option<&str>,
+    bootstrap_tools_arch: Option<&str>,
     wheelhouse_dir: Option<&Path>,
     wheelhouse_platform: Option<&str>,
+    wheelhouse_arch: Option<&str>,
 ) -> BootstrapSelfCheckReport {
     let embedded_scripts = install_script::bundled_script_manifest();
     let mut errors = Vec::new();
@@ -119,13 +121,13 @@ pub fn bootstrap_self_check_report(
         }
     }
     if let Some(dir) = bootstrap_tools_dir {
-        match validate_bootstrap_tools_for_self_check(dir, bootstrap_tools_platform) {
+        match validate_bootstrap_tools_for_self_check(dir, bootstrap_tools_platform, bootstrap_tools_arch) {
             Ok(count) => bootstrap_tools_archives = Some(count),
             Err(err) => errors.push(err),
         }
     }
     if let Some(dir) = wheelhouse_dir {
-        match validate_wheelhouse_for_self_check(dir, wheelhouse_platform) {
+        match validate_wheelhouse_for_self_check(dir, wheelhouse_platform, wheelhouse_arch) {
             Ok(count) => python_wheelhouse_wheels = Some(count),
             Err(err) => errors.push(err),
         }
@@ -195,6 +197,24 @@ where
     None
 }
 
+fn self_check_bootstrap_tools_arch<I, S>(args: I) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        let arg = arg.as_ref();
+        if let Some(value) = arg.strip_prefix("--self-check-bootstrap-tools-arch=") {
+            return Some(value.to_string());
+        }
+        if arg == "--self-check-bootstrap-tools-arch" {
+            return iter.next().map(|value| value.as_ref().to_string());
+        }
+    }
+    None
+}
+
 fn self_check_wheelhouse_dir<I, S>(args: I) -> Option<PathBuf>
 where
     I: IntoIterator<Item = S>,
@@ -231,9 +251,28 @@ where
     None
 }
 
+fn self_check_wheelhouse_arch<I, S>(args: I) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        let arg = arg.as_ref();
+        if let Some(value) = arg.strip_prefix("--self-check-wheelhouse-arch=") {
+            return Some(value.to_string());
+        }
+        if arg == "--self-check-wheelhouse-arch" {
+            return iter.next().map(|value| value.as_ref().to_string());
+        }
+    }
+    None
+}
+
 fn validate_bootstrap_tools_for_self_check(
     dir: &Path,
     expected_platform: Option<&str>,
+    expected_arch: Option<&str>,
 ) -> Result<usize, String> {
     let manifest_path = dir.join(BOOTSTRAP_TOOLS_MANIFEST);
     let manifest_text = std::fs::read_to_string(&manifest_path)
@@ -272,6 +311,13 @@ fn validate_bootstrap_tools_for_self_check(
             .ok_or_else(|| format!("bootstrap tool archive is missing arch: {name}"))?;
         if arch.trim().is_empty() {
             return Err(format!("bootstrap tool archive is missing arch: {name}"));
+        }
+        if let Some(expected) = expected_arch {
+            if arch != expected {
+                return Err(format!(
+                    "unexpected bootstrap tool arch for {name}: expected {expected}, got {arch}"
+                ));
+            }
         }
         let platform = archive
             .get("platform")
@@ -353,6 +399,7 @@ fn validate_bootstrap_tools_for_self_check(
 fn validate_wheelhouse_for_self_check(
     dir: &Path,
     expected_platform: Option<&str>,
+    expected_arch: Option<&str>,
 ) -> Result<usize, String> {
     let manifest_path = dir.join(WHEELHOUSE_MANIFEST);
     let manifest_text = std::fs::read_to_string(&manifest_path)
@@ -391,6 +438,13 @@ fn validate_wheelhouse_for_self_check(
             .ok_or_else(|| format!("wheelhouse wheel is missing arch: {name}"))?;
         if arch.trim().is_empty() {
             return Err(format!("wheelhouse wheel is missing arch: {name}"));
+        }
+        if let Some(expected) = expected_arch {
+            if arch != expected {
+                return Err(format!(
+                    "unexpected wheelhouse arch for {name}: expected {expected}, got {arch}"
+                ));
+            }
         }
         let platform = wheel
             .get("platform")
@@ -518,8 +572,10 @@ fn write_self_check_and_exit(args: &[String]) {
         option_env!("BUILD_PIN_BRANCH"),
         self_check_bootstrap_tools_dir(args).as_deref(),
         self_check_bootstrap_tools_platform(args).as_deref(),
+        self_check_bootstrap_tools_arch(args).as_deref(),
         self_check_wheelhouse_dir(args).as_deref(),
         self_check_wheelhouse_platform(args).as_deref(),
+        self_check_wheelhouse_arch(args).as_deref(),
     );
     if let Some(expected) = expected_self_check_commit(args) {
         if report.commit.as_deref() != Some(expected.as_str()) {
@@ -669,8 +725,9 @@ pub fn run() {
 mod tests {
     use super::{
         bootstrap_self_check_report, expected_self_check_commit, force_setup_from_args,
-        self_check_bootstrap_tools_platform, self_check_wheelhouse_dir,
-        self_check_wheelhouse_platform, AppMode,
+        self_check_bootstrap_tools_arch, self_check_bootstrap_tools_platform,
+        self_check_wheelhouse_arch, self_check_wheelhouse_dir, self_check_wheelhouse_platform,
+        AppMode,
     };
     use std::path::PathBuf;
 
@@ -727,7 +784,7 @@ mod tests {
     #[test]
     fn self_check_requires_commit_pin_and_embedded_scripts() {
         let missing_commit =
-            bootstrap_self_check_report(None, Some("main"), None, None, None, None);
+            bootstrap_self_check_report(None, Some("main"), None, None, None, None, None, None);
         assert!(!missing_commit.ok);
         assert!(missing_commit
             .errors
@@ -737,6 +794,8 @@ mod tests {
         let report = bootstrap_self_check_report(
             Some("abcdef1234567890"),
             Some("main"),
+            None,
+            None,
             None,
             None,
             None,
@@ -792,6 +851,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             );
         assert!(report.ok, "{:?}", report.errors);
         assert_eq!(report.bootstrap_tools_archives, Some(1));
@@ -802,6 +863,8 @@ mod tests {
                 Some("abcdef1234567890"),
                 Some("main"),
                 Some(&tools),
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -849,7 +912,9 @@ mod tests {
             Some("main"),
             None,
             None,
+            None,
             Some(&wheelhouse),
+            None,
             None,
         );
         assert!(report.ok, "{:?}", report.errors);
@@ -861,7 +926,9 @@ mod tests {
             Some("main"),
             None,
             None,
+            None,
             Some(&wheelhouse),
+            None,
             None,
         );
         assert!(!report.ok);
@@ -907,6 +974,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             );
         assert!(!report.ok);
         assert!(report
@@ -938,6 +1007,8 @@ mod tests {
                 Some("abcdef1234567890"),
                 Some("main"),
                 Some(&tools),
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -976,6 +1047,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             );
         assert!(!report.ok);
         assert!(report
@@ -1008,6 +1081,8 @@ mod tests {
                 Some("abcdef1234567890"),
                 Some("main"),
                 Some(&tools),
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -1051,6 +1126,8 @@ mod tests {
                 Some("abcdef1234567890"),
                 Some("main"),
                 Some(&tools),
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -1124,8 +1201,10 @@ mod tests {
             Some("main"),
             None,
             None,
+            None,
             Some(&wheelhouse),
             Some("linux"),
+            None,
         );
         assert!(!report.ok);
         assert!(report
@@ -1189,6 +1268,8 @@ mod tests {
             Some("linux"),
             None,
             None,
+            None,
+            None,
         );
         assert!(!report.ok);
         assert!(report
@@ -1214,5 +1295,102 @@ mod tests {
             Some("linux".to_string())
         );
         assert_eq!(self_check_bootstrap_tools_platform(["--self-check"]), None);
+    }
+
+    #[test]
+    fn self_check_rejects_wrong_release_arch_payloads() {
+        let root = unique_tmp_dir("arch-platform");
+        let tools = root.join("bootstrap-tools");
+        let wheelhouse = root.join("wheelhouse");
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::create_dir_all(&wheelhouse).unwrap();
+        let archive = tools.join("uv-aarch64-pc-windows-msvc.zip");
+        std::fs::write(&archive, b"uv archive").unwrap();
+        let archive_sha256 = crate::artifact::sha256_hex(b"uv archive");
+        std::fs::write(
+            tools.join("bootstrap-tools-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "archives": [
+    {{
+      "arch": "arm64",
+      "platform": "windows",
+      "name": "uv-aarch64-pc-windows-msvc.zip",
+      "url": "https://example.invalid/uv.zip",
+      "sizeBytes": 10,
+      "sha256": "{archive_sha256}"
+    }}
+  ]
+}}
+"#
+            ),
+        )
+        .unwrap();
+        let wheel = wheelhouse.join("demo-0.1-py3-none-any.whl");
+        std::fs::write(&wheel, b"wheel bytes").unwrap();
+        let wheel_sha256 = crate::artifact::sha256_hex(b"wheel bytes");
+        std::fs::write(
+            wheelhouse.join("wheelhouse-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "wheels": [
+    {{
+      "arch": "arm64",
+      "platform": "windows",
+      "python": "cp311",
+      "name": "demo-0.1-py3-none-any.whl",
+      "sizeBytes": 11,
+      "sha256": "{wheel_sha256}"
+    }}
+  ]
+}}
+"#
+            ),
+        )
+        .unwrap();
+
+        let report = bootstrap_self_check_report(
+            Some("abcdef1234567890"),
+            Some("main"),
+            Some(&tools),
+            Some("windows"),
+            Some("x64"),
+            Some(&wheelhouse),
+            Some("windows"),
+            Some("x64"),
+        );
+        assert!(!report.ok);
+        assert!(report
+            .errors
+            .iter()
+            .any(|err| err.contains("unexpected bootstrap tool arch")));
+        assert!(report
+            .errors
+            .iter()
+            .any(|err| err.contains("unexpected wheelhouse arch")));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn self_check_arch_parsers_accept_space_or_equals_forms() {
+        assert_eq!(
+            self_check_bootstrap_tools_arch(["--self-check-bootstrap-tools-arch", "x64"]),
+            Some("x64".to_string())
+        );
+        assert_eq!(
+            self_check_bootstrap_tools_arch(["--self-check-bootstrap-tools-arch=arm64"]),
+            Some("arm64".to_string())
+        );
+        assert_eq!(
+            self_check_wheelhouse_arch(["--self-check-wheelhouse-arch", "x64"]),
+            Some("x64".to_string())
+        );
+        assert_eq!(
+            self_check_wheelhouse_arch(["--self-check-wheelhouse-arch=arm64"]),
+            Some("arm64".to_string())
+        );
     }
 }

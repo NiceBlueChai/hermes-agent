@@ -80,6 +80,19 @@ class PreparePythonWheelhouseTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "checksum mismatch"):
                 module.validate_manifest(output_dir)
 
+    def test_validate_manifest_rejects_expected_arch_mismatch(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "wheelhouse"
+            output_dir.mkdir()
+            wheel = output_dir / "demo-0.1-py3-none-any.whl"
+            wheel.write_bytes(b"wheel bytes")
+            prepared = module.prepared_wheel_record("linux", "arm64", "cp311", wheel)
+            module.write_manifest(output_dir, [prepared])
+
+            with self.assertRaisesRegex(RuntimeError, "unexpected wheelhouse arch"):
+                module.validate_manifest(output_dir, expected_platform="linux", expected_arch="x64")
+
     def test_validate_payload_rejects_unmanifested_wheel(self):
         module = _load_script_module()
         with tempfile.TemporaryDirectory() as tmp:
@@ -106,6 +119,7 @@ class PreparePythonWheelhouseTests(unittest.TestCase):
             text = workflow_path.read_text(encoding="utf-8")
             self.assertIn("scripts/prepare_python_wheelhouse.py", text)
             self.assertIn("--validate-only", text)
+            self.assertIn("--arch", text)
             self.assertIn("wheelhouse/wheelhouse-manifest.json", text)
             self.assertIn("wheelhouse/*.whl", text)
 

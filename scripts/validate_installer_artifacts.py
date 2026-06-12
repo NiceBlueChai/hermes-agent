@@ -28,10 +28,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_BOOTSTRAP_TOOLS_METADATA = {".gitignore", "README.md"}
 
 
-def validate_bootstrap_tools_payload(output_dir: Path, expected_platform: str | None = None) -> int:
+def validate_bootstrap_tools_payload(
+    output_dir: Path,
+    expected_platform: str | None = None,
+    expected_arch: str | None = None,
+) -> int:
     """Validate that the bootstrap-tools directory contains only manifest-owned payloads."""
 
-    archive_count = validate_manifest(output_dir)
+    archive_count = validate_manifest(output_dir, expected_platform, expected_arch)
     manifest_path = output_dir / MANIFEST_NAME
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     expected = {MANIFEST_NAME, *ALLOWED_BOOTSTRAP_TOOLS_METADATA}
@@ -58,8 +62,10 @@ def validate_artifacts(
     patterns: list[str],
     bootstrap_tools_dir: Path | None = None,
     bootstrap_tools_platform: str | None = None,
+    bootstrap_tools_arch: str | None = None,
     wheelhouse_dir: Path | None = None,
     wheelhouse_platform: str | None = None,
+    wheelhouse_arch: str | None = None,
 ) -> list[Path]:
     """Return matched artifact paths after enforcing non-empty required globs."""
 
@@ -77,14 +83,14 @@ def validate_artifacts(
 
     manifest_paths = [path for path in checked if path.name == MANIFEST_NAME]
     if bootstrap_tools_dir is not None:
-        validate_bootstrap_tools_payload(bootstrap_tools_dir, bootstrap_tools_platform)
+        validate_bootstrap_tools_payload(bootstrap_tools_dir, bootstrap_tools_platform, bootstrap_tools_arch)
     elif manifest_paths:
-        validate_bootstrap_tools_payload(manifest_paths[0].parent, bootstrap_tools_platform)
+        validate_bootstrap_tools_payload(manifest_paths[0].parent, bootstrap_tools_platform, bootstrap_tools_arch)
     wheelhouse_manifest_paths = [path for path in checked if path.name == WHEELHOUSE_MANIFEST_NAME]
     if wheelhouse_dir is not None:
-        validate_wheelhouse_payload(wheelhouse_dir, wheelhouse_platform)
+        validate_wheelhouse_payload(wheelhouse_dir, wheelhouse_platform, wheelhouse_arch)
     elif wheelhouse_manifest_paths:
-        validate_wheelhouse_payload(wheelhouse_manifest_paths[0].parent, wheelhouse_platform)
+        validate_wheelhouse_payload(wheelhouse_manifest_paths[0].parent, wheelhouse_platform, wheelhouse_arch)
     return checked
 
 
@@ -117,6 +123,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Optional release platform that every bootstrap-tools archive record must target.",
     )
     parser.add_argument(
+        "--bootstrap-tools-arch",
+        default=None,
+        help="Optional release architecture that every bootstrap-tools archive record must target.",
+    )
+    parser.add_argument(
         "--wheelhouse-dir",
         type=Path,
         default=None,
@@ -127,6 +138,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         choices=("windows", "linux", "macos"),
         default=None,
         help="Optional release platform that every wheelhouse record must target.",
+    )
+    parser.add_argument(
+        "--wheelhouse-arch",
+        default=None,
+        help="Optional release architecture that every wheelhouse record must target.",
     )
     return parser.parse_args(argv)
 
@@ -141,8 +157,10 @@ def main(argv: list[str] | None = None) -> int:
             args.artifact,
             args.bootstrap_tools_dir,
             args.bootstrap_tools_platform,
+            args.bootstrap_tools_arch,
             args.wheelhouse_dir,
             args.wheelhouse_platform,
+            args.wheelhouse_arch,
         )
     except Exception as exc:
         print(f"[installer-artifacts] error: {exc}", file=sys.stderr)

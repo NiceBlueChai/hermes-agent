@@ -111,7 +111,11 @@ jobs:
                   --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
 
             - name: Validate bootstrap tool archives
-              run: python scripts/prepare_bootstrap_tools.py --validate-only
+              run: >
+                  python scripts/prepare_bootstrap_tools.py
+                  --validate-only
+                  --platform ${{ matrix.platform }}
+                  --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
 
             - name: Bundle Python wheelhouse
               run: >
@@ -126,6 +130,7 @@ jobs:
                   python scripts/prepare_python_wheelhouse.py
                   --validate-only
                   --platform ${{ matrix.platform }}
+                  --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
 
             - name: Build installer
               env:
@@ -139,8 +144,10 @@ jobs:
                   --self-check-expect-commit "${{ github.sha }}"
                   --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
                   --self-check-bootstrap-tools-platform ${{ matrix.platform }}
+                  --self-check-bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
                   --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse
                   --self-check-wheelhouse-platform ${{ matrix.platform }}
+                  --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
 
             - name: Validate Linux installer artifacts
               if: matrix.platform == 'linux'
@@ -151,8 +158,10 @@ jobs:
                   --artifact "apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json"
                   --bootstrap-tools-dir apps/bootstrap-installer/src-tauri/bootstrap-tools
                   --bootstrap-tools-platform ${{ matrix.platform }}
+                  --bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
                   --wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse
                   --wheelhouse-platform ${{ matrix.platform }}
+                  --wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
 
             - name: Validate macOS installer artifacts
               if: matrix.platform == 'macos'
@@ -164,8 +173,10 @@ jobs:
                   --artifact "apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json"
                   --bootstrap-tools-dir apps/bootstrap-installer/src-tauri/bootstrap-tools
                   --bootstrap-tools-platform ${{ matrix.platform }}
+                  --bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
                   --wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse
                   --wheelhouse-platform ${{ matrix.platform }}
+                  --wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
 
             - name: Upload installer artifacts
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1

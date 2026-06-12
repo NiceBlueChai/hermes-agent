@@ -394,6 +394,46 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             output_dir.rmdir()
             root.rmdir()
 
+    def test_validate_manifest_rejects_expected_arch_mismatch(self):
+        module = _load_script_module()
+        root = Path("tmp-bootstrap-tools-arch-test")
+        output_dir = root / "bootstrap-tools"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        archive = output_dir / "uv-aarch64-pc-windows-msvc.zip"
+        archive.write_bytes(b"uv archive")
+        manifest = output_dir / "bootstrap-tools-manifest.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "archives": [
+                        {
+                            "arch": "arm64",
+                            "platform": "windows",
+                            "name": "uv-aarch64-pc-windows-msvc.zip",
+                            "url": "https://example.invalid/uv.zip",
+                            "sizeBytes": len(b"uv archive"),
+                            "sha256": module.sha256_file(archive),
+                        }
+                    ],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        try:
+            with self.assertRaisesRegex(RuntimeError, "unexpected bootstrap tools arch"):
+                module.validate_manifest(output_dir, expected_platform="windows", expected_arch="x64")
+        finally:
+            if archive.exists():
+                archive.unlink()
+            if manifest.exists():
+                manifest.unlink()
+            output_dir.rmdir()
+            root.rmdir()
+
     def test_validate_manifest_rejects_duplicate_archive_names(self):
         module = _load_script_module()
         root = Path("tmp-bootstrap-tools-duplicate-test")
@@ -500,10 +540,14 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             "apps/bootstrap-installer/src-tauri/bootstrap-tools/*",
             [line.strip() for line in unix_workflow.splitlines()],
         )
-        self.assertIn("python scripts/prepare_bootstrap_tools.py --validate-only", windows_workflow)
-        self.assertIn("python scripts/prepare_bootstrap_tools.py --validate-only", unix_workflow)
+        self.assertIn("python scripts/prepare_bootstrap_tools.py", windows_workflow)
+        self.assertIn("python scripts/prepare_bootstrap_tools.py", unix_workflow)
+        self.assertIn("--validate-only", windows_workflow)
+        self.assertIn("--validate-only", unix_workflow)
         self.assertIn("--bootstrap-tools-platform windows", windows_workflow)
         self.assertIn("--bootstrap-tools-platform ${{ matrix.platform }}", unix_workflow)
+        self.assertIn("--bootstrap-tools-arch x64", windows_workflow)
+        self.assertIn("--bootstrap-tools-arch ${{ runner.arch", unix_workflow)
         upload_sections = [
             section
             for section in windows_workflow.split("\n      - name: ")
@@ -547,6 +591,8 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             "--self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools",
             unix_workflow,
         )
+        self.assertIn("--self-check-bootstrap-tools-arch x64", windows_workflow)
+        self.assertIn("--self-check-bootstrap-tools-arch ${{ runner.arch", unix_workflow)
         self.assertIn(
             "--self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse",
             windows_workflow,
@@ -555,6 +601,8 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             "--self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse",
             unix_workflow,
         )
+        self.assertIn("--self-check-wheelhouse-arch x64", windows_workflow)
+        self.assertIn("--self-check-wheelhouse-arch ${{ runner.arch", unix_workflow)
         self.assertGreater(
             windows_workflow.index("- name: Smoke built installer binary"),
             windows_workflow.index("- name: Sign Hermes-Setup.exe with Azure Artifact Signing"),

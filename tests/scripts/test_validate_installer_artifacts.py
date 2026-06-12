@@ -210,6 +210,47 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
                     bootstrap_tools_platform="windows",
                 )
 
+    def test_validate_artifacts_rejects_wrong_bootstrap_tools_arch(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tools = root / "bootstrap-tools"
+            archive = tools / "uv-aarch64-pc-windows-msvc.zip"
+            manifest = tools / "bootstrap-tools-manifest.json"
+            tools.mkdir(parents=True)
+            archive.write_bytes(b"uv archive")
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "archives": [
+                            {
+                                "arch": "arm64",
+                                "platform": "windows",
+                                "name": archive.name,
+                                "url": "https://example.invalid/uv.zip",
+                                "sizeBytes": len(b"uv archive"),
+                                "sha256": module.sha256_file(archive),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "unexpected bootstrap tools arch"):
+                module.validate_artifacts(
+                    root,
+                    [
+                        "bootstrap-tools/bootstrap-tools-manifest.json",
+                    ],
+                    bootstrap_tools_dir=tools,
+                    bootstrap_tools_platform="windows",
+                    bootstrap_tools_arch="x64",
+                )
+
     def test_validate_artifacts_accepts_wheelhouse_manifest(self):
         module = _load_script_module()
         with tempfile.TemporaryDirectory() as tmp:
@@ -291,6 +332,47 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
                     ],
                     wheelhouse_dir=wheelhouse,
                     wheelhouse_platform="linux",
+                )
+
+    def test_validate_artifacts_rejects_wheelhouse_arch_mismatch(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wheelhouse = root / "wheelhouse"
+            wheel = wheelhouse / "demo-0.1-py3-none-any.whl"
+            manifest = wheelhouse / "wheelhouse-manifest.json"
+            wheelhouse.mkdir(parents=True)
+            wheel.write_bytes(b"wheel bytes")
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "wheels": [
+                            {
+                                "arch": "arm64",
+                                "platform": "linux",
+                                "python": "cp311",
+                                "name": wheel.name,
+                                "sizeBytes": len(b"wheel bytes"),
+                                "sha256": module.sha256_file(wheel),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "unexpected wheelhouse arch"):
+                module.validate_artifacts(
+                    root,
+                    [
+                        "wheelhouse/wheelhouse-manifest.json",
+                    ],
+                    wheelhouse_dir=wheelhouse,
+                    wheelhouse_platform="linux",
+                    wheelhouse_arch="x64",
                 )
 
 

@@ -159,10 +159,14 @@ def write_manifest(output_dir: Path, wheels: list[PreparedWheel]) -> Path:
     return manifest_path
 
 
-def validate_payload(output_dir: Path, expected_platform: str | None = None) -> int:
+def validate_payload(
+    output_dir: Path,
+    expected_platform: str | None = None,
+    expected_arch: str | None = None,
+) -> int:
     """Validate the manifest and reject unmanifested wheel payloads."""
 
-    count = validate_manifest(output_dir, expected_platform)
+    count = validate_manifest(output_dir, expected_platform, expected_arch)
     payload = json.loads((output_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
     expected = {wheel["name"] for wheel in payload["wheels"]}
     expected.update(ALLOWED_METADATA)
@@ -174,7 +178,11 @@ def validate_payload(output_dir: Path, expected_platform: str | None = None) -> 
     return count
 
 
-def validate_manifest(output_dir: Path, expected_platform: str | None = None) -> int:
+def validate_manifest(
+    output_dir: Path,
+    expected_platform: str | None = None,
+    expected_arch: str | None = None,
+) -> int:
     """Validate that the wheelhouse manifest matches wheels in the output directory."""
 
     manifest_path = output_dir / MANIFEST_NAME
@@ -207,6 +215,8 @@ def validate_manifest(output_dir: Path, expected_platform: str | None = None) ->
         arch = wheel.get("arch")
         if not isinstance(arch, str) or not arch:
             raise RuntimeError(f"manifest wheel is missing arch: {name}")
+        if expected_arch is not None and arch != expected_arch:
+            raise RuntimeError(f"unexpected wheelhouse arch for {name}: expected {expected_arch}, got {arch}")
         python = wheel.get("python")
         if not isinstance(python, str) or not python.startswith("cp"):
             raise RuntimeError(f"manifest wheel has invalid python tag: {name}")
@@ -262,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
     platform = normalized_platform(args.platform)
     try:
         if args.validate_only:
-            count = validate_payload(args.output_dir, platform)
+            count = validate_payload(args.output_dir, platform, args.arch)
             print(f"[wheelhouse] validated {count} wheel(s) in {args.output_dir}")
             return 0
         prepared = prepare_wheelhouse(

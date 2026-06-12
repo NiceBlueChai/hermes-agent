@@ -72,7 +72,11 @@ jobs:
         run: python scripts/prepare_bootstrap_tools.py --arch x64
 
       - name: Validate bootstrap tool archives
-        run: python scripts/prepare_bootstrap_tools.py --validate-only
+        run: >
+          python scripts/prepare_bootstrap_tools.py
+          --validate-only
+          --platform windows
+          --arch x64
 
       - name: Bundle Python wheelhouse
         run: >
@@ -87,6 +91,7 @@ jobs:
           python scripts/prepare_python_wheelhouse.py
           --validate-only
           --platform windows
+          --arch x64
 
       - name: Build installer
         env:
@@ -121,8 +126,10 @@ jobs:
           --self-check-expect-commit "${{ github.sha }}"
           --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
           --self-check-bootstrap-tools-platform windows
+          --self-check-bootstrap-tools-arch x64
           --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse
           --self-check-wheelhouse-platform windows
+          --self-check-wheelhouse-arch x64
 
       - name: Validate installer artifacts
         run: >
@@ -133,8 +140,10 @@ jobs:
           --artifact "apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json"
           --bootstrap-tools-dir apps/bootstrap-installer/src-tauri/bootstrap-tools
           --bootstrap-tools-platform windows
+          --bootstrap-tools-arch x64
           --wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse
           --wheelhouse-platform windows
+          --wheelhouse-arch x64
 
       - name: Upload NSIS installer
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
