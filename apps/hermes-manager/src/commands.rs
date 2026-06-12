@@ -43,10 +43,15 @@ pub fn install_metadata(hermes_home: &Path) -> Result<()> {
 
 /// Remove managed runtime paths while preserving user data.
 pub fn uninstall_lite(hermes_home: &Path) -> Result<Vec<String>> {
+    let extra_roots = default_lite_uninstall_extra_roots();
+    uninstall_lite_with_extra_roots(hermes_home, &extra_roots)
+}
+
+fn uninstall_lite_with_extra_roots(hermes_home: &Path, extra_roots: &[PathBuf]) -> Result<Vec<String>> {
     let manifest_path = paths::installed_manifest_path(hermes_home);
     let manifest = read_installed_manifest_or_default(hermes_home, &manifest_path)?;
     validate_manifest_home(hermes_home, &manifest)?;
-    preflight_uninstall_lite_entries(hermes_home, &manifest)?;
+    preflight_uninstall_lite_entries(hermes_home, &manifest, extra_roots)?;
 
     let mut removed = remove_managed_windows_path_entries(hermes_home)?;
     removed.extend(remove_managed_windows_env_vars(hermes_home)?);
@@ -74,10 +79,15 @@ pub fn uninstall_lite(hermes_home: &Path) -> Result<Vec<String>> {
 
 /// Report paths that lite uninstall would remove without deleting them.
 pub fn uninstall_lite_plan(hermes_home: &Path) -> Result<Vec<String>> {
+    let extra_roots = default_lite_uninstall_extra_roots();
+    uninstall_lite_plan_with_extra_roots(hermes_home, &extra_roots)
+}
+
+fn uninstall_lite_plan_with_extra_roots(hermes_home: &Path, extra_roots: &[PathBuf]) -> Result<Vec<String>> {
     let manifest_path = paths::installed_manifest_path(hermes_home);
     let manifest = read_installed_manifest_or_default(hermes_home, &manifest_path)?;
     validate_manifest_home(hermes_home, &manifest)?;
-    preflight_uninstall_lite_entries(hermes_home, &manifest)?;
+    preflight_uninstall_lite_entries(hermes_home, &manifest, extra_roots)?;
 
     let mut planned = managed_windows_path_entry_plan(hermes_home)?;
     planned.extend(managed_windows_env_var_plan(hermes_home)?);
@@ -299,21 +309,46 @@ fn manifest_home_mismatch_error(hermes_home: &Path, manifest: &InstalledManifest
 fn preflight_uninstall_lite_entries(
     hermes_home: &Path,
     manifest: &InstalledManifest,
+    extra_roots: &[PathBuf],
 ) -> Result<()> {
     for entry in &manifest.entries {
-        ensure_safe_to_delete(hermes_home, &entry.path)?;
-        ensure_lite_uninstall_entry_allowed(hermes_home, &entry.path)?;
+        ensure_lite_uninstall_entry_safe(hermes_home, &entry.path, extra_roots)?;
+        ensure_lite_uninstall_entry_allowed(hermes_home, &entry.path, extra_roots)?;
     }
     Ok(())
 }
 
-fn ensure_lite_uninstall_entry_allowed(hermes_home: &Path, candidate: &Path) -> Result<()> {
+fn ensure_lite_uninstall_entry_safe(
+    hermes_home: &Path,
+    candidate: &Path,
+    extra_roots: &[PathBuf],
+) -> Result<()> {
+    if let Some(root) = extra_roots
+        .iter()
+        .find(|root| crate::ownership::is_inside_root(root, candidate))
+    {
+        let parent = root.parent().ok_or_else(|| {
+            ManagerError::UnsafePath(candidate.to_path_buf())
+        })?;
+        return ensure_safe_to_delete(parent, candidate);
+    }
+    ensure_safe_to_delete(hermes_home, candidate)
+}
+
+fn ensure_lite_uninstall_entry_allowed(
+    hermes_home: &Path,
+    candidate: &Path,
+    extra_roots: &[PathBuf],
+) -> Result<()> {
     if paths::managed_runtime_roots(hermes_home)
         .iter()
         .any(|root| crate::ownership::is_inside_root(root, candidate))
         || paths::managed_runtime_files(hermes_home)
             .iter()
             .any(|file| crate::ownership::is_inside_root(file, candidate))
+        || extra_roots
+            .iter()
+            .any(|root| crate::ownership::is_inside_root(root, candidate))
     {
         return Ok(());
     }
@@ -322,6 +357,16 @@ fn ensure_lite_uninstall_entry_allowed(hermes_home: &Path, candidate: &Path) -> 
         "installed manifest entry is not a lite-uninstall runtime path: {}",
         candidate.display()
     )))
+}
+
+#[cfg(unix)]
+fn default_lite_uninstall_extra_roots() -> Vec<PathBuf> {
+    vec![PathBuf::from("/usr/local/lib/hermes-agent")]
+}
+
+#[cfg(not(unix))]
+fn default_lite_uninstall_extra_roots() -> Vec<PathBuf> {
+    Vec::new()
 }
 
 /// Remove the runtime checkout and bootstrap marker so the next launch repairs it.
@@ -1003,6 +1048,40 @@ mod tests {
         assert!(!agent_root.exists());
         assert!(!bin_dir.exists());
         assert!(!node_dir.exists());
+        assert!(user_config.exists());
+    }
+
+    #[test]
+    fn uninstall_lite_removes_allowed_external_agent_root() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let hermes_home = dir.path().join("hermes");
+        let external_agent_root = dir
+            .path()
+            .join("usr")
+            .join("local")
+            .join("lib")
+            .join("hermes-agent");
+        let user_config = hermes_home.join("config.yaml");
+        fs::create_dir_all(&external_agent_root).expect("external agent root should be created");
+        fs::create_dir_all(&hermes_home).expect("Hermes home should be created");
+        fs::write(external_agent_root.join("README.md"), "managed")
+            .expect("managed file should be created");
+        fs::write(&user_config, "model: test").expect("user config should be created");
+
+        let mut manifest = InstalledManifest::new(hermes_home.clone());
+        manifest.add_entry(external_agent_root.clone(), InstalledKind::Directory);
+        manifest
+            .write_atomic(&paths::installed_manifest_path(&hermes_home))
+            .expect("manifest should be written");
+
+        let removed = super::uninstall_lite_with_extra_roots(
+            &hermes_home,
+            &[external_agent_root.clone()],
+        )
+        .expect("external agent root should be removed");
+
+        assert_eq!(removed, vec![external_agent_root.display().to_string()]);
+        assert!(!external_agent_root.exists());
         assert!(user_config.exists());
     }
 

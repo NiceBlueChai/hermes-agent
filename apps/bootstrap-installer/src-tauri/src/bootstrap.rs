@@ -12,7 +12,7 @@
 //!   4. Worker iterates stages, calling `install.ps1 -Stage NAME -NonInteractive -Json`.
 //!   5. On success → `complete`. On any stage failure → `failed`. On cancel → `failed`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -50,6 +50,63 @@ pub struct StartBootstrapArgs {
 
 fn default_true() -> bool {
     true
+}
+
+fn resolve_bootstrap_install_root(hermes_home: &Path) -> PathBuf {
+    let legacy_checkout_exists = hermes_home.join("hermes-agent").join(".git").is_dir();
+    bootstrap_install_root_from_state(
+        hermes_home,
+        current_bootstrap_target_os(),
+        current_user_is_root(),
+        is_termux_environment(),
+        legacy_checkout_exists,
+    )
+}
+
+fn bootstrap_install_root_from_state(
+    hermes_home: &Path,
+    target_os: &str,
+    user_is_root: bool,
+    is_termux: bool,
+    legacy_checkout_exists: bool,
+) -> PathBuf {
+    if target_os == "linux" && user_is_root && !is_termux && !legacy_checkout_exists {
+        return PathBuf::from("/usr/local/lib/hermes-agent");
+    }
+    hermes_home.join("hermes-agent")
+}
+
+fn current_bootstrap_target_os() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "unix"
+    }
+}
+
+fn current_user_is_root() -> bool {
+    current_user_id().is_some_and(|uid| uid == 0)
+}
+
+#[cfg(unix)]
+fn current_user_id() -> Option<u32> {
+    Some(unsafe { libc::geteuid() as u32 })
+}
+
+#[cfg(not(unix))]
+fn current_user_id() -> Option<u32> {
+    None
+}
+
+fn is_termux_environment() -> bool {
+    std::env::var_os("TERMUX_VERSION").is_some()
+        || std::env::var("PREFIX")
+            .map(|value| value.contains("com.termux/files/usr"))
+            .unwrap_or(false)
 }
 
 #[derive(Debug, Serialize)]
@@ -498,7 +555,7 @@ async fn run_bootstrap(
             .as_ref()
             .map(PathBuf::from)
             .unwrap_or_else(crate::paths::hermes_home);
-        let install_root = hermes_home.join("hermes-agent");
+        let install_root = resolve_bootstrap_install_root(&hermes_home);
         if let Some(frame) = crate::orchestrator::interactive_stage_skip_result(stage) {
             emit_event(
                 &app,
@@ -681,7 +738,10 @@ async fn run_bootstrap(
                     .await,
                 )
             } else if stage.name.eq_ignore_ascii_case("python") {
-                Some(crate::orchestrator::install_python_runtime_stage(&hermes_home))
+                Some(crate::orchestrator::install_python_runtime_stage(
+                    &hermes_home,
+                    &install_root,
+                ))
             } else if cfg!(target_os = "windows") && stage.name.eq_ignore_ascii_case("node") {
                 Some(
                     crate::orchestrator::install_windows_node_runtime_stage(
@@ -994,7 +1054,8 @@ async fn run_bootstrap(
         .hermes_home
         .clone()
         .unwrap_or_else(|| crate::paths::hermes_home().to_string_lossy().into_owned());
-    let install_root = PathBuf::from(&hermes_home).join("hermes-agent");
+    let hermes_home_path = PathBuf::from(&hermes_home);
+    let install_root = resolve_bootstrap_install_root(&hermes_home_path);
 
     // Copy ourselves to HERMES_HOME/hermes-setup.exe so the desktop app can
     // re-invoke us with `--update` and shortcuts have a stable target. This is
@@ -1008,8 +1069,7 @@ async fn run_bootstrap(
         ));
     }
 
-    let hermes_home_path = PathBuf::from(&hermes_home);
-    if !record_manager_install_metadata(&hermes_home_path) {
+    if !record_manager_install_metadata(&hermes_home_path, &install_root) {
         emit_log("[bootstrap] warning: could not record manager install metadata");
     }
 
@@ -1138,17 +1198,21 @@ fn stage_script_extra_env(
         "python" | "venv" | "dependencies" | "python-deps"
     ) {
         if let Some(home) = hermes_home {
+            let python_dirs = crate::orchestrator::python_runtime_dirs_for_layout(
+                home,
+                install_root,
+            );
             env.push((
                 "UV_CACHE_DIR".to_string(),
                 home.join("uv-cache").display().to_string(),
             ));
             env.push((
                 "UV_PYTHON_INSTALL_DIR".to_string(),
-                home.join("python").display().to_string(),
+                python_dirs.install_dir.display().to_string(),
             ));
             env.push((
                 "UV_PYTHON_BIN_DIR".to_string(),
-                home.join("bin").display().to_string(),
+                python_dirs.bin_dir.display().to_string(),
             ));
             env.push((
                 "PIP_CACHE_DIR".to_string(),
@@ -1207,8 +1271,8 @@ fn default_windows_desktop_dir() -> PathBuf {
         .join("Desktop")
 }
 
-fn record_manager_install_metadata(hermes_home: &std::path::Path) -> bool {
-    match hermes_manager::commands::install_metadata(hermes_home) {
+fn record_manager_install_metadata(hermes_home: &std::path::Path, install_root: &std::path::Path) -> bool {
+    match write_manager_install_metadata(hermes_home, install_root) {
         Ok(()) => {
             tracing::info!(
                 hermes_home = %hermes_home.display(),
@@ -1225,6 +1289,43 @@ fn record_manager_install_metadata(hermes_home: &std::path::Path) -> bool {
             false
         }
     }
+}
+
+fn write_manager_install_metadata(
+    hermes_home: &std::path::Path,
+    install_root: &std::path::Path,
+) -> hermes_manager::Result<()> {
+    let manifest_path = hermes_manager::paths::installed_manifest_path(hermes_home);
+    if manifest_path.exists() {
+        return Ok(());
+    }
+    let mut manifest = hermes_manager::installed_manifest::InstalledManifest::new(
+        hermes_home.to_path_buf(),
+    );
+    manifest.add_entry(
+        install_root.to_path_buf(),
+        hermes_manager::installed_manifest::InstalledKind::Directory,
+    );
+    for runtime_root in hermes_manager::paths::managed_runtime_roots(hermes_home) {
+        if runtime_root == install_root {
+            continue;
+        }
+        if runtime_root.exists() {
+            manifest.add_entry(
+                runtime_root,
+                hermes_manager::installed_manifest::InstalledKind::Directory,
+            );
+        }
+    }
+    for runtime_file in hermes_manager::paths::managed_runtime_files(hermes_home) {
+        if runtime_file.exists() {
+            manifest.add_entry(
+                runtime_file,
+                hermes_manager::installed_manifest::InstalledKind::File,
+            );
+        }
+    }
+    manifest.write_atomic(&manifest_path)
 }
 
 async fn cancellation_signalled(holder: &Arc<Mutex<Option<mpsc::Receiver<()>>>>) -> bool {
@@ -1422,6 +1523,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn bootstrap_install_root_uses_fhs_layout_for_linux_root_new_installs() {
+        let hermes_home = PathBuf::from("/root/.hermes");
+
+        assert_eq!(
+            bootstrap_install_root_from_state(&hermes_home, "linux", true, false, false),
+            PathBuf::from("/usr/local/lib/hermes-agent")
+        );
+        assert_eq!(
+            bootstrap_install_root_from_state(&hermes_home, "linux", true, false, true),
+            hermes_home.join("hermes-agent")
+        );
+        assert_eq!(
+            bootstrap_install_root_from_state(&hermes_home, "linux", true, true, false),
+            hermes_home.join("hermes-agent")
+        );
+        assert_eq!(
+            bootstrap_install_root_from_state(&hermes_home, "macos", true, false, false),
+            hermes_home.join("hermes-agent")
+        );
+    }
+
     // The relaunch / install target is derived from the rebuilt desktop app.
     // On macOS this MUST resolve to the .app bundle (what `open` relaunches and
     // what the updater ditto's over /Applications/Hermes.app). A regression in
@@ -1464,14 +1587,19 @@ mod tests {
     #[test]
     fn record_manager_install_metadata_writes_default_manifest() {
         let hermes_home = unique_tmp_dir("manager-metadata");
-        let agent_root = hermes_home.join("hermes-agent");
-        std::fs::create_dir_all(&agent_root).unwrap();
+        let install_root = hermes_home.join("custom-agent-root");
+        std::fs::create_dir_all(&install_root).unwrap();
 
-        assert!(record_manager_install_metadata(&hermes_home));
-        assert!(hermes_home
-            .join("manager")
-            .join("installed-files.json")
-            .exists());
+        assert!(record_manager_install_metadata(&hermes_home, &install_root));
+        let manifest_path = hermes_manager::paths::installed_manifest_path(&hermes_home);
+        let manifest = hermes_manager::installed_manifest::InstalledManifest::read(&manifest_path)
+            .expect("installed manifest should be readable");
+        assert!(
+            manifest
+                .entries
+                .iter()
+                .any(|entry| entry.path == install_root)
+        );
 
         let _ = std::fs::remove_dir_all(&hermes_home);
     }

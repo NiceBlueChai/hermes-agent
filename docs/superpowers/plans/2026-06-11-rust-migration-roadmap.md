@@ -204,8 +204,9 @@ language-specific setup where needed.
   installed tools such as `uv` and `rg` remain available after bootstrap instead of only inside the installer process.
 - Unix PATH/profile setup now detects fish shells and writes Hermes-managed `fish_add_path` entries to
   `~/.config/fish/config.fish` instead of POSIX `export PATH=...` syntax.
-- Unix PATH setup now writes a managed `$HERMES_HOME/bin/hermes` launcher that clears `PYTHONPATH`/`PYTHONHOME` before
-  delegating to the venv entry point, matching the shell script's environment-sanitizing command shim behavior.
+- Unix PATH setup now writes a managed `hermes` launcher that clears `PYTHONPATH`/`PYTHONHOME` before delegating to the
+  venv entry point; user-scoped Rust bootstraps keep `$HERMES_HOME/bin/hermes`, while Linux root/FHS bootstraps now use
+  `/usr/local/bin/hermes` and shared `/usr/local/share/uv` Python runtime paths.
 - Windows `uv` now has a Rust native-first GitHub release ZIP path for x64, ARM64, and x86, installing `uv.exe` into
   `$HERMES_HOME/bin` and preserving the PowerShell astral installer as fallback for download, extraction, or version
   check failures.
@@ -338,8 +339,9 @@ language-specific setup where needed.
   registry as the default source of truth and broadcasting an environment-change notification after apply.
 - Bootstrap installer now runs the Windows `path` stage natively, preserving user `Path` and `HERMES_HOME` setup.
 - Bootstrap installer now runs the Unix `path` stage natively for shell profile PATH setup, writing an idempotent
-  Hermes-managed profile block through the Rust manager and refreshing the bootstrap process PATH. System-level
-  symlink behavior remains script-backed until full parity exists.
+  Hermes-managed profile block through the Rust manager and refreshing the bootstrap process PATH. Linux root/FHS
+  bootstraps now resolve the checkout to `/usr/local/lib/hermes-agent`, write the launcher to `/usr/local/bin/hermes`,
+  and keep native/script fallback Python runtime paths under `/usr/local/share/uv` for non-root command usability.
 - The Rust manager writes fish-compatible managed profile blocks when the selected Unix profile is `config.fish`, while
   keeping POSIX export blocks for bash/zsh-compatible profile files.
 - The Rust manager can create an idempotent Unix `hermes` launcher in the managed tool bin directory, so the bootstrap
@@ -392,6 +394,9 @@ language-specific setup where needed.
   `HERMES_GIT_BASH_PATH` environment variables when their values still belong to the active Hermes home.
 - `hermes-manager uninstall-lite` now also plans and removes current-user Windows `Path` entries that point under the
   active Hermes home, including managed Git, Node, `bin`, `venv`, and source-checkout entries.
+- `hermes-manager uninstall-lite` now accepts manifest-recorded Unix FHS checkout roots under
+  `/usr/local/lib/hermes-agent`, so Linux root installs can remove the system checkout while still rejecting arbitrary
+  paths outside the active Hermes home.
 - `hermes-manager` now has a CLI smoke test that runs `install-metadata`, `uninstall-lite`, and `repair-clean` against
   an isolated Hermes home, proving the command surface preserves user config while cleaning every current
   Hermes-managed runtime directory and staged installer file.

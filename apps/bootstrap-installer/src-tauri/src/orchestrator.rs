@@ -65,6 +65,12 @@ pub struct PythonRuntimeStagePlan {
     pub python_bin_dir: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PythonRuntimeDirs {
+    pub install_dir: PathBuf,
+    pub bin_dir: PathBuf,
+}
+
 /// Native Python dependency sync stage execution plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PythonDependenciesStagePlan {
@@ -982,28 +988,30 @@ pub fn write_install_method_stamp(hermes_home: &Path) -> Result<serde_json::Valu
     }))
 }
 
-/// Build the native Python runtime stage plan.
-pub fn python_runtime_stage_plan<P>(
+/// Build the native Python runtime stage plan for the active install layout.
+pub fn python_runtime_stage_plan_for_layout<P>(
     hermes_home: &Path,
+    install_root: &Path,
     path_env: P,
     pathext: &str,
 ) -> Result<PythonRuntimeStagePlan>
 where
     P: AsRef<OsStr>,
 {
+    let dirs = python_runtime_dirs_for_layout(hermes_home, install_root);
     Ok(PythonRuntimeStagePlan {
         uv: uv_tool_path(hermes_home, path_env, pathext)?,
         uv_cache_dir: hermes_home.join("uv-cache"),
-        python_install_dir: hermes_home.join("python"),
-        python_bin_dir: hermes_home.join("bin"),
+        python_install_dir: dirs.install_dir,
+        python_bin_dir: dirs.bin_dir,
     })
 }
 
 /// Install the required Python runtime natively through uv.
-pub fn install_python_runtime_stage(hermes_home: &Path) -> Result<serde_json::Value> {
+pub fn install_python_runtime_stage(hermes_home: &Path, install_root: &Path) -> Result<serde_json::Value> {
     let path_env = std::env::var_os("PATH").unwrap_or_default();
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
-    let plan = python_runtime_stage_plan(hermes_home, path_env, &pathext)?;
+    let plan = python_runtime_stage_plan_for_layout(hermes_home, install_root, path_env, &pathext)?;
     let status = Command::new(&plan.uv)
         .args(["python", "install", "3.11"])
         .env("UV_CACHE_DIR", &plan.uv_cache_dir)
@@ -1721,13 +1729,14 @@ where
     }
     let uv = uv_tool_path(hermes_home, path_env, pathext)?;
     let venv = install_root.join("venv");
+    let dirs = python_runtime_dirs_for_layout(hermes_home, install_root);
     Ok(PythonVenvStagePlan {
         uv,
         cwd: install_root.to_path_buf(),
         venv,
         uv_cache_dir: hermes_home.join("uv-cache"),
-        python_install_dir: hermes_home.join("python"),
-        python_bin_dir: hermes_home.join("bin"),
+        python_install_dir: dirs.install_dir,
+        python_bin_dir: dirs.bin_dir,
     })
 }
 
@@ -2067,9 +2076,11 @@ fn configure_unix_path_stage_with_profile(
     profile_path: &Path,
     current_path: Option<String>,
 ) -> Result<serde_json::Value> {
+    let command_link_dir = unix_command_link_dir_for_layout(hermes_home, install_root);
+    let extra_path_entries = [command_link_dir.clone()];
     let plan = hermes_manager::platform::plan_path_update_with_extra_entries(
         install_root,
-        &[hermes_home.join("bin")],
+        &extra_path_entries,
         current_path,
         false,
     );
@@ -2077,7 +2088,7 @@ fn configure_unix_path_stage_with_profile(
     hermes_manager::platform::write_shell_profile_update(profile_path, &plan)
         .map_err(|err| anyhow!("writing Unix shell profile update: {err}"))?;
     let after = std::fs::read_to_string(profile_path).ok();
-    let launcher_path = hermes_home.join("bin").join("hermes");
+    let launcher_path = command_link_dir.join("hermes");
     let launcher_target = install_root.join("venv").join("bin").join("hermes");
     let launcher_changed =
         hermes_manager::platform::write_unix_launcher(&launcher_path, &launcher_target)
@@ -2086,6 +2097,7 @@ fn configure_unix_path_stage_with_profile(
     Ok(serde_json::json!({
         "profilePath": profile_path.display().to_string(),
         "hermesBin": plan.hermes_bin,
+        "commandLinkDir": command_link_dir.display().to_string(),
         "launcherPath": launcher_path.display().to_string(),
         "launcherChanged": launcher_changed,
         "pathEntries": plan.path_entries,
@@ -2107,6 +2119,33 @@ fn default_unix_profile_path_for(home: &Path, shell: &str) -> Option<PathBuf> {
     }
     let name = if shell.ends_with("zsh") { ".zshrc" } else { ".profile" };
     Some(home.join(name))
+}
+
+fn unix_command_link_dir_for_layout(hermes_home: &Path, install_root: &Path) -> PathBuf {
+    if install_root_uses_linux_fhs_layout(install_root) {
+        return PathBuf::from("/usr/local/bin");
+    }
+    hermes_home.join("bin")
+}
+
+pub(crate) fn python_runtime_dirs_for_layout(
+    hermes_home: &Path,
+    install_root: &Path,
+) -> PythonRuntimeDirs {
+    if install_root_uses_linux_fhs_layout(install_root) {
+        return PythonRuntimeDirs {
+            install_dir: PathBuf::from("/usr/local/share/uv/python"),
+            bin_dir: PathBuf::from("/usr/local/share/uv/bin"),
+        };
+    }
+    PythonRuntimeDirs {
+        install_dir: hermes_home.join("python"),
+        bin_dir: hermes_home.join("bin"),
+    }
+}
+
+fn install_root_uses_linux_fhs_layout(install_root: &Path) -> bool {
+    install_root == Path::new("/usr/local/lib/hermes-agent")
 }
 
 #[cfg(target_os = "windows")]
@@ -4931,7 +4970,13 @@ mod tests {
         std::fs::write(hermes_home.join("bin").join("uv.exe"), b"managed uv").unwrap();
         std::fs::write(path_tools.join("uv.exe"), b"path uv").unwrap();
 
-        let plan = python_runtime_stage_plan(&hermes_home, &path_tools, ".EXE").unwrap();
+        let plan = python_runtime_stage_plan_for_layout(
+            &hermes_home,
+            &hermes_home.join("hermes-agent"),
+            &path_tools,
+            ".EXE",
+        )
+        .unwrap();
 
         assert_eq!(plan.uv, hermes_home.join("bin").join("uv.exe"));
         assert_eq!(plan.uv_cache_dir, hermes_home.join("uv-cache"));
@@ -4939,6 +4984,22 @@ mod tests {
         assert_eq!(plan.python_bin_dir, hermes_home.join("bin"));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn python_runtime_dirs_use_shared_paths_for_fhs_layout() {
+        let hermes_home = PathBuf::from("/root/.hermes");
+
+        let fhs_dirs = python_runtime_dirs_for_layout(
+            &hermes_home,
+            &PathBuf::from("/usr/local/lib/hermes-agent")
+        );
+        let user_dirs = python_runtime_dirs_for_layout(&hermes_home, &hermes_home.join("hermes-agent"));
+
+        assert_eq!(fhs_dirs.install_dir, PathBuf::from("/usr/local/share/uv/python"));
+        assert_eq!(fhs_dirs.bin_dir, PathBuf::from("/usr/local/share/uv/bin"));
+        assert_eq!(user_dirs.install_dir, hermes_home.join("python"));
+        assert_eq!(user_dirs.bin_dir, hermes_home.join("bin"));
     }
 
     #[test]
@@ -5169,6 +5230,23 @@ mod tests {
         assert_eq!(
             default_unix_profile_path_for(&home, "/bin/bash").unwrap(),
             home.join(".profile")
+        );
+    }
+
+    #[test]
+    fn unix_command_link_dir_uses_system_bin_for_fhs_layout() {
+        let hermes_home = PathBuf::from("/root/.hermes");
+
+        assert_eq!(
+            unix_command_link_dir_for_layout(
+                &hermes_home,
+                &PathBuf::from("/usr/local/lib/hermes-agent")
+            ),
+            PathBuf::from("/usr/local/bin")
+        );
+        assert_eq!(
+            unix_command_link_dir_for_layout(&hermes_home, &hermes_home.join("hermes-agent")),
+            hermes_home.join("bin")
         );
     }
 
