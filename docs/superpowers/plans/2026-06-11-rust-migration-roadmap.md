@@ -591,8 +591,9 @@ language-specific setup where needed.
   stray or stale files in the resource directory cannot override the release-reviewed archive list.
 - Bootstrap-tools manifest parsing now enforces schema version 1 before trusting archive checksum records, leaving
   future manifest schema changes on the safe download-cache fallback path until the Rust reader is updated.
-- Bundled archive validation now requires manifest `sizeBytes` before trusting bundled archives or manifest-sourced
-  cache checksums, so weak, truncated, or partially copied release resources fall back to the managed cache path.
+- Bundled archive validation now requires a complete manifest record, including `sizeBytes`, before trusting bundled
+  archives or manifest-sourced cache checksums, so unmanifested, weak, truncated, or partially copied release resources
+  fall back to the managed cache path.
 - Windows installer builds now upload `bootstrap-tools-manifest.json` as a release artifact, matching the Unix
   installer workflow so every packaged bootstrap tool archive has a retained checksum record for review; Windows
   installer, raw exe, and manifest artifact uploads now fail the workflow if any expected file is missing.

@@ -4752,7 +4752,7 @@ fn bundled_archive_matches_manifest(
     };
     let manifest_path = bundled_tools_dir.join(BOOTSTRAP_TOOLS_MANIFEST);
     if !manifest_path.is_file() {
-        return true;
+        return false;
     }
     let Some(expected_sha256) = expected_sha256 else {
         return false;
@@ -7445,7 +7445,7 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_archive_source_prefers_bundled_resource_over_cache() {
+    fn bootstrap_archive_source_rejects_unmanifested_bundled_resource() {
         let root = std::env::temp_dir().join(format!(
             "hermes-bootstrap-archive-source-test-{}",
             std::process::id()
@@ -7461,10 +7461,12 @@ mod tests {
             "uv-x86_64-pc-windows-msvc.zip",
         );
 
-        assert_eq!(source.kind, BootstrapArchiveSourceKind::Bundled);
+        assert_eq!(source.kind, BootstrapArchiveSourceKind::Cache);
         assert_eq!(
             source.path,
-            bundled.join("uv-x86_64-pc-windows-msvc.zip")
+            hermes_home
+                .join("bootstrap-cache")
+                .join("uv-x86_64-pc-windows-msvc.zip")
         );
         assert_eq!(
             source.cache_path,
