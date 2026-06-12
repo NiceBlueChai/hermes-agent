@@ -32,6 +32,8 @@ User-visible behavior:
   installer platform being uploaded.
 - Optional reviewed ffmpeg archives can now use `ffmpeg-<platform>-<arch>` names under `bootstrap-tools/`; native
   setup installs them before package-manager recovery when present and manifest-verified.
+- Release maintainers can add such archives with `prepare_bootstrap_tools.py --local-archive PATH=HTTPS_URL`, which
+  copies the local file and records the reviewed URL, target platform, architecture, size, and SHA-256 in the manifest.
 - Native bootstrap diagnostics now preserve npm and Unix package-manager failure output, including permission hints for
   Hermes-managed npm cache and `node_modules` paths.
 - Native and script-fallback desktop packaging now direct Electron download/build caches into

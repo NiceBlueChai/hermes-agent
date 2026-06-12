@@ -319,6 +319,43 @@ def prepared_archive_record(platform: str, arch: str, spec: ArchiveSpec, path: P
     )
 
 
+def parse_local_archive_arg(value: str) -> tuple[Path, ArchiveSpec, tuple[str, str]]:
+    """Parse one maintainer-provided local archive mapping."""
+
+    source_text, separator, url = value.partition("=")
+    if not separator or not source_text or not url:
+        raise ValueError("local archive must use PATH=HTTPS_URL")
+    if not url.startswith("https://"):
+        raise ValueError("local archive URL must be HTTPS")
+    source = Path(source_text)
+    name = source.name
+    if Path(name).name != name or name in {".", ".."}:
+        raise ValueError(f"local archive has unsafe name: {name}")
+    target = archive_target_from_name(name)
+    if target is None or archive_tool_kind_from_name(name) is None:
+        raise ValueError(f"local archive name is not a recognized bootstrap tool: {name}")
+    return source, ArchiveSpec(name=name, url=url), target
+
+
+def prepare_local_archives(output_dir: Path, local_archives: list[str], dry_run: bool) -> list[PreparedArchive]:
+    """Copy maintainer-provided local archives into the release resource directory."""
+
+    prepared: list[PreparedArchive] = []
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for value in local_archives:
+        source, spec, (platform, arch) = parse_local_archive_arg(value)
+        if dry_run:
+            print(f"[bootstrap-tools] would copy {source} as {spec.name} <- {spec.url}")
+            continue
+        if not source.is_file() or source.stat().st_size <= 0:
+            raise RuntimeError(f"local archive is missing or empty: {source}")
+        dest = output_dir / spec.name
+        if source.resolve() != dest.resolve():
+            shutil.copy2(source, dest)
+        prepared.append(prepared_archive_record(platform, arch, spec, dest))
+    return prepared
+
+
 def write_manifest(output_dir: Path, archives: list[PreparedArchive]) -> Path:
     """Write the bundled tool archive manifest consumed by release reviewers."""
 
@@ -428,6 +465,7 @@ def prepare_archives(
     force: bool,
     dry_run: bool,
     platform: str = "windows",
+    local_archives: list[str] | None = None,
 ) -> list[PreparedArchive]:
     """Resolve and optionally download all archives for the requested architectures."""
 
@@ -446,6 +484,7 @@ def prepare_archives(
             else:
                 path = download_archive(spec, output_dir, force)
                 downloaded.append(prepared_archive_record(normalized_platform, arch, spec, path))
+    downloaded.extend(prepare_local_archives(output_dir, local_archives or [], dry_run))
     if downloaded:
         manifest_path = write_manifest(output_dir, downloaded)
         print(f"[bootstrap-tools] wrote manifest {manifest_path}")
@@ -478,6 +517,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--force", action="store_true", help="Re-download archives that already exist.")
     parser.add_argument("--dry-run", action="store_true", help="Print the planned archive URLs without downloading.")
     parser.add_argument("--validate-only", action="store_true", help="Validate an existing bootstrap tools manifest.")
+    parser.add_argument(
+        "--local-archive",
+        action="append",
+        default=None,
+        help="Copy an audited local archive into the manifest, in PATH=HTTPS_URL form.",
+    )
     return parser.parse_args(argv)
 
 
@@ -491,7 +536,14 @@ def main(argv: list[str] | None = None) -> int:
             count = validate_manifest(args.output_dir, args.platform, arches[0] if len(arches) == 1 else None)
             print(f"[bootstrap-tools] validated {count} archive(s) in {args.output_dir}")
             return 0
-        prepared = prepare_archives(args.output_dir, arches, args.force, args.dry_run, args.platform)
+        prepared = prepare_archives(
+            args.output_dir,
+            arches,
+            args.force,
+            args.dry_run,
+            args.platform,
+            args.local_archive,
+        )
     except Exception as exc:
         print(f"[bootstrap-tools] error: {exc}", file=sys.stderr)
         return 1

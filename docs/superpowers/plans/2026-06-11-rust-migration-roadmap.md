@@ -349,6 +349,9 @@ language-specific setup where needed.
 - Native Windows/Linux/macOS `system-packages` can now consume optional manifest-verified `ffmpeg-<platform>-<arch>`
   archives from `bootstrap-tools/` before package-manager recovery, so a later release can bundle ffmpeg without
   changing the installer control flow or dropping existing fallback behavior.
+- `prepare_bootstrap_tools.py --local-archive PATH=HTTPS_URL` now lets release maintainers copy an explicitly audited
+  local ffmpeg archive into `bootstrap-tools/` and manifest it with URL, platform, architecture, size, and SHA-256
+  metadata, without adding an automatic upstream ffmpeg download source.
 - Linux distro detection now uses both `ID` and `ID_LIKE` from `/etc/os-release`, so derivative distributions can use
   the native apt/dnf/pacman/zypper recovery paths for Git, ffmpeg, and Playwright system libraries.
 - Native Unix Git and package-manager recovery failures now capture stdout/stderr in the Rust error message, so GUI

@@ -162,6 +162,40 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         self.assertEqual(module.archive_tool_kind_from_name("ffmpeg-macos-x64.tar.gz"), "ffmpeg")
         self.assertNotIn("ffmpeg", module.required_tool_kinds_for_target("macos", "x64"))
 
+    def test_prepare_local_archive_copies_optional_ffmpeg_into_manifest(self):
+        module = _load_script_module()
+        root = Path("tmp-bootstrap-tools-local-archive-test")
+        source_dir = root / "source"
+        output_dir = root / "bootstrap-tools"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        source = source_dir / "ffmpeg-windows-x64.zip"
+        source.write_bytes(b"ffmpeg archive")
+
+        try:
+            prepared = module.prepare_local_archives(
+                output_dir,
+                [f"{source}=https://example.invalid/ffmpeg-windows-x64.zip"],
+                dry_run=False,
+            )
+            module.write_manifest(output_dir, prepared)
+
+            self.assertEqual(len(prepared), 1)
+            self.assertEqual(prepared[0].platform, "windows")
+            self.assertEqual(prepared[0].arch, "x64")
+            self.assertEqual(prepared[0].name, "ffmpeg-windows-x64.zip")
+            self.assertEqual(prepared[0].url, "https://example.invalid/ffmpeg-windows-x64.zip")
+            self.assertEqual((output_dir / "ffmpeg-windows-x64.zip").read_bytes(), b"ffmpeg archive")
+            self.assertEqual(module.validate_manifest(output_dir), 1)
+        finally:
+            for entry in output_dir.glob("*"):
+                entry.unlink()
+            for entry in source_dir.glob("*"):
+                entry.unlink()
+            output_dir.rmdir()
+            source_dir.rmdir()
+            root.rmdir()
+
     def test_manifest_records_archive_platform_size_and_sha256(self):
         module = _load_script_module()
         root = Path("tmp-bootstrap-tools-test")
