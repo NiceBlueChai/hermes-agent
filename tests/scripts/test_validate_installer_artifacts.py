@@ -54,6 +54,7 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
                         "archives": [
                             {
                                 "arch": "x64",
+                                "platform": "windows",
                                 "name": archive.name,
                                 "url": "https://example.invalid/uv.zip",
                                 "sizeBytes": len(b"uv archive"),
@@ -104,6 +105,7 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
                         "archives": [
                             {
                                 "arch": "x64",
+                                "platform": "windows",
                                 "name": archive.name,
                                 "url": "https://example.invalid/uv.zip",
                                 "sizeBytes": len(b"uv archive"),
@@ -145,6 +147,7 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
                         "archives": [
                             {
                                 "arch": "x64",
+                                "platform": "windows",
                                 "name": archive.name,
                                 "url": "https://example.invalid/uv.zip",
                                 "sizeBytes": len(b"uv archive"),

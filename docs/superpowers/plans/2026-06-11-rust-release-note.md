@@ -21,7 +21,8 @@ User-visible behavior:
 - Browser setup now reuses an existing Chrome/Chromium/Edge installation when available by writing
   `AGENT_BROWSER_EXECUTABLE_PATH`, avoiding an unnecessary Playwright Chromium download without disabling browser tools.
 - Release packages can bundle reviewed Node.js, `uv`, Git for Windows, and ripgrep archives under `bootstrap-tools/`.
-  The installer validates their manifest schema, HTTPS URLs, target architecture labels, size, and SHA-256 before use.
+  The installer validates their manifest schema, HTTPS URLs, target platform and architecture labels, size, and SHA-256
+  before use.
 - Native bootstrap diagnostics now preserve npm and Unix package-manager failure output, including permission hints for
   Hermes-managed npm cache and `node_modules` paths.
 - Release staging writes a checksummed bundled manifest beside the Rust manager binary and retains a

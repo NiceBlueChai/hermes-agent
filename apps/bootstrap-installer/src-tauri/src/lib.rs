@@ -202,6 +202,13 @@ fn validate_bootstrap_tools_for_self_check(dir: &Path) -> Result<usize, String> 
         if arch.trim().is_empty() {
             return Err(format!("bootstrap tool archive is missing arch: {name}"));
         }
+        let platform = archive
+            .get("platform")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("bootstrap tool archive is missing platform: {name}"))?;
+        if !matches!(platform, "windows" | "linux" | "macos") {
+            return Err(format!("bootstrap tool archive is missing platform: {name}"));
+        }
         let url = archive
             .get("url")
             .and_then(|value| value.as_str())
@@ -510,6 +517,7 @@ mod tests {
   "archives": [
     {{
       "arch": "x64",
+      "platform": "windows",
       "name": "uv-x86_64-pc-windows-msvc.zip",
       "url": "https://example.invalid/uv.zip",
       "sizeBytes": 10,
@@ -582,6 +590,34 @@ mod tests {
     {{
       "arch": "x64",
       "name": "uv-x86_64-pc-windows-msvc.zip",
+      "url": "https://example.invalid/uv.zip",
+      "sizeBytes": 10,
+      "sha256": "{sha256}"
+    }}
+  ]
+}}
+"#
+            ),
+        )
+        .unwrap();
+        let report =
+            bootstrap_self_check_report(Some("abcdef1234567890"), Some("main"), Some(&tools));
+        assert!(!report.ok);
+        assert!(report
+            .errors
+            .iter()
+            .any(|err| err.contains("missing platform")));
+
+        std::fs::write(
+            tools.join("bootstrap-tools-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "archives": [
+    {{
+      "arch": "x64",
+      "platform": "windows",
+      "name": "uv-x86_64-pc-windows-msvc.zip",
       "url": "http://example.invalid/uv.zip",
       "sizeBytes": 10,
       "sha256": "{sha256}"
@@ -608,6 +644,7 @@ mod tests {
   "archives": [
     {{
       "arch": "x64",
+      "platform": "windows",
       "name": "uv-x86_64-pc-windows-msvc.zip",
       "url": "https://example.invalid/uv.zip",
       "sizeBytes": 10,
@@ -615,6 +652,7 @@ mod tests {
     }},
     {{
       "arch": "x64",
+      "platform": "windows",
       "name": "uv-x86_64-pc-windows-msvc.zip",
       "url": "https://example.invalid/uv.zip",
       "sizeBytes": 10,

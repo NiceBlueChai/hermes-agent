@@ -544,6 +544,8 @@ language-specific setup where needed.
   insecure update source for a packaged runtime archive.
 - The same gate requires every archive record to retain its target architecture label, preserving review visibility for
   mixed Windows/Linux/macOS bootstrap-tool bundles.
+- Bootstrap-tools manifests now also retain an explicit target platform per archive, and both the release helper and
+  Rust binary self-check reject archive records that omit it.
 - Duplicate archive names are rejected by the validate-only gate, keeping each bundled runtime archive's ownership,
   checksum, and update source unambiguous.
 - Manifest archive names must be plain file names with no path separators or parent traversal, matching the runtime

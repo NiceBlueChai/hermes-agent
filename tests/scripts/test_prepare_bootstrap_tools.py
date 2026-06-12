@@ -132,7 +132,7 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported Unix uv platform"):
             module.archive_specs_for_target("linux", "x86", "node-v22.19.1-linux-x86.tar.gz")
 
-    def test_manifest_records_archive_size_and_sha256(self):
+    def test_manifest_records_archive_platform_size_and_sha256(self):
         module = _load_script_module()
         root = Path("tmp-bootstrap-tools-test")
         output_dir = root / "bootstrap-tools"
@@ -145,11 +145,12 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                 name="uv-x86_64-pc-windows-msvc.zip",
                 url="https://example.invalid/uv.zip",
             )
-            prepared = module.prepared_archive_record("x64", spec, archive)
+            prepared = module.prepared_archive_record("windows", "x64", spec, archive)
             manifest_path = module.write_manifest(output_dir, [prepared])
             payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
             self.assertEqual(payload["schemaVersion"], 1)
+            self.assertEqual(payload["archives"][0]["platform"], "windows")
             self.assertEqual(payload["archives"][0]["arch"], "x64")
             self.assertEqual(payload["archives"][0]["name"], "uv-x86_64-pc-windows-msvc.zip")
             self.assertEqual(payload["archives"][0]["sizeBytes"], len(b"uv archive"))
@@ -179,7 +180,7 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                 name="uv-x86_64-pc-windows-msvc.zip",
                 url="https://example.invalid/uv.zip",
             )
-            prepared = module.prepared_archive_record("x64", spec, archive)
+            prepared = module.prepared_archive_record("windows", "x64", spec, archive)
             module.write_manifest(output_dir, [prepared])
 
             self.assertEqual(module.validate_manifest(output_dir), 1)
@@ -211,6 +212,7 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                     "archives": [
                         {
                             "arch": "x64",
+                            "platform": "windows",
                             "name": "uv-x86_64-pc-windows-msvc.zip",
                             "sizeBytes": len(b"uv archive"),
                             "sha256": module.sha256_file(archive),
@@ -249,6 +251,7 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                     "archives": [
                         {
                             "arch": "x64",
+                            "platform": "windows",
                             "name": "uv-x86_64-pc-windows-msvc.zip",
                             "url": "http://example.invalid/uv.zip",
                             "sizeBytes": len(b"uv archive"),
@@ -287,6 +290,7 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                     "schemaVersion": 1,
                     "archives": [
                         {
+                            "platform": "windows",
                             "name": "uv-x86_64-pc-windows-msvc.zip",
                             "url": "https://example.invalid/uv.zip",
                             "sizeBytes": len(b"uv archive"),
@@ -311,6 +315,45 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             output_dir.rmdir()
             root.rmdir()
 
+    def test_validate_manifest_rejects_archive_without_platform(self):
+        module = _load_script_module()
+        root = Path("tmp-bootstrap-tools-platform-test")
+        output_dir = root / "bootstrap-tools"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        archive = output_dir / "uv-x86_64-pc-windows-msvc.zip"
+        archive.write_bytes(b"uv archive")
+        manifest = output_dir / "bootstrap-tools-manifest.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "archives": [
+                        {
+                            "arch": "x64",
+                            "name": "uv-x86_64-pc-windows-msvc.zip",
+                            "url": "https://example.invalid/uv.zip",
+                            "sizeBytes": len(b"uv archive"),
+                            "sha256": module.sha256_file(archive),
+                        }
+                    ],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        try:
+            with self.assertRaisesRegex(RuntimeError, "missing platform"):
+                module.validate_manifest(output_dir)
+        finally:
+            if archive.exists():
+                archive.unlink()
+            if manifest.exists():
+                manifest.unlink()
+            output_dir.rmdir()
+            root.rmdir()
+
     def test_validate_manifest_rejects_duplicate_archive_names(self):
         module = _load_script_module()
         root = Path("tmp-bootstrap-tools-duplicate-test")
@@ -320,6 +363,7 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         archive.write_bytes(b"uv archive")
         archive_record = {
             "arch": "x64",
+            "platform": "windows",
             "name": "uv-x86_64-pc-windows-msvc.zip",
             "url": "https://example.invalid/uv.zip",
             "sizeBytes": len(b"uv archive"),
@@ -364,6 +408,7 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                     "archives": [
                         {
                             "arch": "x64",
+                            "platform": "windows",
                             "name": "../uv.zip",
                             "url": "https://example.invalid/uv.zip",
                             "sizeBytes": len(b"uv archive"),

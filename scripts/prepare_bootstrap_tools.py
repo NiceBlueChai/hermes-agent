@@ -77,6 +77,7 @@ class ArchiveSpec:
 class PreparedArchive:
     """One downloaded archive with audit metadata for the release manifest."""
 
+    platform: str
     arch: str
     name: str
     url: str
@@ -226,10 +227,11 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def prepared_archive_record(arch: str, spec: ArchiveSpec, path: Path) -> PreparedArchive:
+def prepared_archive_record(platform: str, arch: str, spec: ArchiveSpec, path: Path) -> PreparedArchive:
     """Build manifest metadata for one downloaded archive."""
 
     return PreparedArchive(
+        platform=platform,
         arch=arch,
         name=spec.name,
         url=spec.url,
@@ -248,6 +250,7 @@ def write_manifest(output_dir: Path, archives: list[PreparedArchive]) -> Path:
         "archives": [
             {
                 "arch": archive.arch,
+                "platform": archive.platform,
                 "name": archive.name,
                 "url": archive.url,
                 "sizeBytes": archive.size_bytes,
@@ -288,6 +291,9 @@ def validate_manifest(output_dir: Path) -> int:
         arch = archive.get("arch")
         if not isinstance(arch, str) or not arch:
             raise RuntimeError(f"manifest archive is missing arch: {name}")
+        platform = archive.get("platform")
+        if platform not in {"windows", "linux", "macos"}:
+            raise RuntimeError(f"manifest archive is missing platform: {name}")
         url = archive.get("url")
         if not isinstance(url, str) or not url:
             raise RuntimeError(f"manifest archive is missing url: {name}")
@@ -338,8 +344,7 @@ def prepare_archives(
                 print(f"[bootstrap-tools] would download {spec.name} <- {spec.url}")
             else:
                 path = download_archive(spec, output_dir, force)
-                manifest_arch = arch if normalized_platform == "windows" else f"{normalized_platform}-{arch}"
-                downloaded.append(prepared_archive_record(manifest_arch, spec, path))
+                downloaded.append(prepared_archive_record(normalized_platform, arch, spec, path))
     if downloaded:
         manifest_path = write_manifest(output_dir, downloaded)
         print(f"[bootstrap-tools] wrote manifest {manifest_path}")
