@@ -54,7 +54,7 @@ scripts should become recovery paths instead of the normal first-run path.
    metadata, and completion stages should all be Rust-native or native-first.
 2. Move recovery branches one at a time after the normal path is native-first. The current priority order is Unix
    `ffmpeg` package-manager recovery, Linux Playwright system-library recovery, Electron/npm cache and mirror recovery,
-   Python dependency fallback tiers, remaining privileged `chrome-sandbox` repair, and platform SDK fallback recovery.
+   remaining privileged `chrome-sandbox` repair, platform SDK fallback recovery, and npm permission diagnostics.
 3. Keep direct `install.ps1` and `install.sh` supported for one release cycle, but make packaged desktop/bootstrap
    paths reach them only for unsupported platforms, denied privileges, mirror/package-manager failures, or explicitly
    interactive recovery.
@@ -286,8 +286,9 @@ language-specific setup where needed.
   fallback preserved if native venv creation fails.
 - Python dependency installation now has a Rust native-first lockfile path using `uv sync --extra all --locked` with
   `UV_PROJECT_ENVIRONMENT` pinned to `venv`, while the script keeps all PyPI fallback tiers.
-- Python dependency installation now keeps the script's basic PyPI fallback order in Rust: hash-verified `uv sync`
-  first, then `uv pip install -e .[all]`, then core-only `uv pip install -e .`.
+- Python dependency installation now keeps the script's PyPI fallback order in Rust: hash-verified `uv sync`, then
+  `uv pip install -e .[all]`, then an `[all]` minus known-broken extra tier parsed from `pyproject.toml`, then
+  core-only `uv pip install -e .`.
 - `node-deps` now uses a Rust no-op skip when npm is unavailable on every platform, matching the existing script
   behavior without starting PowerShell or bash for a stage that can only skip.
 - Windows `node-deps` now has a Rust native-first path for root npm dependencies, Playwright Chromium, and TUI npm
@@ -333,9 +334,9 @@ language-specific setup where needed.
 
 **Still script-backed:**
 - Recovery tiers remain script-backed for failure cases that still need package-manager or mirror-specific handling:
-  dynamic Python known-broken-extra filtering, unknown Linux Playwright system-library recovery, npm install permission
-  diagnostics, interactive or denied Linux `chrome-sandbox` privilege escalation, unsupported or failed Unix
-  package-manager recovery, and messaging-platform SDK recovery if the native targeted pip path fails.
+  unknown Linux Playwright system-library recovery, npm install permission diagnostics, interactive or denied Linux
+  `chrome-sandbox` privilege escalation, unsupported or failed Unix package-manager recovery, and messaging-platform
+  SDK recovery if the native targeted pip path fails.
 - Fresh archive installs and archive updates do not require Git. Unix Git acquisition now has a native-first package
   manager path for common Linux/macOS/Termux setups, while unsupported distro handling, macOS CLT dialog recovery, and
   package-manager failures remain shell fallbacks.

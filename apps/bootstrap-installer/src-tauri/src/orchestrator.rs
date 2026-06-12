@@ -9,6 +9,7 @@ use crate::install_script::ScriptKind;
 use anyhow::{anyhow, Context, Result};
 use chrono::{SecondsFormat, Utc};
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,6 +18,7 @@ use std::process::{Command, ExitStatus, Stdio};
 const BOOTSTRAP_TOOLS_MANIFEST: &str = "bootstrap-tools-manifest.json";
 const BOOTSTRAP_TOOLS_MANIFEST_SCHEMA_VERSION: u32 = 1;
 const DESKTOP_ELECTRON_FALLBACK_MIRROR: &str = "https://npmmirror.com/mirrors/electron/";
+const PYTHON_KNOWN_BROKEN_EXTRAS: &[&str] = &[];
 const SCRIPT_REASON_INTERACTIVE: &str = "requires user input; handled by post-install UI";
 const SCRIPT_REASON_UNPORTED: &str = "not yet ported to Rust; delegated to install script";
 
@@ -85,8 +87,19 @@ pub struct PythonDependenciesStagePlan {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PythonDependencyInstallTier {
-    name: &'static str,
-    args: Vec<&'static str>,
+    name: String,
+    args: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PyprojectToml {
+    project: Option<PyprojectProject>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PyprojectProject {
+    #[serde(rename = "optional-dependencies")]
+    optional_dependencies: Option<BTreeMap<String, Vec<String>>>,
 }
 
 /// Native Node dependency stage execution plan.
@@ -2254,13 +2267,13 @@ pub fn sync_python_dependencies_stage(
     let path_env = std::env::var_os("PATH").unwrap_or_default();
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
     let plan = python_dependencies_stage_plan(install_root, hermes_home, path_env, &pathext)?;
-    let tiers = python_dependency_install_tiers();
+    let tiers = python_dependency_install_tiers_for_cwd(&plan.cwd);
     let mut selected_tier = None;
     let mut last_exit_code = None;
     for tier in &tiers {
         let status = run_python_dependency_install_tier(&plan, tier)?;
         if status.success() {
-            selected_tier = Some(tier.name);
+            selected_tier = Some(tier.name.clone());
             break;
         }
         last_exit_code = status.code();
@@ -2292,21 +2305,87 @@ pub fn sync_python_dependencies_stage(
     }))
 }
 
-fn python_dependency_install_tiers() -> Vec<PythonDependencyInstallTier> {
+fn python_dependency_install_tiers_for_cwd(cwd: &Path) -> Vec<PythonDependencyInstallTier> {
+    let pyproject = fs::read_to_string(cwd.join("pyproject.toml")).unwrap_or_default();
+    python_dependency_install_tiers_for_pyproject(&pyproject, PYTHON_KNOWN_BROKEN_EXTRAS)
+}
+
+fn python_dependency_install_tiers_for_pyproject(
+    pyproject_text: &str,
+    broken_extras: &[&str],
+) -> Vec<PythonDependencyInstallTier> {
+    let broken_label = if broken_extras.is_empty() {
+        "none".to_string()
+    } else {
+        broken_extras.join(", ")
+    };
+    let safe_all_spec = python_safe_all_extra_spec(pyproject_text, broken_extras);
     vec![
         PythonDependencyInstallTier {
-            name: "hash-verified (uv.lock)",
-            args: vec!["sync", "--extra", "all", "--locked"],
+            name: "hash-verified (uv.lock)".to_string(),
+            args: dependency_tier_args(&["sync", "--extra", "all", "--locked"]),
         },
         PythonDependencyInstallTier {
-            name: "all",
-            args: vec!["pip", "install", "-e", ".[all]"],
+            name: "all".to_string(),
+            args: dependency_tier_args(&["pip", "install", "-e", ".[all]"]),
         },
         PythonDependencyInstallTier {
-            name: "core only (no extras)",
-            args: vec!["pip", "install", "-e", "."],
+            name: format!("all minus known-broken ({broken_label})"),
+            args: vec![
+                "pip".to_string(),
+                "install".to_string(),
+                "-e".to_string(),
+                safe_all_spec,
+            ],
+        },
+        PythonDependencyInstallTier {
+            name: "core only (no extras)".to_string(),
+            args: dependency_tier_args(&["pip", "install", "-e", "."]),
         },
     ]
+}
+
+fn dependency_tier_args(args: &[&str]) -> Vec<String> {
+    args.iter().map(|arg| (*arg).to_string()).collect()
+}
+
+fn python_safe_all_extra_spec(pyproject_text: &str, broken_extras: &[&str]) -> String {
+    if broken_extras.is_empty() {
+        return ".[all]".to_string();
+    }
+    let Ok(all_extras) = pyproject_all_extra_names(pyproject_text) else {
+        return ".[all]".to_string();
+    };
+    if all_extras.is_empty() {
+        return ".[all]".to_string();
+    }
+    let safe_extras = all_extras
+        .into_iter()
+        .filter(|extra| !broken_extras.iter().any(|broken| extra == broken))
+        .collect::<Vec<_>>();
+    format!(".[{}]", safe_extras.join(","))
+}
+
+fn pyproject_all_extra_names(pyproject_text: &str) -> Result<Vec<String>> {
+    let parsed = toml::from_str::<PyprojectToml>(pyproject_text)?;
+    let extras = parsed
+        .project
+        .and_then(|project| project.optional_dependencies)
+        .and_then(|optional| optional.get("all").cloned())
+        .ok_or_else(|| anyhow!("pyproject.toml does not define [project.optional-dependencies].all"))?;
+    Ok(extras
+        .iter()
+        .filter_map(|spec| hermes_agent_extra_name(spec))
+        .collect())
+}
+
+fn hermes_agent_extra_name(spec: &str) -> Option<String> {
+    let (_, after_prefix) = spec.split_once("hermes-agent[")?;
+    let (extra, _) = after_prefix.split_once(']')?;
+    if extra.is_empty() {
+        return None;
+    }
+    Some(extra.to_string())
 }
 
 fn run_python_dependency_install_tier(
@@ -6639,15 +6718,35 @@ mod tests {
 
     #[test]
     fn python_dependency_install_tiers_preserve_script_fallback_order() {
-        let tiers = python_dependency_install_tiers();
+        let tiers = python_dependency_install_tiers_for_pyproject("", &[]);
 
-        assert_eq!(tiers.len(), 3);
+        assert_eq!(tiers.len(), 4);
         assert_eq!(tiers[0].name, "hash-verified (uv.lock)");
         assert_eq!(tiers[0].args, vec!["sync", "--extra", "all", "--locked"]);
         assert_eq!(tiers[1].name, "all");
         assert_eq!(tiers[1].args, vec!["pip", "install", "-e", ".[all]"]);
-        assert_eq!(tiers[2].name, "core only (no extras)");
-        assert_eq!(tiers[2].args, vec!["pip", "install", "-e", "."]);
+        assert_eq!(tiers[2].name, "all minus known-broken (none)");
+        assert_eq!(tiers[2].args, vec!["pip", "install", "-e", ".[all]"]);
+        assert_eq!(tiers[3].name, "core only (no extras)");
+        assert_eq!(tiers[3].args, vec!["pip", "install", "-e", "."]);
+    }
+
+    #[test]
+    fn python_known_broken_extra_tier_filters_pyproject_all_members() {
+        let pyproject = r#"
+[project.optional-dependencies]
+all = [
+  "hermes-agent[cron]",
+  "hermes-agent[web]",
+  "not-hermes[ignored]",
+  "hermes-agent[youtube]",
+]
+"#;
+
+        let tiers = python_dependency_install_tiers_for_pyproject(pyproject, &["web"]);
+
+        assert_eq!(tiers[2].name, "all minus known-broken (web)");
+        assert_eq!(tiers[2].args, vec!["pip", "install", "-e", ".[cron,youtube]"]);
     }
 
     #[test]
