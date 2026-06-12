@@ -15,6 +15,7 @@ import json
 import re
 import shutil
 import sys
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,6 +39,15 @@ class PreparedRuntimeFile:
     path: Path
     size_bytes: int
     sha256: str
+
+
+@dataclass(frozen=True)
+class AuditedRuntimeArchiveSpec:
+    """Maintainer-approved Python runtime archive input with an expected checksum."""
+
+    name: str
+    url: str
+    expected_sha256: str
 
 
 def sha256_file(path: Path) -> str:
@@ -111,6 +121,72 @@ def prepare_runtime_archive(
     clean_runtime_dir(output_dir)
     shutil.copy2(archive_path, dest)
     record = prepared_runtime_record(platform, arch, python_tag, source_url, dest)
+    manifest_path = write_manifest(output_dir, [record])
+    print(f"[python-runtime] wrote manifest {manifest_path}")
+    return [record]
+
+
+def parse_audited_archive_arg(value: str) -> AuditedRuntimeArchiveSpec:
+    """Parse one explicitly checksummed Python runtime archive download mapping."""
+
+    name, separator, remainder = value.partition("=")
+    url, checksum_separator, expected_sha256 = remainder.rpartition("=")
+    if not separator or not checksum_separator or not name or not url or not expected_sha256:
+        raise ValueError("audited runtime archive must use NAME=HTTPS_URL=SHA256")
+    if not name_is_plain_file(name):
+        raise ValueError(f"audited runtime archive has unsafe name: {name}")
+    if not url.startswith("https://"):
+        raise ValueError("audited runtime archive URL must be HTTPS")
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
+        raise ValueError(f"audited runtime archive has invalid sha256: {name}")
+    return AuditedRuntimeArchiveSpec(name=name, url=url, expected_sha256=expected_sha256.lower())
+
+
+def download_archive(spec: AuditedRuntimeArchiveSpec, output_dir: Path, force: bool) -> Path:
+    """Download an audited Python runtime archive unless a reusable copy already exists."""
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / spec.name
+    if path.exists() and not force:
+        if path.is_file() and path.stat().st_size > 0:
+            return path
+        raise RuntimeError(f"python runtime destination exists but is not a non-empty file: {path}")
+    with urllib.request.urlopen(spec.url, timeout=120) as response, path.open("wb") as handle:
+        shutil.copyfileobj(response, handle)
+    if path.stat().st_size <= 0:
+        raise RuntimeError(f"downloaded python runtime archive is empty: {path}")
+    return path
+
+
+def prepare_audited_runtime_archive(
+    output_dir: Path,
+    audited_archive: str,
+    platform: str,
+    arch: str,
+    python_tag: str,
+    force: bool,
+    dry_run: bool,
+) -> list[PreparedRuntimeFile]:
+    """Download one checksummed Python runtime archive and write its manifest."""
+
+    spec = parse_audited_archive_arg(audited_archive)
+    if dry_run:
+        print(f"[python-runtime] would download audited {spec.name} <- {spec.url}")
+        return []
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / spec.name
+    if force or not path.exists():
+        clean_runtime_dir(output_dir)
+    path = download_archive(spec, output_dir, force)
+    actual_sha256 = sha256_file(path)
+    if actual_sha256.lower() != spec.expected_sha256:
+        raise RuntimeError(
+            f"audited runtime archive checksum mismatch for {spec.name}: "
+            f"expected {spec.expected_sha256}, got {actual_sha256}"
+        )
+
+    record = prepared_runtime_record(platform, arch, python_tag, spec.url, path)
     manifest_path = write_manifest(output_dir, [record])
     print(f"[python-runtime] wrote manifest {manifest_path}")
     return [record]
@@ -247,6 +323,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--archive", type=Path, default=None, help="Audited Python runtime archive to bundle.")
+    parser.add_argument(
+        "--audited-archive",
+        default=None,
+        help="Download an audited Python runtime archive, in NAME=HTTPS_URL=SHA256 form.",
+    )
     parser.add_argument("--source-url", default=None, help="HTTPS source URL recorded for the runtime archive.")
     parser.add_argument("--platform", choices=("windows", "linux", "macos"), required=True)
     parser.add_argument("--arch", required=True)
@@ -266,8 +347,22 @@ def main(argv: list[str] | None = None) -> int:
             count = validate_payload(args.output_dir, args.platform, args.arch)
             print(f"[python-runtime] validated {count} file(s) in {args.output_dir}")
             return 0
+        if args.audited_archive is not None:
+            if args.archive is not None or args.source_url:
+                raise RuntimeError("--audited-archive cannot be combined with --archive or --source-url")
+            prepared = prepare_audited_runtime_archive(
+                args.output_dir,
+                args.audited_archive,
+                args.platform,
+                args.arch,
+                args.python_tag,
+                args.force,
+                args.dry_run,
+            )
+            print(f"[python-runtime] prepared {len(prepared)} file(s) in {args.output_dir}")
+            return 0
         if args.archive is None:
-            raise RuntimeError("--archive is required unless --validate-only is used")
+            raise RuntimeError("--archive or --audited-archive is required unless --validate-only is used")
         if not args.source_url:
             raise RuntimeError("--source-url is required unless --validate-only is used")
         prepared = prepare_runtime_archive(

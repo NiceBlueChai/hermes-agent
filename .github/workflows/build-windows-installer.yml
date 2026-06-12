@@ -7,6 +7,10 @@ on:
         description: Optional audited bootstrap archive, in NAME=HTTPS_URL=SHA256 form.
         required: false
         type: string
+      python-runtime-archive:
+        description: Optional audited Python runtime archive, in NAME=HTTPS_URL=SHA256 form.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -112,6 +116,34 @@ jobs:
           --platform windows
           --arch x64
 
+      - name: Bundle Python runtime archive
+        if: ${{ inputs['python-runtime-archive'] != '' }}
+        env:
+          HERMES_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['python-runtime-archive'] }}
+        run: |
+          $args = @(
+            "scripts/prepare_python_runtime.py",
+            "--platform",
+            "windows",
+            "--arch",
+            "x64",
+            "--python-tag",
+            "cp311",
+            "--force"
+          )
+          if ($env:HERMES_PYTHON_RUNTIME_ARCHIVE) {
+            $args += @("--audited-archive", "$env:HERMES_PYTHON_RUNTIME_ARCHIVE")
+          }
+          python @args
+
+      - name: Validate Python runtime archive
+        if: ${{ inputs['python-runtime-archive'] != '' }}
+        run: >
+          python scripts/prepare_python_runtime.py
+          --validate-only
+          --platform windows
+          --arch x64
+
       - name: Build installer
         env:
           HERMES_BUILD_PIN_COMMIT: ${{ github.sha }}
@@ -165,6 +197,15 @@ jobs:
           --self-check-wheelhouse-platform windows
           --self-check-wheelhouse-arch x64
 
+      - name: Smoke built installer Python runtime resources
+        if: ${{ inputs['python-runtime-archive'] != '' }}
+        run: >
+          .\apps\bootstrap-installer\src-tauri\target\release\Hermes-Setup.exe --self-check
+          --self-check-expect-commit "${{ github.sha }}"
+          --self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime
+          --self-check-python-runtime-platform windows
+          --self-check-python-runtime-arch x64
+
       - name: Smoke built installer lifecycle
         run: >
           .\apps\bootstrap-installer\src-tauri\target\release\Hermes-Setup.exe --self-check-lifecycle
@@ -189,6 +230,15 @@ jobs:
           --wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse
           --wheelhouse-platform windows
           --wheelhouse-arch x64
+
+      - name: Validate Python runtime artifacts
+        if: ${{ inputs['python-runtime-archive'] != '' }}
+        run: >
+          python scripts/validate_installer_artifacts.py
+          --artifact "apps/bootstrap-installer/src-tauri/python-runtime/python-runtime-manifest.json"
+          --python-runtime-dir apps/bootstrap-installer/src-tauri/python-runtime
+          --python-runtime-platform windows
+          --python-runtime-arch x64
 
       - name: Upload NSIS installer
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
@@ -227,4 +277,12 @@ jobs:
           path: |
             apps/bootstrap-installer/src-tauri/wheelhouse/*.whl
             apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json
+          if-no-files-found: error
+
+      - name: Upload Python runtime archive
+        if: ${{ inputs['python-runtime-archive'] != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: Hermes-Setup-python-runtime
+          path: apps/bootstrap-installer/src-tauri/python-runtime/*
           if-no-files-found: error

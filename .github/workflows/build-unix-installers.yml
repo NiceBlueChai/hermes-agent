@@ -13,6 +13,14 @@ on:
                 description: Optional macOS bootstrap archive, in NAME=HTTPS_URL=SHA256 form.
                 required: false
                 type: string
+            linux-python-runtime-archive:
+                description: Optional Linux Python runtime archive, in NAME=HTTPS_URL=SHA256 form.
+                required: false
+                type: string
+            macos-python-runtime-archive:
+                description: Optional macOS Python runtime archive, in NAME=HTTPS_URL=SHA256 form.
+                required: false
+                type: string
 
 permissions:
     contents: read
@@ -152,6 +160,42 @@ jobs:
                   --platform ${{ matrix.platform }}
                   --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
 
+            - name: Bundle Python runtime archive
+              if: >-
+                  ${{
+                      (matrix.platform == 'linux' && inputs['linux-python-runtime-archive'] != '') ||
+                      (matrix.platform == 'macos' && inputs['macos-python-runtime-archive'] != '')
+                  }}
+              env:
+                  HERMES_LINUX_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['linux-python-runtime-archive'] }}
+                  HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['macos-python-runtime-archive'] }}
+              run: |
+                  set -euo pipefail
+                  HERMES_PYTHON_RUNTIME_ARCHIVE=""
+                  if [ "${{ matrix.platform }}" = "linux" ]; then
+                      HERMES_PYTHON_RUNTIME_ARCHIVE="${HERMES_LINUX_PYTHON_RUNTIME_ARCHIVE}"
+                  else
+                      HERMES_PYTHON_RUNTIME_ARCHIVE="${HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE}"
+                  fi
+                  python scripts/prepare_python_runtime.py \
+                      --platform ${{ matrix.platform }} \
+                      --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
+                      --python-tag cp311 \
+                      --force \
+                      --audited-archive "${HERMES_PYTHON_RUNTIME_ARCHIVE}"
+
+            - name: Validate Python runtime archive
+              if: >-
+                  ${{
+                      (matrix.platform == 'linux' && inputs['linux-python-runtime-archive'] != '') ||
+                      (matrix.platform == 'macos' && inputs['macos-python-runtime-archive'] != '')
+                  }}
+              run: >
+                  python scripts/prepare_python_runtime.py
+                  --validate-only
+                  --platform ${{ matrix.platform }}
+                  --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
             - name: Build installer
               env:
                   HERMES_BUILD_PIN_COMMIT: ${{ github.sha }}
@@ -168,6 +212,19 @@ jobs:
                   --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse
                   --self-check-wheelhouse-platform ${{ matrix.platform }}
                   --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
+            - name: Smoke built installer Python runtime resources
+              if: >-
+                  ${{
+                      (matrix.platform == 'linux' && inputs['linux-python-runtime-archive'] != '') ||
+                      (matrix.platform == 'macos' && inputs['macos-python-runtime-archive'] != '')
+                  }}
+              run: >
+                  ./apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup --self-check
+                  --self-check-expect-commit "${{ github.sha }}"
+                  --self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime
+                  --self-check-python-runtime-platform ${{ matrix.platform }}
+                  --self-check-python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
 
             - name: Smoke built installer lifecycle
               run: >
@@ -264,6 +321,19 @@ jobs:
                   --wheelhouse-platform ${{ matrix.platform }}
                   --wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
 
+            - name: Validate Python runtime artifacts
+              if: >-
+                  ${{
+                      (matrix.platform == 'linux' && inputs['linux-python-runtime-archive'] != '') ||
+                      (matrix.platform == 'macos' && inputs['macos-python-runtime-archive'] != '')
+                  }}
+              run: >
+                  python scripts/validate_installer_artifacts.py
+                  --artifact "apps/bootstrap-installer/src-tauri/python-runtime/python-runtime-manifest.json"
+                  --python-runtime-dir apps/bootstrap-installer/src-tauri/python-runtime
+                  --python-runtime-platform ${{ matrix.platform }}
+                  --python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
             - name: Upload installer artifacts
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
               with:
@@ -292,4 +362,16 @@ jobs:
                   path: |
                       apps/bootstrap-installer/src-tauri/wheelhouse/*.whl
                       apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json
+                  if-no-files-found: error
+
+            - name: Upload Python runtime archive
+              if: >-
+                  ${{
+                      (matrix.platform == 'linux' && inputs['linux-python-runtime-archive'] != '') ||
+                      (matrix.platform == 'macos' && inputs['macos-python-runtime-archive'] != '')
+                  }}
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+              with:
+                  name: ${{ matrix.artifact-name }}-python-runtime
+                  path: apps/bootstrap-installer/src-tauri/python-runtime/*
                   if-no-files-found: error
