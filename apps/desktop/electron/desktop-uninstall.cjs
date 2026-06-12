@@ -123,6 +123,13 @@ function modeRequiresPythonUninstaller(mode, managerCommand = null, options = {}
   return true
 }
 
+/**
+ * True when GUI cleanup is fully covered by the Rust manager plus bundle rm.
+ */
+function shouldSkipPythonUninstaller(mode, managerCommand = null, options = {}) {
+  return mode === 'gui' && !modeRequiresPythonUninstaller(mode, managerCommand, options)
+}
+
 /** True when `mode` removes the agent (lite/full), false for gui-only. */
 function modeRemovesAgent(mode) {
   return mode === 'lite' || mode === 'full'
@@ -355,6 +362,7 @@ module.exports = {
   modeRemovesUserData,
   resolveHermesManagerPath,
   resolveRemovableAppPath,
+  shouldSkipPythonUninstaller,
   shouldRemoveAppBundle,
   uninstallArgsForMode
 }

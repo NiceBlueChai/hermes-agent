@@ -377,6 +377,8 @@ language-specific setup where needed.
   launcher entries from the standard XDG applications directory.
 - Packaged GUI-only cleanup can now continue with the Rust manager when the Python venv is missing, as long as the
   running app bundle/install directory is resolvable.
+- Packaged GUI-only cleanup now skips the Python uninstaller entirely when the Rust manager and deferred app bundle
+  removal cover the full cleanup path; Python remains a fallback when manager/app path resolution is unavailable.
 - `hermes-manager repair-clean` now removes the same Hermes-managed runtime roots as repairable install state, so
   broken managed Node/Python/uv/pip/Git/bootstrap-cache directories and staged updater binaries are recreated by the
   next bootstrap while user config and data stay intact.

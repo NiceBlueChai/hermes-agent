@@ -41,6 +41,7 @@ const {
   modeRemovesUserData,
   resolveHermesManagerPath,
   resolveRemovableAppPath,
+  shouldSkipPythonUninstaller,
   shouldRemoveAppBundle,
   uninstallArgsForMode
 } = require('./desktop-uninstall.cjs')
@@ -6087,12 +6088,13 @@ async function runDesktopUninstall(mode) {
   })
   const appPath = resolveRemovableAppPath(process.execPath, process.platform, process.env)
   const removeBundle = shouldRemoveAppBundle(IS_PACKAGED, appPath) ? appPath : null
-  const venvPy = uninstallVenvPython()
-  const hasVenvPython = fileExists(venvPy)
-  if (!hasVenvPython && modeRequiresPythonUninstaller(mode, managerCommand, {
+  const pythonDecisionOptions = {
     appPath: removeBundle,
     platform: process.platform
-  })) {
+  }
+  const venvPy = uninstallVenvPython()
+  const hasVenvPython = fileExists(venvPy)
+  if (!hasVenvPython && modeRequiresPythonUninstaller(mode, managerCommand, pythonDecisionOptions)) {
     return {
       ok: false,
       error: 'agent-missing',
@@ -6104,12 +6106,16 @@ async function runDesktopUninstall(mode) {
   // running python.exe. On Windows a running .exe is mandatory-locked, so the
   // rmtree must NOT be driven by the venv's own interpreter — use a system
   // Python with PYTHONPATH=<agentRoot> so `import hermes_cli` resolves from
-  // source while the venv is torn down. gui-only doesn't touch the venv, so the
-  // venv python is fine there. If no system Python exists (the Windows edge
-  // case), fall back to the venv python — gui-only is unaffected; lite/full may
-  // leave venv remnants the user can delete, which we log.
+  // source while the venv is torn down. GUI-only cleanup skips Python entirely
+  // when the packaged manager and app bundle removal cover the full cleanup;
+  // otherwise the venv python is fine because GUI-only does not remove the venv.
+  // If no system Python exists (the Windows edge case), fall back to the venv
+  // python. lite/full may leave venv remnants the user can delete, which we log.
   let py = hasVenvPython ? venvPy : null
   let pythonPath = null
+  if (shouldSkipPythonUninstaller(mode, managerCommand, pythonDecisionOptions)) {
+    py = null
+  }
   if (modeRemovesAgent(mode)) {
     const sysPy = findSystemPython()
     if (sysPy) {

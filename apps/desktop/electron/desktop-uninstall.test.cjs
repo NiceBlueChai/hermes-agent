@@ -23,6 +23,7 @@ const {
   modeRemovesUserData,
   resolveHermesManagerPath,
   resolveRemovableAppPath,
+  shouldSkipPythonUninstaller,
   shouldRemoveAppBundle,
   uninstallArgsForMode
 } = require('./desktop-uninstall.cjs')
@@ -200,6 +201,42 @@ test('modeRequiresPythonUninstaller lets packaged macOS and Windows GUI cleanup 
       platform: 'darwin'
     }),
     true
+  )
+})
+
+test('shouldSkipPythonUninstaller only skips fully covered GUI cleanup', () => {
+  const managerCommand = {
+    command: '/resources/hermes-manager/hermes-manager',
+    args: ['uninstall-gui-build', '--user-data']
+  }
+
+  assert.equal(
+    shouldSkipPythonUninstaller('gui', managerCommand, {
+      appPath: '/Applications/Hermes.app',
+      platform: 'darwin'
+    }),
+    true
+  )
+  assert.equal(
+    shouldSkipPythonUninstaller('gui', null, {
+      appPath: '/Applications/Hermes.app',
+      platform: 'darwin'
+    }),
+    false
+  )
+  assert.equal(
+    shouldSkipPythonUninstaller('gui', managerCommand, {
+      appPath: null,
+      platform: 'darwin'
+    }),
+    false
+  )
+  assert.equal(
+    shouldSkipPythonUninstaller('lite', managerCommand, {
+      appPath: '/Applications/Hermes.app',
+      platform: 'darwin'
+    }),
+    false
   )
 })
 
