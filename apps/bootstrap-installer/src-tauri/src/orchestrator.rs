@@ -433,11 +433,13 @@ pub fn probe_install_state(hermes_home: &Path) -> InstallStateReport {
 }
 
 /// Build the initial mixed execution plan from the script manifest.
-pub fn build_stage_plan(stages: &[StageInfo], _include_desktop: bool) -> Vec<PlannedStage> {
+pub fn build_stage_plan(stages: &[StageInfo], include_desktop: bool) -> Vec<PlannedStage> {
     stages
         .iter()
         .map(|stage| {
-            let execution = if stage.needs_user_input {
+            let execution = if stage.needs_user_input
+                || (!include_desktop && stage.name.eq_ignore_ascii_case("desktop"))
+            {
                 StageExecutionMode::Native
             } else {
                 stage_execution_mode(&stage.name)
@@ -6402,7 +6404,7 @@ mod tests {
             stage("dependencies"),
             stage("python-deps"),
         ];
-        let plan = build_stage_plan(&stages, false);
+        let plan = build_stage_plan(&stages, true);
 
         assert_eq!(plan.len(), 13);
         assert_eq!(plan[0].name, "repository");
@@ -6524,6 +6526,17 @@ mod tests {
         assert!(plan.iter().all(|stage| stage.execution == StageExecutionMode::Native));
         assert!(plan.iter().all(|stage| !stage.script_fallback));
         assert!(plan.iter().all(|stage| stage.script_reason.is_none()));
+    }
+
+    #[test]
+    fn build_stage_plan_does_not_count_omitted_desktop_as_script_fallback() {
+        let stages = vec![stage("desktop")];
+
+        let plan = build_stage_plan(&stages, false);
+
+        assert_eq!(plan[0].execution, StageExecutionMode::Native);
+        assert_eq!(plan[0].script_fallback, false);
+        assert_eq!(plan[0].script_reason.as_deref(), None);
     }
 
     #[test]

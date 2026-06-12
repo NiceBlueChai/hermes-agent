@@ -57,6 +57,8 @@ User-visible behavior:
   script-only stages, so release review can track shell dependency reduction more accurately.
 - Interactive post-install stages that the Rust bootstrapper already skips for the GUI flow are no longer counted as
   script fallback stages in the bootstrap plan summary.
+- Desktop packaging stages are no longer counted as script fallback when desktop packaging is not requested, keeping
+  non-desktop bootstrap summaries aligned with the actual skipped execution path.
 - If Node dependency or desktop build setup falls back to the install scripts, the Rust bootstrapper now passes its
   bundled bootstrap-tools path through so script recovery can restore npm-cache, Playwright browser, and Electron cache
   archives before network downloads.
