@@ -1588,7 +1588,7 @@ fn unix_git_install_command_plan(
     sudo_available: bool,
     brew_available: bool,
 ) -> Result<Vec<UnixGitInstallCommandPlan>> {
-    if target_os == "android" || distro == "termux" {
+    if target_os == "android" || distro_matches(distro, &["termux"]) {
         return Ok(vec![unix_git_command("pkg", ["install", "-y", "git"])]);
     }
     if target_os == "macos" {
@@ -1600,29 +1600,33 @@ fn unix_git_install_command_plan(
     if target_os != "linux" {
         return Err(anyhow!("unsupported Unix Git install target: {target_os}"));
     }
-    match distro {
-        "ubuntu" | "debian" => Ok(vec![
+    if distro_matches(distro, &["ubuntu", "debian"]) {
+        return Ok(vec![
             unix_git_apt_command(user_is_root, sudo_available, ["update", "-qq"])?,
             unix_git_apt_command(
                 user_is_root,
                 sudo_available,
                 ["install", "-y", "-qq", "git"],
             )?,
-        ]),
-        "fedora" => Ok(vec![unix_git_privileged_command(
+        ]);
+    }
+    if distro_matches(distro, &["fedora", "rhel", "centos", "rocky", "alma"]) {
+        return Ok(vec![unix_git_privileged_command(
             user_is_root,
             sudo_available,
             "dnf",
             ["install", "-y", "git"],
-        )?]),
-        "arch" => Ok(vec![unix_git_privileged_command(
+        )?]);
+    }
+    if distro_matches(distro, &["arch", "manjaro", "cachyos", "endeavouros", "garuda"]) {
+        return Ok(vec![unix_git_privileged_command(
             user_is_root,
             sudo_available,
             "pacman",
             ["-S", "--noconfirm", "git"],
-        )?]),
-        other => Err(anyhow!("unsupported Linux Git install distro: {other}")),
+        )?]);
     }
+    Err(anyhow!("unsupported Linux Git install distro: {distro}"))
 }
 
 fn unix_git_apt_command<const N: usize>(
@@ -1686,7 +1690,7 @@ fn unix_system_package_install_command_plan(
     if packages.is_empty() {
         return Err(anyhow!("at least one Unix package is required"));
     }
-    if target_os == "android" || distro == "termux" {
+    if target_os == "android" || distro_matches(distro, &["termux"]) {
         return Ok(vec![unix_package_command_with_packages(
             "pkg",
             &["install", "-y"],
@@ -1708,28 +1712,32 @@ fn unix_system_package_install_command_plan(
     if target_os != "linux" {
         return Err(anyhow!("unsupported Unix package install target: {target_os}"));
     }
-    match distro {
-        "ubuntu" | "debian" => Ok(vec![unix_apt_package_install_command(
+    if distro_matches(distro, &["ubuntu", "debian"]) {
+        return Ok(vec![unix_apt_package_install_command(
             user_is_root,
             sudo_available,
             packages,
-        )?]),
-        "fedora" => Ok(vec![unix_privileged_package_install_command(
+        )?]);
+    }
+    if distro_matches(distro, &["fedora", "rhel", "centos", "rocky", "alma"]) {
+        return Ok(vec![unix_privileged_package_install_command(
             user_is_root,
             sudo_available,
             "dnf",
             &["install", "-y"],
             packages,
-        )?]),
-        "arch" => Ok(vec![unix_privileged_package_install_command(
+        )?]);
+    }
+    if distro_matches(distro, &["arch", "manjaro", "cachyos", "endeavouros", "garuda"]) {
+        return Ok(vec![unix_privileged_package_install_command(
             user_is_root,
             sudo_available,
             "pacman",
             &["-S", "--noconfirm"],
             packages,
-        )?]),
-        other => Err(anyhow!("unsupported Linux package install distro: {other}")),
+        )?]);
     }
+    Err(anyhow!("unsupported Linux package install distro: {distro}"))
 }
 
 fn unix_apt_package_install_command(
@@ -2011,7 +2019,7 @@ pub async fn install_unix_system_packages_stage(
         let distro = if termux {
             "termux".to_string()
         } else if target_os == "linux" {
-            current_linux_distro_id().unwrap_or_default()
+            current_linux_distro_family()
         } else {
             String::new()
         };
@@ -2123,7 +2131,7 @@ pub async fn install_unix_git_runtime_stage() -> Result<serde_json::Value> {
     let distro = if termux {
         "termux".to_string()
     } else if target_os == "linux" {
-        current_linux_distro_id().unwrap_or_default()
+        current_linux_distro_family()
     } else {
         String::new()
     };
@@ -2228,18 +2236,51 @@ where
         .is_ok_and(|status| status.success())
 }
 
-fn current_linux_distro_id() -> Option<String> {
-    linux_distro_id_from_os_release(&std::fs::read_to_string("/etc/os-release").ok()?)
+fn current_linux_distro_family() -> String {
+    let Some(text) = std::fs::read_to_string("/etc/os-release").ok() else {
+        return String::new();
+    };
+    linux_distro_ids_from_os_release(&text).join(" ")
 }
 
-fn linux_distro_id_from_os_release(text: &str) -> Option<String> {
+fn linux_distro_ids_from_os_release(text: &str) -> Vec<String> {
+    let mut ids = Vec::new();
     for line in text.lines() {
-        let Some(value) = line.strip_prefix("ID=") else {
-            continue;
-        };
-        return Some(value.trim_matches('"').to_ascii_lowercase());
+        if let Some(value) = line.strip_prefix("ID=") {
+            push_linux_distro_ids(&mut ids, value);
+        } else if let Some(value) = line.strip_prefix("ID_LIKE=") {
+            push_linux_distro_ids(&mut ids, value);
+        }
     }
-    None
+    ids
+}
+
+fn push_linux_distro_ids(ids: &mut Vec<String>, value: &str) {
+    let cleaned = value.trim().trim_matches('"').trim_matches('\'');
+    for id in cleaned.split_whitespace() {
+        let normalized = id.to_ascii_lowercase();
+        if !normalized.is_empty() && !ids.contains(&normalized) {
+            ids.push(normalized);
+        }
+    }
+}
+
+fn distro_matches(distro: &str, supported: &[&str]) -> bool {
+    distro
+        .split(|ch: char| ch.is_whitespace() || ch == ',')
+        .map(str::trim)
+        .filter(|candidate| !candidate.is_empty())
+        .any(|candidate| {
+            let candidate = candidate.to_ascii_lowercase();
+            supported.iter().any(|item| candidate == *item)
+        })
+}
+
+fn distro_any_starts_with(distro: &str, prefix: &str) -> bool {
+    distro
+        .split(|ch: char| ch.is_whitespace() || ch == ',')
+        .map(str::trim)
+        .any(|candidate| candidate.to_ascii_lowercase().starts_with(prefix))
 }
 
 /// Build the native Python virtual environment stage plan.
@@ -2592,33 +2633,35 @@ fn playwright_install_plan(
 }
 
 fn playwright_apt_distro_supports_with_deps(distro: &str) -> bool {
-    matches!(
+    distro_matches(
         distro,
-        "ubuntu"
-            | "debian"
-            | "raspbian"
-            | "pop"
-            | "linuxmint"
-            | "elementary"
-            | "zorin"
-            | "kali"
-            | "parrot"
+        &[
+            "ubuntu",
+            "debian",
+            "raspbian",
+            "pop",
+            "linuxmint",
+            "elementary",
+            "zorin",
+            "kali",
+            "parrot",
+        ],
     )
 }
 
 fn playwright_arch_distro_supports_pacman_deps(distro: &str) -> bool {
-    matches!(
+    distro_matches(
         distro,
-        "arch" | "manjaro" | "cachyos" | "endeavouros" | "garuda"
+        &["arch", "manjaro", "cachyos", "endeavouros", "garuda"],
     )
 }
 
 fn playwright_dnf_distro_supports_deps(distro: &str) -> bool {
-    matches!(distro, "fedora" | "rhel" | "centos" | "rocky" | "alma")
+    distro_matches(distro, &["fedora", "rhel", "centos", "rocky", "alma"])
 }
 
 fn playwright_zypper_distro_supports_deps(distro: &str) -> bool {
-    distro.starts_with("opensuse") || distro == "sles"
+    distro_any_starts_with(distro, "opensuse") || distro_matches(distro, &["sles"])
 }
 
 fn playwright_arch_system_packages() -> &'static [&'static str] {
@@ -2690,7 +2733,7 @@ pub fn install_node_dependencies_stage(
             .as_ref()
             .ok_or_else(|| anyhow!("npx is not available"))?;
         let distro = if std::env::consts::OS == "linux" {
-            current_linux_distro_id().unwrap_or_default()
+            current_linux_distro_family()
         } else {
             String::new()
         };
@@ -6467,6 +6510,33 @@ mod tests {
             false,
         )
         .is_err());
+    }
+
+    #[test]
+    fn linux_distro_ids_include_id_like_families() {
+        let ids = linux_distro_ids_from_os_release(
+            "NAME=Example Linux\nID=example\nID_LIKE=\"debian ubuntu\"\n",
+        );
+
+        assert_eq!(ids, vec!["example", "debian", "ubuntu"]);
+    }
+
+    #[test]
+    fn linux_distro_id_like_unlocks_native_package_recovery() {
+        let debian_like = unix_system_package_install_command_plan(
+            "linux",
+            "example debian",
+            &["ffmpeg"],
+            true,
+            false,
+            false,
+        )
+        .expect("ID_LIKE=debian should use apt recovery");
+        assert_eq!(debian_like[0].program, "apt-get");
+
+        let fedora_like = playwright_install_plan("linux", "nobara fedora", true, false)
+            .expect("ID_LIKE=fedora should use dnf recovery");
+        assert_eq!(fedora_like.system_deps, "dnf");
     }
 
     #[test]

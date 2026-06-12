@@ -328,6 +328,8 @@ language-specific setup where needed.
 - Unix `system-packages` now installs missing `ffmpeg` through Rust-planned package-manager commands on common
   Linux/macOS/Termux targets after the native ripgrep archive path runs, preserving shell fallback for unsupported
   distributions, denied privileges, and package-manager failures.
+- Linux distro detection now uses both `ID` and `ID_LIKE` from `/etc/os-release`, so derivative distributions can use
+  the native apt/dnf/pacman/zypper recovery paths for Git, ffmpeg, and Playwright system libraries.
 - `bootstrap-marker` now runs as a native Rust stage in the Tauri bootstrapper on Windows and Unix manifests.
 - `config-templates` and the Unix `config` stage now run as native Rust stages while preserving Python
   `tools/skills_sync.py` when available and retaining the existing bundled-skill copy fallback.
@@ -338,8 +340,8 @@ language-specific setup where needed.
 
 **Still script-backed:**
 - Recovery tiers remain script-backed for failure cases that still need package-manager or mirror-specific handling:
-  unknown Linux Playwright system-library recovery, interactive or denied Linux `chrome-sandbox` privilege escalation,
-  unsupported or failed Unix package-manager recovery, and messaging-platform SDK recovery if both native pip and uv
+  Linux distributions without a recognized `ID` or `ID_LIKE`, interactive or denied Linux `chrome-sandbox` privilege
+  escalation, failed Unix package-manager recovery, and messaging-platform SDK recovery if both native pip and uv
   targeted installs fail.
 - Fresh archive installs and archive updates do not require Git. Unix Git acquisition now has a native-first package
   manager path for common Linux/macOS/Termux setups, while unsupported distro handling, macOS CLT dialog recovery, and
