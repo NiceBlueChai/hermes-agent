@@ -2692,7 +2692,8 @@ function Install-PlatformSdks {
 
         foreach ($sdk in $missing) {
             $installedSdk = $false
-            $wheelhouseDir = Join-Path $InstallDir "resources\wheelhouse"
+            $fallbackWheelhouseDir = Join-Path $InstallDir "resources\wheelhouse"
+            $wheelhouseDir = Get-LocalWheelhouseDir -FallbackDir $fallbackWheelhouseDir
             if (Test-LocalWheelhouseManifest -WheelhouseDir $wheelhouseDir) {
                 Write-Info "  Installing $($sdk.Spec) from local wheelhouse ..."
                 & $pythonExe -m pip install --no-index --find-links $wheelhouseDir $sdk.Spec 2>&1 |

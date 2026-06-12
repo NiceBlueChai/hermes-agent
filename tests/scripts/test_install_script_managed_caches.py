@@ -21,6 +21,7 @@ class InstallScriptManagedCachesTests(unittest.TestCase):
         self.assertIn('export PIP_CACHE_DIR="${PIP_CACHE_DIR:-$HERMES_HOME/pip-cache}"', script)
         self.assertIn("${HERMES_BUNDLED_WHEELHOUSE_DIR:-}", script)
         self.assertIn('local_wheelhouse_dir "$INSTALL_DIR/resources/wheelhouse"', script)
+        self.assertGreaterEqual(script.count('local_wheelhouse_dir "$INSTALL_DIR/resources/wheelhouse"'), 2)
 
     def test_install_ps1_exports_managed_python_caches(self):
         """Direct Windows installs should not spill uv or pip caches into user-global directories."""
@@ -31,3 +32,4 @@ class InstallScriptManagedCachesTests(unittest.TestCase):
         self.assertIn('$env:PIP_CACHE_DIR = Join-Path $HermesHome "pip-cache"', script)
         self.assertIn("$env:HERMES_BUNDLED_WHEELHOUSE_DIR", script)
         self.assertIn('Get-LocalWheelhouseDir -FallbackDir $fallbackWheelhouseDir', script)
+        self.assertGreaterEqual(script.count("Get-LocalWheelhouseDir -FallbackDir"), 2)

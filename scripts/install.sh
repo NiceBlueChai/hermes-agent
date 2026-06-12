@@ -1939,8 +1939,9 @@ install_platform_sdks() {
         log_warn "Skipping messaging platform SDK check (venv Python missing)"
         return 0
     fi
-    if local_wheelhouse_manifest_is_valid "$INSTALL_DIR/resources/wheelhouse"; then
-        wheelhouse_arg="$INSTALL_DIR/resources/wheelhouse"
+    wheelhouse_arg="$(local_wheelhouse_dir "$INSTALL_DIR/resources/wheelhouse")"
+    if ! local_wheelhouse_manifest_is_valid "$wheelhouse_arg"; then
+        wheelhouse_arg=""
     fi
 
     "$python_path" - "$env_file" "$wheelhouse_arg" <<'PY'
