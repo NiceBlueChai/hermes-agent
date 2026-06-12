@@ -109,6 +109,7 @@ User-visible behavior:
 - Built-installer self-check now applies the same plain-file name guard to bootstrap-tools and wheelhouse resources.
 - Native bootstrap manifest tests now guard against reintroducing pure script-only stages in release manifests.
 - Unix installer builds now smoke the packaged AppImage and macOS `.app` executable with lifecycle self-checks before upload.
+- Installer artifact validation now rejects macOS `.app` bundles without a non-empty packaged executable.
 
 Compatibility and fallback:
 

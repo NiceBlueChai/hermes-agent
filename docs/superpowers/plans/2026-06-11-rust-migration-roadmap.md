@@ -757,6 +757,8 @@ language-specific setup where needed.
   preserving the normal packaged path as native-first or explicitly fallback-only.
 - Unix installer workflow now also runs `--self-check` and `--self-check-lifecycle` through the packaged Linux AppImage
   and macOS `.app` executable before artifact validation, moving lifecycle smoke closer to real release binaries.
+- Installer artifact validation now rejects macOS `.app` bundles that do not contain a non-empty
+  `Contents/MacOS/Hermes` executable, so directory uploads must include the launchable packaged binary.
 - Installer artifact validation now receives the expected release platform from the Windows/Linux/macOS workflows and
   rejects `bootstrap-tools` manifests whose archive records target a different platform.
 - Duplicate archive names are rejected by the validate-only gate, keeping each bundled runtime archive's ownership,

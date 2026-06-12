@@ -111,8 +111,18 @@ def validate_artifact_path(path: Path) -> None:
             raise RuntimeError(f"installer artifact directory has no files: {path}")
         if not any(child.is_file() and child.stat().st_size > 0 for child in path.rglob("*")):
             raise RuntimeError(f"installer artifact directory has no non-empty files: {path}")
+        if path.suffix == ".app":
+            validate_macos_app_artifact(path)
         return
     raise RuntimeError(f"installer artifact is not a file or directory: {path}")
+
+
+def validate_macos_app_artifact(path: Path) -> None:
+    """Validate the executable entry point inside a macOS app bundle."""
+
+    executable = path / "Contents" / "MacOS" / "Hermes"
+    if not executable.is_file() or executable.stat().st_size <= 0:
+        raise RuntimeError(f"missing macOS app executable: {executable}")
 
 
 def wheelhouse_source_inputs_exist(root: Path) -> bool:

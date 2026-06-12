@@ -105,6 +105,23 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
 
             self.assertEqual(checked, [app_bundle])
 
+    def test_validate_artifacts_rejects_macos_app_without_executable(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_bundle = root / "target" / "release" / "bundle" / "macos" / "Hermes.app"
+            resources = app_bundle / "Contents" / "Resources"
+            resources.mkdir(parents=True)
+            (resources / "marker.txt").write_text("resource", encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "missing macOS app executable"):
+                module.validate_artifacts(
+                    root,
+                    [
+                        "target/release/bundle/macos/*.app",
+                    ],
+                )
+
     def test_validate_artifacts_rejects_empty_directory_artifact(self):
         module = _load_script_module()
         with tempfile.TemporaryDirectory() as tmp:
