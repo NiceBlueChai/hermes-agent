@@ -550,6 +550,8 @@ language-specific setup where needed.
   after bundling so release builds fail before packaging if any manifest archive is missing, truncated, or hash-mismatched.
 - Installer workflows now run a local release artifact validator before upload, requiring the expected Windows, Linux,
   or macOS installer files plus the retained `bootstrap-tools-manifest.json` to exist and pass manifest validation.
+- The release artifact validator now accepts non-empty directory artifacts as well as non-empty files, so macOS `.app`
+  bundles in the Unix installer workflow are checked without weakening the empty-artifact gate.
 - Installer workflows now retain the generated bootstrap-tool archive payloads as artifacts alongside the packaged
   installers, so release review can compare the actual bundled Node/uv/ripgrep/Git archives against the manifest.
 - The release artifact validator now rejects unmanifested runtime payloads in `bootstrap-tools/`, making the retained

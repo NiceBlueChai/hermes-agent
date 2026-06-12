@@ -87,6 +87,39 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
                 ],
             )
 
+    def test_validate_artifacts_accepts_non_empty_directory_artifact(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_bundle = root / "target" / "release" / "bundle" / "macos" / "Hermes.app"
+            app_binary = app_bundle / "Contents" / "MacOS" / "Hermes"
+            app_binary.parent.mkdir(parents=True)
+            app_binary.write_bytes(b"app binary")
+
+            checked = module.validate_artifacts(
+                root,
+                [
+                    "target/release/bundle/macos/*.app",
+                ],
+            )
+
+            self.assertEqual(checked, [app_bundle])
+
+    def test_validate_artifacts_rejects_empty_directory_artifact(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_bundle = root / "target" / "release" / "bundle" / "macos" / "Hermes.app"
+            app_bundle.mkdir(parents=True)
+
+            with self.assertRaisesRegex(RuntimeError, "installer artifact directory is empty"):
+                module.validate_artifacts(
+                    root,
+                    [
+                        "target/release/bundle/macos/*.app",
+                    ],
+                )
+
     def test_validate_artifacts_allows_bootstrap_readme_and_gitignore(self):
         module = _load_script_module()
         with tempfile.TemporaryDirectory() as tmp:
