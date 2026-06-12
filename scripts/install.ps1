@@ -1438,6 +1438,38 @@ function Test-LocalWheelhouseManifest {
             return $false
         }
 
+        $sourceFiles = @($payload.sourceFiles)
+        if ($sourceFiles.Count -eq 0) {
+            Write-Warn "Skipping local wheelhouse: manifest has no sourceFiles"
+            return $false
+        }
+
+        $sourceNames = New-Object "System.Collections.Generic.HashSet[string]"
+        foreach ($source in $sourceFiles) {
+            $sourcePath = [string]$source.path
+            if ([string]::IsNullOrWhiteSpace($sourcePath) -or
+                [System.IO.Path]::GetFileName($sourcePath) -ne $sourcePath -or
+                $sourcePath.Contains("..") -or
+                -not $sourceNames.Add($sourcePath)) {
+                Write-Warn "Skipping local wheelhouse: invalid source path '$sourcePath'"
+                return $false
+            }
+
+            $repoSource = Join-Path $InstallDir $sourcePath
+            if (-not (Test-Path $repoSource -PathType Leaf)) {
+                Write-Warn "Skipping local wheelhouse: missing source file $sourcePath"
+                return $false
+            }
+
+            $expectedSourceSha = [string]$source.sha256
+            $actualSourceSha = (Get-FileHash -Path $repoSource -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ([string]::IsNullOrWhiteSpace($expectedSourceSha) -or
+                $actualSourceSha -ne $expectedSourceSha.ToLowerInvariant()) {
+                Write-Warn "Skipping local wheelhouse: source sha256 mismatch for $sourcePath"
+                return $false
+            }
+        }
+
         $manifested = New-Object "System.Collections.Generic.HashSet[string]"
         foreach ($wheel in $wheels) {
             $name = [string]$wheel.name

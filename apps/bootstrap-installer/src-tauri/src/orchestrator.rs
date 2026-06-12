@@ -330,7 +330,15 @@ struct BootstrapToolsManifestArchive {
 struct WheelhouseManifest {
     #[serde(rename = "schemaVersion")]
     schema_version: u32,
+    #[serde(rename = "sourceFiles", default)]
+    source_files: Vec<WheelhouseManifestSourceFile>,
     wheels: Vec<WheelhouseManifestWheel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WheelhouseManifestSourceFile {
+    path: String,
+    sha256: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -652,7 +660,8 @@ pub fn platform_sdk_stage_plan(
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
     let uv = uv_tool_path(hermes_home, path_env, &pathext).ok();
     let checkout_wheelhouse = install_root.join("resources").join("wheelhouse");
-    let wheelhouse_dir = wheelhouse_has_wheels(&checkout_wheelhouse).then_some(checkout_wheelhouse);
+    let wheelhouse_dir =
+        wheelhouse_has_wheels(&checkout_wheelhouse, Some(install_root)).then_some(checkout_wheelhouse);
     Ok(PlatformSdkStagePlan {
         python,
         uv,
@@ -2661,9 +2670,9 @@ fn python_dependency_install_tiers_for_cwd_with_wheelhouse(
     let mut tiers = python_dependency_install_tiers_for_pyproject(&pyproject, PYTHON_KNOWN_BROKEN_EXTRAS);
     let checkout_wheelhouse = cwd.join("resources").join("wheelhouse");
     let wheelhouse = wheelhouse_dir
-        .filter(|path| wheelhouse_has_wheels(path))
+        .filter(|path| wheelhouse_has_wheels(path, Some(cwd)))
         .map(Path::to_path_buf)
-        .or_else(|| wheelhouse_has_wheels(&checkout_wheelhouse).then_some(checkout_wheelhouse));
+        .or_else(|| wheelhouse_has_wheels(&checkout_wheelhouse, Some(cwd)).then_some(checkout_wheelhouse));
     if let Some(wheelhouse) = wheelhouse {
         tiers.insert(
             0,
@@ -2684,9 +2693,9 @@ fn python_dependency_install_tiers_for_cwd_with_wheelhouse(
     tiers
 }
 
-fn wheelhouse_has_wheels(path: &Path) -> bool {
+fn wheelhouse_has_wheels(path: &Path, repo_root: Option<&Path>) -> bool {
     if path.join(WHEELHOUSE_MANIFEST).is_file() {
-        return wheelhouse_manifest_is_valid(path);
+        return wheelhouse_manifest_is_valid(path, repo_root);
     }
     let Ok(entries) = fs::read_dir(path) else {
         return false;
@@ -2699,7 +2708,7 @@ fn wheelhouse_has_wheels(path: &Path) -> bool {
     })
 }
 
-fn wheelhouse_manifest_is_valid(path: &Path) -> bool {
+fn wheelhouse_manifest_is_valid(path: &Path, repo_root: Option<&Path>) -> bool {
     let manifest_path = path.join(WHEELHOUSE_MANIFEST);
     let Some(manifest) = fs::read_to_string(&manifest_path)
         .ok()
@@ -2708,6 +2717,9 @@ fn wheelhouse_manifest_is_valid(path: &Path) -> bool {
         return false;
     };
     if manifest.schema_version != WHEELHOUSE_MANIFEST_SCHEMA_VERSION || manifest.wheels.is_empty() {
+        return false;
+    }
+    if !wheelhouse_source_files_match(&manifest.source_files, repo_root) {
         return false;
     }
 
@@ -2764,6 +2776,34 @@ fn wheelhouse_manifest_is_valid(path: &Path) -> bool {
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
         if !expected.contains(&name) || !entry.path().is_file() {
+            return false;
+        }
+    }
+    true
+}
+
+fn wheelhouse_source_files_match(
+    source_files: &[WheelhouseManifestSourceFile],
+    repo_root: Option<&Path>,
+) -> bool {
+    let Some(repo_root) = repo_root else {
+        return source_files.is_empty();
+    };
+    if source_files.is_empty() {
+        return false;
+    }
+    let mut seen = BTreeSet::new();
+    for source in source_files {
+        if !bootstrap_archive_name_is_plain_file(&source.path) || !seen.insert(source.path.clone()) {
+            return false;
+        }
+        if source.sha256.len() != 64 || !source.sha256.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            return false;
+        }
+        let Ok(bytes) = fs::read(repo_root.join(&source.path)) else {
+            return false;
+        };
+        if !crate::artifact::sha256_hex(&bytes).eq_ignore_ascii_case(&source.sha256) {
             return false;
         }
     }
@@ -8282,29 +8322,90 @@ mod tests {
         ));
         let wheelhouse = root.join("resources").join("wheelhouse");
         std::fs::create_dir_all(&wheelhouse).unwrap();
+        std::fs::write(root.join("pyproject.toml"), b"project").unwrap();
+        let source_sha = crate::artifact::sha256_hex(b"project");
         std::fs::write(wheelhouse.join("demo-0.1-py3-none-any.whl"), b"wheel").unwrap();
         std::fs::write(
             wheelhouse.join("wheelhouse-manifest.json"),
-            r#"{
+            format!(
+                r#"{{
   "schemaVersion": 1,
+  "sourceFiles": [
+    {{
+      "path": "pyproject.toml",
+      "sha256": "{source_sha}"
+    }}
+  ],
   "wheels": [
-    {
+    {{
       "arch": "x64",
       "platform": "windows",
       "python": "cp311",
       "name": "demo-0.1-py3-none-any.whl",
       "sizeBytes": 5,
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-    }
+    }}
   ]
-}
+}}
 "#,
+            ),
         )
         .unwrap();
-        std::fs::write(root.join("pyproject.toml"), b"").unwrap();
 
         let tiers = python_dependency_install_tiers_for_cwd_with_wheelhouse(&root, None);
 
+        assert_eq!(tiers[0].name, "hash-verified (uv.lock)");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn python_dependency_install_tiers_validate_wheelhouse_source_files() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-wheelhouse-source-tier-{}",
+            std::process::id()
+        ));
+        let wheelhouse = root.join("resources").join("wheelhouse");
+        std::fs::create_dir_all(&wheelhouse).unwrap();
+        std::fs::write(root.join("pyproject.toml"), b"project").unwrap();
+        let wheel = wheelhouse.join("demo-0.1-py3-none-any.whl");
+        std::fs::write(&wheel, b"wheel").unwrap();
+        let source_sha = crate::artifact::sha256_hex(b"project");
+        let wheel_sha = crate::artifact::sha256_hex(b"wheel");
+        let platform = current_wheelhouse_platform();
+        let arch = current_wheelhouse_arch().unwrap_or("x64");
+        std::fs::write(
+            wheelhouse.join("wheelhouse-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "sourceFiles": [
+    {{
+      "path": "pyproject.toml",
+      "sha256": "{source_sha}"
+    }}
+  ],
+  "wheels": [
+    {{
+      "arch": "{arch}",
+      "platform": "{platform}",
+      "python": "cp311",
+      "name": "demo-0.1-py3-none-any.whl",
+      "sizeBytes": 5,
+      "sha256": "{wheel_sha}"
+    }}
+  ]
+}}
+"#,
+            ),
+        )
+        .unwrap();
+
+        let tiers = python_dependency_install_tiers_for_cwd_with_wheelhouse(&root, None);
+        assert_eq!(tiers[0].name, "local wheelhouse (all)");
+
+        std::fs::write(root.join("pyproject.toml"), b"changed").unwrap();
+        let tiers = python_dependency_install_tiers_for_cwd_with_wheelhouse(&root, None);
         assert_eq!(tiers[0].name, "hash-verified (uv.lock)");
 
         let _ = std::fs::remove_dir_all(&root);
@@ -8318,6 +8419,8 @@ mod tests {
         ));
         let wheelhouse = root.join("resources").join("wheelhouse");
         std::fs::create_dir_all(&wheelhouse).unwrap();
+        std::fs::write(root.join("pyproject.toml"), b"project").unwrap();
+        let source_sha = crate::artifact::sha256_hex(b"project");
         let wheel = wheelhouse.join("demo-0.1-py3-none-any.whl");
         std::fs::write(&wheel, b"wheel").unwrap();
         let wrong_platform = if cfg!(target_os = "windows") {
@@ -8335,6 +8438,12 @@ mod tests {
             format!(
                 r#"{{
   "schemaVersion": 1,
+  "sourceFiles": [
+    {{
+      "path": "pyproject.toml",
+      "sha256": "{source_sha}"
+    }}
+  ],
   "wheels": [
     {{
       "arch": "{wrong_arch}",
@@ -8351,7 +8460,6 @@ mod tests {
             ),
         )
         .unwrap();
-        std::fs::write(root.join("pyproject.toml"), b"").unwrap();
 
         let tiers = python_dependency_install_tiers_for_cwd_with_wheelhouse(&root, None);
 

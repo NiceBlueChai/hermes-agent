@@ -579,6 +579,8 @@ language-specific setup where needed.
   wheelhouse tier if any listed wheel size or SHA-256 does not match, while preserving manifestless dev wheelhouses.
 - Runtime Python dependency planning now also requires wheelhouse manifest platform and architecture labels to match
   the current installer target before trying the offline tier.
+- Runtime Python dependency planning and direct install scripts now also validate wheelhouse `sourceFiles` hashes against
+  the local `pyproject.toml`/`uv.lock` inputs before trusting a manifested offline wheelhouse.
 - Release installer self-check and artifact validators now accept expected `bootstrap-tools` and wheelhouse platform
   and architecture labels, rejecting mismatched runtime archive or Python wheelhouse payloads before upload.
 - Direct `install.ps1` and `install.sh` Python dependency stages now also prefer a repository-local

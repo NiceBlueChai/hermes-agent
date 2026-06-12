@@ -1306,6 +1306,7 @@ local_wheelhouse_manifest_is_valid() {
 
     validation_error="$(
         HERMES_WHEELHOUSE_DIR="$wheelhouse_dir" \
+        HERMES_WHEELHOUSE_REPO_ROOT="$INSTALL_DIR" \
         HERMES_WHEELHOUSE_PLATFORM="$expected_platform" \
         HERMES_WHEELHOUSE_ARCH="$expected_arch" \
         "$PYTHON_PATH" - <<'PY' 2>&1
@@ -1315,6 +1316,7 @@ import os
 from pathlib import Path
 
 root = Path(os.environ["HERMES_WHEELHOUSE_DIR"])
+repo_root = Path(os.environ["HERMES_WHEELHOUSE_REPO_ROOT"])
 expected_platform = os.environ["HERMES_WHEELHOUSE_PLATFORM"]
 expected_arch = os.environ["HERMES_WHEELHOUSE_ARCH"]
 manifest = root / "wheelhouse-manifest.json"
@@ -1324,6 +1326,24 @@ if payload.get("schemaVersion") != 1:
 wheels = payload.get("wheels") or []
 if not wheels:
     raise SystemExit("wheelhouse manifest has no wheels")
+source_files = payload.get("sourceFiles") or []
+if not source_files:
+    raise SystemExit("wheelhouse manifest has no sourceFiles")
+
+seen_sources = set()
+for source in source_files:
+    source_path = source.get("path")
+    if not source_path or Path(source_path).name != source_path or ".." in Path(source_path).parts:
+        raise SystemExit(f"invalid wheelhouse source path: {source_path!r}")
+    if source_path in seen_sources:
+        raise SystemExit(f"duplicate wheelhouse source path: {source_path}")
+    seen_sources.add(source_path)
+    expected_sha = source.get("sha256")
+    if not expected_sha:
+        raise SystemExit(f"missing wheelhouse source sha256 for {source_path}")
+    data = (repo_root / source_path).read_bytes()
+    if hashlib.sha256(data).hexdigest().lower() != expected_sha.lower():
+        raise SystemExit(f"wheelhouse source sha256 mismatch for {source_path}")
 
 manifested = set()
 for wheel in wheels:

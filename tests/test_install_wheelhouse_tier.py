@@ -29,6 +29,8 @@ class InstallWheelhouseTierTests(unittest.TestCase):
         self.assertIn("wheelhouse-manifest.json", text)
         self.assertIn('wheel.get("platform") != expected_platform', text)
         self.assertIn('wheel.get("arch") != expected_arch', text)
+        self.assertIn('payload.get("sourceFiles")', text)
+        self.assertIn("wheelhouse source sha256 mismatch", text)
         self.assertIn("hashlib.sha256", text)
 
     def test_install_ps1_prefers_valid_local_wheelhouse_before_uv_lock(self) -> None:
@@ -44,6 +46,8 @@ class InstallWheelhouseTierTests(unittest.TestCase):
         self.assertIn("wheelhouse-manifest.json", text)
         self.assertIn('platform -ne "windows"', text)
         self.assertIn("arch -ne $expectedArch", text)
+        self.assertIn("$payload.sourceFiles", text)
+        self.assertIn("source sha256 mismatch", text)
         self.assertIn("Get-FileHash", text)
 
     def test_install_sh_platform_sdks_try_wheelhouse_before_network_pip(self) -> None:
