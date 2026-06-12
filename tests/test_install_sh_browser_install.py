@@ -63,6 +63,14 @@ def test_full_install_scripts_use_hermes_managed_node_caches() -> None:
     assert '$env:ELECTRON_BUILDER_CACHE = Join-Path $HermesHome "electron-cache"' in ps_text
 
 
+def test_full_install_scripts_prefer_managed_npm_cache() -> None:
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    ps_text = (REPO_ROOT / "scripts" / "install.ps1").read_text(encoding="utf-8")
+
+    assert "--prefer-offline --no-audit --fund=false" in text
+    assert "--prefer-offline --no-audit --fund=false" in ps_text
+
+
 def test_playwright_installs_are_timeout_guarded() -> None:
     text = INSTALL_SH.read_text(encoding="utf-8")
 

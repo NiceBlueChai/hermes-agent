@@ -591,6 +591,8 @@ language-specific setup where needed.
 - Direct `install.ps1` and `install.sh` full Node/Desktop install paths now also use Hermes-owned npm,
   Playwright-browser, and Electron cache directories, keeping direct installs and script fallback cleanup-compatible with
   the Rust bootstrap layout.
+- Native and direct Node/Desktop npm install paths now pass `--prefer-offline --no-audit --fund=false`, preferring the
+  Hermes-managed npm cache and avoiding audit/funding network calls without removing normal registry fallback.
 - The validate-only gate now also requires every archive record to retain its download URL, keeping the packaged
   runtime archive update path auditable alongside size and SHA-256.
 - Archive URLs in the retained bootstrap-tools manifest must be HTTPS, so release review cannot accidentally accept an

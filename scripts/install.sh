@@ -2107,7 +2107,7 @@ install_node_deps() {
     if [ -f "$INSTALL_DIR/package.json" ]; then
         log_info "Installing Node.js dependencies (browser tools)..."
         cd "$INSTALL_DIR"
-        npm install --silent 2>/dev/null || {
+        npm install --silent --prefer-offline --no-audit --fund=false 2>/dev/null || {
             log_warn "npm install failed (browser tools may not work)"
         }
         log_success "Node.js dependencies installed"
@@ -2222,7 +2222,7 @@ install_node_deps() {
     if [ -f "$INSTALL_DIR/ui-tui/package.json" ]; then
         log_info "Installing TUI dependencies..."
         cd "$INSTALL_DIR/ui-tui"
-        npm install --silent 2>/dev/null || {
+        npm install --silent --prefer-offline --no-audit --fund=false 2>/dev/null || {
             log_warn "TUI npm install failed (hermes --tui may not work)"
         }
         log_success "TUI dependencies installed"
@@ -2474,6 +2474,7 @@ ensure_browser() {
     if ! npm_config_cache="$HERMES_HOME/npm-cache" \
         PLAYWRIGHT_BROWSERS_PATH="$HERMES_HOME/playwright-browsers" \
         "$npm_bin" install -g --prefix "$HERMES_HOME/node" --silent --ignore-scripts \
+            --prefer-offline --no-audit --fund=false \
         "agent-browser@^0.26.0" \
         "@askjo/camofox-browser@^1.5.2" \
         >"$log_file" 2>&1; then
@@ -2716,7 +2717,8 @@ install_desktop() {
     #    `tsc -b` failing with no obvious cause. Fall back to `npm install`
     #    only if `npm ci` is unavailable or the lockfile is out of sync.
     log_info "Installing desktop workspace dependencies (includes Electron ~150MB, 1-3min)..."
-    ( cd "$INSTALL_DIR" && npm ci ) || ( cd "$INSTALL_DIR" && npm install ) || {
+    ( cd "$INSTALL_DIR" && npm ci --prefer-offline --no-audit --fund=false ) \
+        || ( cd "$INSTALL_DIR" && npm install --prefer-offline --no-audit --fund=false ) || {
         log_error "Desktop workspace npm install failed"
         # Common cause: a previous privileged retry left root-owned files in
         # Hermes' managed npm cache, so this non-root install can't write it.

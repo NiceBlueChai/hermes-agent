@@ -3300,7 +3300,13 @@ pub fn install_node_dependencies_stage(
     if plan.browser_tools {
         run_node_dependency_command(
             &plan.npm,
-            ["install", "--silent"],
+            [
+                "install",
+                "--silent",
+                "--prefer-offline",
+                "--no-audit",
+                "--fund=false",
+            ],
             &plan.cwd,
             &plan.npm_cache_dir,
             Some(&plan.playwright_browsers_dir),
@@ -3344,7 +3350,13 @@ pub fn install_node_dependencies_stage(
     if let Some(tui_dir) = &plan.tui_dir {
         if let Some(failure) = run_optional_node_dependency_command(
             &plan.npm,
-            ["install", "--silent"],
+            [
+                "install",
+                "--silent",
+                "--prefer-offline",
+                "--no-audit",
+                "--fund=false",
+            ],
             tui_dir,
             &plan.npm_cache_dir,
             Some(&plan.playwright_browsers_dir),
@@ -3402,8 +3414,22 @@ pub fn build_desktop_stage(
     let path_env = std::env::var_os("PATH").unwrap_or_default();
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
     let plan = desktop_build_stage_plan(install_root, hermes_home, path_env, &pathext)?;
-    if run_node_dependency_command(&plan.npm, ["ci"], &plan.cwd, &plan.npm_cache_dir, None).is_err() {
-        run_node_dependency_command(&plan.npm, ["install"], &plan.cwd, &plan.npm_cache_dir, None)
+    if run_node_dependency_command(
+        &plan.npm,
+        ["ci", "--prefer-offline", "--no-audit", "--fund=false"],
+        &plan.cwd,
+        &plan.npm_cache_dir,
+        None,
+    )
+    .is_err()
+    {
+        run_node_dependency_command(
+            &plan.npm,
+            ["install", "--prefer-offline", "--no-audit", "--fund=false"],
+            &plan.cwd,
+            &plan.npm_cache_dir,
+            None,
+        )
             .context("installing desktop workspace Node dependencies")?;
     }
     run_desktop_pack_command(

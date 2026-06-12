@@ -289,7 +289,10 @@ function Install-AgentBrowser {
     $npmLog = [System.IO.Path]::GetTempFileName()
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    & $npm install -g --prefix $prefixDir --silent --ignore-scripts "agent-browser@^0.26.0" "@askjo/camofox-browser@^1.5.2" 2>&1 | Tee-Object -FilePath $npmLog | Out-Null
+    & $npm install -g --prefix $prefixDir --silent --ignore-scripts `
+        --prefer-offline --no-audit --fund=false `
+        "agent-browser@^0.26.0" "@askjo/camofox-browser@^1.5.2" `
+        2>&1 | Tee-Object -FilePath $npmLog | Out-Null
     $npmExit = $LASTEXITCODE
     $ErrorActionPreference = $prevEAP
     if ($npmExit -ne 0) {
@@ -2027,7 +2030,8 @@ function Install-NodeDeps {
             # for uv's stderr-emitting installer.  Check success via
             # $LASTEXITCODE, which is reliable regardless of stderr noise.
             $ErrorActionPreference = "Continue"
-            & $npmPath install --silent 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $logPath
+            & $npmPath install --silent --prefer-offline --no-audit --fund=false `
+                2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $logPath
             $code = $LASTEXITCODE
             $ErrorActionPreference = $prevEAP
             if ($code -eq 0) {
@@ -2316,11 +2320,13 @@ function Install-Desktop {
         # is the artifact), but on failure we scan $npmOut for the TLS-trust
         # signature so corporate-proxy users get the NODE_EXTRA_CA_CERTS hint
         # instead of an opaque "exit 1" (issue #38016).
-        & $npmExe ci 2>&1 | ForEach-Object { "$_" } | Tee-Object -Variable npmOut
+        & $npmExe ci --prefer-offline --no-audit --fund=false `
+            2>&1 | ForEach-Object { "$_" } | Tee-Object -Variable npmOut
         $code = $LASTEXITCODE
         if ($code -ne 0) {
             Write-Info "  npm ci failed (exit $code) -- retrying with npm install..."
-            & $npmExe install 2>&1 | ForEach-Object { "$_" } | Tee-Object -Variable npmOut
+            & $npmExe install --prefer-offline --no-audit --fund=false `
+                2>&1 | ForEach-Object { "$_" } | Tee-Object -Variable npmOut
             $code = $LASTEXITCODE
         }
         $ErrorActionPreference = $prevEAP
