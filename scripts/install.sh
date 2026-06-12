@@ -2100,6 +2100,10 @@ install_node_deps() {
         return 0
     fi
 
+    mkdir -p "$HERMES_HOME/npm-cache" "$HERMES_HOME/playwright-browsers"
+    export npm_config_cache="$HERMES_HOME/npm-cache"
+    export PLAYWRIGHT_BROWSERS_PATH="$HERMES_HOME/playwright-browsers"
+
     if [ -f "$INSTALL_DIR/package.json" ]; then
         log_info "Installing Node.js dependencies (browser tools)..."
         cd "$INSTALL_DIR"
@@ -2596,6 +2600,7 @@ clear_electron_build_cache() {
     local cache_dirs=()
     [ -n "${electron_config_cache:-}" ] && cache_dirs+=("$electron_config_cache")
     [ -n "${ELECTRON_CACHE:-}" ] && cache_dirs+=("$ELECTRON_CACHE")
+    [ -n "${ELECTRON_BUILDER_CACHE:-}" ] && cache_dirs+=("$ELECTRON_BUILDER_CACHE")
     if [ "$OS" = "macos" ]; then
         cache_dirs+=("$HOME/Library/Caches/electron")
     else
@@ -2693,6 +2698,12 @@ install_desktop() {
         return 0
     fi
 
+    mkdir -p "$HERMES_HOME/npm-cache" "$HERMES_HOME/electron-cache"
+    export npm_config_cache="$HERMES_HOME/npm-cache"
+    export electron_config_cache="$HERMES_HOME/electron-cache"
+    export ELECTRON_CACHE="$HERMES_HOME/electron-cache"
+    export ELECTRON_BUILDER_CACHE="$HERMES_HOME/electron-cache"
+
     # 1. Root workspace install so apps/desktop's deps (Electron, Vite,
     #    node-pty prebuilds) resolve. The browser-tools install runs in the
     #    repo-root package workspace, which does not pull apps/* deps.
@@ -2707,14 +2718,13 @@ install_desktop() {
     log_info "Installing desktop workspace dependencies (includes Electron ~150MB, 1-3min)..."
     ( cd "$INSTALL_DIR" && npm ci ) || ( cd "$INSTALL_DIR" && npm install ) || {
         log_error "Desktop workspace npm install failed"
-        # Common cause: a previous 'sudo npm'/'sudo npx' left root-owned files in
-        # ~/.npm, so this non-root install can't write the shared cache. npm hides
-        # it behind a confusing EEXIST / "File exists" message while the real errno
-        # is EACCES (-13). Point the user at the fix instead of a raw npm trace.
+        # Common cause: a previous privileged retry left root-owned files in
+        # Hermes' managed npm cache, so this non-root install can't write it.
+        # npm hides this behind a confusing EEXIST / "File exists" message while
+        # the real errno is EACCES (-13). Point the user at the scoped fix.
         log_info "If the errors above mention EACCES / 'permission denied' / EEXIST while"
-        log_info "writing the npm cache, your ~/.npm likely holds root-owned files from an"
-        log_info "earlier 'sudo npm' or 'sudo npx'. Reclaim ownership and retry:"
-        log_info "  sudo chown -R \"\$(id -un)\" ~/.npm && npm cache verify"
+        log_info "writing the npm cache, reclaim the Hermes-owned cache and retry:"
+        log_info "  sudo chown -R \"\$(id -un)\" \"$HERMES_HOME/npm-cache\""
         log_info "Then re-run this installer, or build manually:"
         log_info "  cd \"$INSTALL_DIR\" && npm ci && cd apps/desktop && npm run pack"
         return 1

@@ -1981,6 +1981,13 @@ function Install-NodeDeps {
         }
     }
 
+    $npmCacheDir = Join-Path $HermesHome "npm-cache"
+    $browserCacheDir = Join-Path $HermesHome "playwright-browsers"
+    New-Item -ItemType Directory -Path $npmCacheDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $browserCacheDir -Force | Out-Null
+    $env:npm_config_cache = Join-Path $HermesHome "npm-cache"
+    $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $HermesHome "playwright-browsers"
+
     # Helper: run "npm install" in a given directory and surface the real
     # error when it fails.  Returns $true on success.
     #
@@ -2189,6 +2196,7 @@ function Clear-ElectronBuildCache {
     $cacheDirs = @()
     if ($env:electron_config_cache) { $cacheDirs += $env:electron_config_cache }
     if ($env:ELECTRON_CACHE)        { $cacheDirs += $env:ELECTRON_CACHE }
+    if ($env:ELECTRON_BUILDER_CACHE) { $cacheDirs += $env:ELECTRON_BUILDER_CACHE }
     if ($env:LOCALAPPDATA)          { $cacheDirs += (Join-Path $env:LOCALAPPDATA 'electron\Cache') }
     $cacheDirs += (Join-Path $HOME 'AppData\Local\electron\Cache')
 
@@ -2262,6 +2270,15 @@ function Install-Desktop {
         $sibling = Join-Path (Split-Path $npmExe -Parent) "npm.cmd"
         if (Test-Path $sibling) { $npmExe = $sibling }
     }
+
+    $npmCacheDir = Join-Path $HermesHome "npm-cache"
+    $electronCacheDir = Join-Path $HermesHome "electron-cache"
+    New-Item -ItemType Directory -Path $npmCacheDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $electronCacheDir -Force | Out-Null
+    $env:npm_config_cache = Join-Path $HermesHome "npm-cache"
+    $env:electron_config_cache = Join-Path $HermesHome "electron-cache"
+    $env:ELECTRON_CACHE = Join-Path $HermesHome "electron-cache"
+    $env:ELECTRON_BUILDER_CACHE = Join-Path $HermesHome "electron-cache"
 
     # 1. Workspace-level install so apps/desktop's deps (Electron, Vite,
     # node-pty prebuilds, etc.) actually land in node_modules. This is

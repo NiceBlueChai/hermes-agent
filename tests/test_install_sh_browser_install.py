@@ -47,6 +47,22 @@ def test_ensure_browser_uses_hermes_managed_caches() -> None:
     assert '$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $HermesHome "playwright-browsers"' in ps_text
 
 
+def test_full_install_scripts_use_hermes_managed_node_caches() -> None:
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    ps_text = (REPO_ROOT / "scripts" / "install.ps1").read_text(encoding="utf-8")
+
+    assert 'export npm_config_cache="$HERMES_HOME/npm-cache"' in text
+    assert 'export PLAYWRIGHT_BROWSERS_PATH="$HERMES_HOME/playwright-browsers"' in text
+    assert 'export electron_config_cache="$HERMES_HOME/electron-cache"' in text
+    assert 'export ELECTRON_CACHE="$HERMES_HOME/electron-cache"' in text
+    assert 'export ELECTRON_BUILDER_CACHE="$HERMES_HOME/electron-cache"' in text
+    assert '$env:npm_config_cache = Join-Path $HermesHome "npm-cache"' in ps_text
+    assert '$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $HermesHome "playwright-browsers"' in ps_text
+    assert '$env:electron_config_cache = Join-Path $HermesHome "electron-cache"' in ps_text
+    assert '$env:ELECTRON_CACHE = Join-Path $HermesHome "electron-cache"' in ps_text
+    assert '$env:ELECTRON_BUILDER_CACHE = Join-Path $HermesHome "electron-cache"' in ps_text
+
+
 def test_playwright_installs_are_timeout_guarded() -> None:
     text = INSTALL_SH.read_text(encoding="utf-8")
 
