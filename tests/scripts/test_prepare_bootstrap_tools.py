@@ -396,9 +396,25 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             repo_root / ".github" / "workflows" / "build-unix-installers.yml"
         ).read_text(encoding="utf-8")
         manifest_path = "apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json"
+        archive_globs = [
+            "apps/bootstrap-installer/src-tauri/bootstrap-tools/*.zip",
+            "apps/bootstrap-installer/src-tauri/bootstrap-tools/*.tar.gz",
+            "apps/bootstrap-installer/src-tauri/bootstrap-tools/*.7z.exe",
+        ]
 
         self.assertIn(manifest_path, windows_workflow)
         self.assertIn(manifest_path, unix_workflow)
+        self.assertIn(archive_globs[0], windows_workflow)
+        self.assertIn(archive_globs[2], windows_workflow)
+        self.assertIn(archive_globs[1], unix_workflow)
+        self.assertNotIn(
+            "apps/bootstrap-installer/src-tauri/bootstrap-tools/*",
+            [line.strip() for line in windows_workflow.splitlines()],
+        )
+        self.assertNotIn(
+            "apps/bootstrap-installer/src-tauri/bootstrap-tools/*",
+            [line.strip() for line in unix_workflow.splitlines()],
+        )
         self.assertIn("python scripts/prepare_bootstrap_tools.py --validate-only", windows_workflow)
         self.assertIn("python scripts/prepare_bootstrap_tools.py --validate-only", unix_workflow)
         upload_sections = [
@@ -409,6 +425,19 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         self.assertGreaterEqual(len(upload_sections), 3)
         for section in upload_sections:
             self.assertIn("if-no-files-found: error", section)
+
+    def test_installer_workflows_pin_bootstrap_builds_to_current_commit(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+        pin = "HERMES_BUILD_PIN_COMMIT: ${{ github.sha }}"
+
+        self.assertIn(pin, windows_workflow)
+        self.assertIn(pin, unix_workflow)
 
 
 if __name__ == "__main__":

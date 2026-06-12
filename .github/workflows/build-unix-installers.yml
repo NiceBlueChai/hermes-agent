@@ -45,6 +45,7 @@ jobs:
                       artifact-name: Hermes-Setup-linux
                       artifact-path: |
                           apps/bootstrap-installer/src-tauri/target/release/bundle/appimage/*.AppImage
+                          apps/bootstrap-installer/src-tauri/bootstrap-tools/*.tar.gz
                           apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json
                     - name: Hermes-Setup macOS
                       os: macos-latest
@@ -53,6 +54,7 @@ jobs:
                       artifact-path: |
                           apps/bootstrap-installer/src-tauri/target/release/bundle/dmg/*.dmg
                           apps/bootstrap-installer/src-tauri/target/release/bundle/macos/*.app
+                          apps/bootstrap-installer/src-tauri/bootstrap-tools/*.tar.gz
                           apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json
 
         steps:
@@ -102,8 +104,27 @@ jobs:
               run: python scripts/prepare_bootstrap_tools.py --validate-only
 
             - name: Build installer
+              env:
+                  HERMES_BUILD_PIN_COMMIT: ${{ github.sha }}
               run: npm run tauri:build
               working-directory: apps/bootstrap-installer
+
+            - name: Validate Linux installer artifacts
+              if: matrix.platform == 'linux'
+              run: >
+                  python scripts/validate_installer_artifacts.py
+                  --artifact "apps/bootstrap-installer/src-tauri/target/release/bundle/appimage/*.AppImage"
+                  --artifact "apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json"
+                  --bootstrap-tools-dir apps/bootstrap-installer/src-tauri/bootstrap-tools
+
+            - name: Validate macOS installer artifacts
+              if: matrix.platform == 'macos'
+              run: >
+                  python scripts/validate_installer_artifacts.py
+                  --artifact "apps/bootstrap-installer/src-tauri/target/release/bundle/dmg/*.dmg"
+                  --artifact "apps/bootstrap-installer/src-tauri/target/release/bundle/macos/*.app"
+                  --artifact "apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json"
+                  --bootstrap-tools-dir apps/bootstrap-installer/src-tauri/bootstrap-tools
 
             - name: Upload installer artifacts
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1

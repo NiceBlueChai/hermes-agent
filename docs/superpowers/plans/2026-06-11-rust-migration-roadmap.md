@@ -482,6 +482,8 @@ language-specific setup where needed.
 - `hermes-manager doctor --manifest <path>` validates the generated manifest successfully in a local staging smoke.
 - Commit-pinned bootstrap installers now compile `scripts/install.ps1` and `scripts/install.sh` into the Rust binary,
   so the first run does not need to download the orchestration script from GitHub.
+- Windows/Linux/macOS installer release workflows now build Tauri installers with `HERMES_BUILD_PIN_COMMIT` set to the
+  workflow SHA, so manually triggered release artifacts use that commit-pinned embedded script path.
 - Branch-following bootstrap builds still resolve install scripts from GitHub raw, preserving HEAD-tracking behavior
   for development and non-immutable builds.
 - Bootstrap logs now include an embedded install-script resource summary with size and SHA-256 prefix for diagnostics
@@ -514,6 +516,12 @@ language-specific setup where needed.
   installer, raw exe, and manifest artifact uploads now fail the workflow if any expected file is missing.
 - The bootstrap tool preparation helper now has a validate-only mode, and Windows/Linux/macOS installer workflows run it
   after bundling so release builds fail before packaging if any manifest archive is missing, truncated, or hash-mismatched.
+- Installer workflows now run a local release artifact validator before upload, requiring the expected Windows, Linux,
+  or macOS installer files plus the retained `bootstrap-tools-manifest.json` to exist and pass manifest validation.
+- Installer workflows now retain the generated bootstrap-tool archive payloads as artifacts alongside the packaged
+  installers, so release review can compare the actual bundled Node/uv/ripgrep/Git archives against the manifest.
+- The release artifact validator now rejects unmanifested runtime payloads in `bootstrap-tools/`, making the retained
+  manifest the complete allow-list for bundled archives while allowing repository metadata files such as README/.gitignore.
 - The validate-only gate now also requires every archive record to retain its download URL, keeping the packaged
   runtime archive update path auditable alongside size and SHA-256.
 - Archive URLs in the retained bootstrap-tools manifest must be HTTPS, so release review cannot accidentally accept an

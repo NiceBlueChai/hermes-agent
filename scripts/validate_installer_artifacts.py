@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Validate installer release artifacts before workflow upload.
+
+The build workflows already use `actions/upload-artifact` with
+`if-no-files-found: error`, but this helper gives the release job a local,
+testable gate that also validates the retained bootstrap-tools manifest.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from prepare_bootstrap_tools import MANIFEST_NAME, sha256_file, validate_manifest
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+ALLOWED_BOOTSTRAP_TOOLS_METADATA = {".gitignore", "README.md"}
+
+
+def validate_bootstrap_tools_payload(output_dir: Path) -> int:
+    """Validate that the bootstrap-tools directory contains only manifest-owned payloads."""
+
+    archive_count = validate_manifest(output_dir)
+    manifest_path = output_dir / MANIFEST_NAME
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    expected = {MANIFEST_NAME, *ALLOWED_BOOTSTRAP_TOOLS_METADATA}
+    expected.update(archive["name"] for archive in payload["archives"])
+
+    for entry in output_dir.iterdir():
+        if entry.name not in expected:
+            raise RuntimeError(f"unmanifested bootstrap tool payload: {entry.name}")
+        if not entry.is_file():
+            raise RuntimeError(f"bootstrap tool payload is not a file: {entry.name}")
+    return archive_count
+
+
+def validate_artifacts(
+    root: Path,
+    patterns: list[str],
+    bootstrap_tools_dir: Path | None = None,
+) -> list[Path]:
+    """Return matched artifact paths after enforcing non-empty required globs."""
+
+    checked: list[Path] = []
+    for pattern in patterns:
+        matches = sorted(root.glob(pattern))
+        if not matches:
+            raise RuntimeError(f"missing installer artifact for pattern: {pattern}")
+        for path in matches:
+            if not path.is_file():
+                raise RuntimeError(f"installer artifact is not a file: {path}")
+            if path.stat().st_size <= 0:
+                raise RuntimeError(f"installer artifact is empty: {path}")
+            checked.append(path)
+
+    manifest_paths = [path for path in checked if path.name == MANIFEST_NAME]
+    if bootstrap_tools_dir is not None:
+        validate_bootstrap_tools_payload(bootstrap_tools_dir)
+    elif manifest_paths:
+        validate_bootstrap_tools_payload(manifest_paths[0].parent)
+    return checked
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse command-line options for release workflow validation."""
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=REPO_ROOT,
+        help="Root directory used to resolve artifact glob patterns.",
+    )
+    parser.add_argument(
+        "--artifact",
+        action="append",
+        required=True,
+        help="Required artifact glob relative to --root. Can be passed more than once.",
+    )
+    parser.add_argument(
+        "--bootstrap-tools-dir",
+        type=Path,
+        default=None,
+        help="Optional bootstrap-tools directory whose manifest should be validated.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run installer artifact validation."""
+
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    try:
+        checked = validate_artifacts(args.root, args.artifact, args.bootstrap_tools_dir)
+    except Exception as exc:
+        print(f"[installer-artifacts] error: {exc}", file=sys.stderr)
+        return 1
+    for path in checked:
+        print(f"[installer-artifacts] ok {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
