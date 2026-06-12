@@ -324,6 +324,12 @@ def archive_tool_kind_from_name(name: str) -> str | None:
     return None
 
 
+def archive_name_is_plain_file(name: str) -> bool:
+    """Return whether an archive name is a direct, unpadded file name."""
+
+    return bool(name.strip()) and name == name.strip() and Path(name).name == name and name not in {".", ".."}
+
+
 def required_tool_kinds_for_target(platform: str, arch: str) -> set[str]:
     """Return runtime tool kinds that must be bundled for one release target."""
 
@@ -361,7 +367,7 @@ def parse_local_archive_arg(value: str) -> tuple[Path, ArchiveSpec, tuple[str, s
         raise ValueError("local archive URL must be HTTPS")
     source = Path(source_text)
     name = source.name
-    if Path(name).name != name or name in {".", ".."}:
+    if not archive_name_is_plain_file(name):
         raise ValueError(f"local archive has unsafe name: {name}")
     target = archive_target_from_name(name)
     if target is None or archive_tool_kind_from_name(name) is None:
@@ -376,7 +382,7 @@ def parse_audited_archive_arg(value: str) -> tuple[ArchiveSpec, tuple[str, str],
     if len(parts) != 3 or not all(parts):
         raise ValueError("audited archive must use NAME=HTTPS_URL=SHA256")
     name, url, expected_sha256 = parts
-    if Path(name).name != name or name in {".", ".."}:
+    if not archive_name_is_plain_file(name):
         raise ValueError(f"audited archive has unsafe name: {name}")
     if not url.startswith("https://"):
         raise ValueError("audited archive URL must be HTTPS")
@@ -838,7 +844,7 @@ def validate_manifest(
         name = archive.get("name")
         if not isinstance(name, str) or not name:
             raise RuntimeError("bootstrap tools manifest archive is missing name")
-        if Path(name).name != name or name in {".", ".."}:
+        if not archive_name_is_plain_file(name):
             raise RuntimeError(f"manifest archive has unsafe archive name: {name}")
         if name in seen_names:
             raise RuntimeError(f"duplicate archive in bootstrap tools manifest: {name}")

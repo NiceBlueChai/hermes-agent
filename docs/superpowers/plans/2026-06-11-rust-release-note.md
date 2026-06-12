@@ -104,6 +104,7 @@ User-visible behavior:
 - Shell-script bundled cache fallback now rejects blank archive member names before extraction.
 - PowerShell bundled cache fallback now rejects unsafe ZIP member paths before extraction.
 - Rust bundled-resource manifest validation now rejects blank or padded archive names before target matching.
+- Release helper validation uses the same blank/padded archive-name rule before uploading bootstrap-tool resources.
 
 Compatibility and fallback:
 

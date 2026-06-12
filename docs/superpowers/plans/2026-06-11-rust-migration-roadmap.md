@@ -747,6 +747,8 @@ language-specific setup where needed.
   fallback aligned with the Rust installer ZIP extraction boundary.
 - Rust bootstrap archive manifest validation now rejects blank or padded resource archive names at the shared
   plain-file guard, keeping bundled-resource selection strict before target matching.
+- Release helper manifest validation now uses the same blank/padded archive-name guard as the Rust runtime reader, so
+  invalid bootstrap-tool resource names fail before upload instead of only falling back at install time.
 - Installer artifact validation now receives the expected release platform from the Windows/Linux/macOS workflows and
   rejects `bootstrap-tools` manifests whose archive records target a different platform.
 - Duplicate archive names are rejected by the validate-only gate, keeping each bundled runtime archive's ownership,
