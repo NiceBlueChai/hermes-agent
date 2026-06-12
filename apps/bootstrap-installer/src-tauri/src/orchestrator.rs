@@ -105,6 +105,7 @@ struct PlaywrightInstallPlan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DesktopPackResult {
     fallback_mirror_used: bool,
+    purged_paths: Vec<PathBuf>,
 }
 
 /// Native desktop build stage execution plan.
@@ -3834,6 +3835,23 @@ fn run_desktop_pack_command_with_mirror_policy(
     npm_cache_dir: &Path,
     user_mirror_is_set: bool,
 ) -> Result<DesktopPackResult> {
+    let electron_cache_dirs = electron_cache_dirs_from_env(std::env::consts::OS);
+    run_desktop_pack_command_with_recovery_policy(
+        npm,
+        desktop_dir,
+        npm_cache_dir,
+        user_mirror_is_set,
+        &electron_cache_dirs,
+    )
+}
+
+fn run_desktop_pack_command_with_recovery_policy(
+    npm: &Path,
+    desktop_dir: &Path,
+    npm_cache_dir: &Path,
+    user_mirror_is_set: bool,
+    electron_cache_dirs: &[PathBuf],
+) -> Result<DesktopPackResult> {
     let status = run_desktop_pack_attempt(
         npm,
         desktop_dir,
@@ -3844,7 +3862,24 @@ fn run_desktop_pack_command_with_mirror_policy(
     if status.success() {
         return Ok(DesktopPackResult {
             fallback_mirror_used: false,
+            purged_paths: Vec::new(),
         });
+    }
+    let purged_paths = clear_electron_build_cache(desktop_dir, electron_cache_dirs);
+    if !purged_paths.is_empty() {
+        let retry_status = run_desktop_pack_attempt(
+            npm,
+            desktop_dir,
+            npm_cache_dir,
+            None,
+            !user_mirror_is_set,
+        )?;
+        if retry_status.success() {
+            return Ok(DesktopPackResult {
+                fallback_mirror_used: false,
+                purged_paths,
+            });
+        }
     }
     if !user_mirror_is_set {
         let retry_status = run_desktop_pack_attempt(
@@ -3857,6 +3892,7 @@ fn run_desktop_pack_command_with_mirror_policy(
         if retry_status.success() {
             return Ok(DesktopPackResult {
                 fallback_mirror_used: true,
+                purged_paths,
             });
         }
         return Err(anyhow!(
@@ -3870,6 +3906,105 @@ fn run_desktop_pack_command_with_mirror_policy(
         npm.display(),
         status.code()
     ))
+}
+
+fn clear_electron_build_cache(desktop_dir: &Path, cache_dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let mut removed = Vec::new();
+    for dir in cache_dirs {
+        remove_electron_zip_files(dir, &mut removed);
+    }
+    let release_dir = desktop_dir.join("release");
+    let Ok(entries) = fs::read_dir(&release_dir) else {
+        return removed;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(OsStr::to_str) else {
+            continue;
+        };
+        if name.ends_with("-unpacked") && fs::remove_dir_all(&path).is_ok() {
+            removed.push(path);
+        }
+    }
+    removed
+}
+
+fn remove_electron_zip_files(dir: &Path, removed: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            remove_electron_zip_files(&path, removed);
+        } else if file_type.is_file()
+            && electron_zip_file_name(path.file_name().and_then(OsStr::to_str))
+            && fs::remove_file(&path).is_ok()
+        {
+            removed.push(path);
+        }
+    }
+}
+
+fn electron_zip_file_name(name: Option<&str>) -> bool {
+    name.is_some_and(|name| name.starts_with("electron-") && name.ends_with(".zip"))
+}
+
+fn electron_cache_dirs_from_env(target_os: &str) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    push_unique_env_path(&mut dirs, "electron_config_cache");
+    push_unique_env_path(&mut dirs, "ELECTRON_CACHE");
+    match target_os {
+        "windows" => {
+            if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+                push_unique_path(
+                    &mut dirs,
+                    PathBuf::from(local_app_data).join("electron").join("Cache"),
+                );
+            }
+            if let Some(home) = dirs::home_dir() {
+                push_unique_path(
+                    &mut dirs,
+                    home.join("AppData").join("Local").join("electron").join("Cache"),
+                );
+            }
+        }
+        "macos" => {
+            if let Some(home) = dirs::home_dir() {
+                push_unique_path(&mut dirs, home.join("Library").join("Caches").join("electron"));
+            }
+        }
+        _ => {
+            if let Some(xdg_cache_home) = std::env::var_os("XDG_CACHE_HOME") {
+                push_unique_path(&mut dirs, PathBuf::from(xdg_cache_home).join("electron"));
+            }
+            if let Some(home) = dirs::home_dir() {
+                push_unique_path(&mut dirs, home.join(".cache").join("electron"));
+            }
+        }
+    }
+    dirs
+}
+
+fn push_unique_env_path(paths: &mut Vec<PathBuf>, name: &str) {
+    if let Some(path) = std::env::var_os(name) {
+        push_unique_path(paths, PathBuf::from(path));
+    }
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
 }
 
 fn run_desktop_pack_attempt(
@@ -5491,6 +5626,92 @@ mod tests {
             DESKTOP_ELECTRON_FALLBACK_MIRROR
         );
         assert_eq!(result.fallback_mirror_used, true);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn desktop_pack_command_clears_electron_cache_before_mirror_retry() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-desktop-pack-cache-test-{}",
+            std::process::id()
+        ));
+        let desktop_dir = root.join("desktop");
+        let npm_cache = root.join("npm-cache");
+        let electron_cache = root.join("electron-cache");
+        let cache_zip = electron_cache.join("nested").join("electron-v1.zip");
+        let stale_unpacked = desktop_dir.join("release").join("win-unpacked");
+        let count_file = root.join("attempt.txt");
+        std::fs::create_dir_all(cache_zip.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&stale_unpacked).unwrap();
+        std::fs::create_dir_all(&npm_cache).unwrap();
+        std::fs::write(&cache_zip, b"bad zip").unwrap();
+        std::fs::write(stale_unpacked.join("partial"), b"partial").unwrap();
+
+        #[cfg(target_os = "windows")]
+        let command = {
+            let command = root.join("fake-npm-cache.cmd");
+            let script = format!(
+                concat!(
+                    "@echo off\r\n",
+                    "if not exist \"{count}\" (\r\n",
+                    "  > \"{count}\" echo first\r\n",
+                    "  exit /b 1\r\n",
+                    ")\r\n",
+                    "if exist \"{zip}\" exit /b 1\r\n",
+                    "if exist \"{unpacked}\" exit /b 1\r\n",
+                    "if not \"%ELECTRON_MIRROR%\"==\"\" exit /b 1\r\n",
+                    "exit /b 0\r\n"
+                ),
+                count = count_file.display(),
+                zip = cache_zip.display(),
+                unpacked = stale_unpacked.display(),
+            );
+            std::fs::write(&command, script).unwrap();
+            command
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let command = {
+            let command = root.join("fake-npm-cache.sh");
+            let script = format!(
+                concat!(
+                    "#!/usr/bin/env sh\n",
+                    "if [ ! -f '{count}' ]; then\n",
+                    "  printf '%s' first > '{count}'\n",
+                    "  exit 1\n",
+                    "fi\n",
+                    "[ -e '{zip}' ] && exit 1\n",
+                    "[ -e '{unpacked}' ] && exit 1\n",
+                    "[ -n \"$ELECTRON_MIRROR\" ] && exit 1\n",
+                    "exit 0\n"
+                ),
+                count = count_file.display(),
+                zip = cache_zip.display(),
+                unpacked = stale_unpacked.display(),
+            );
+            std::fs::write(&command, script).unwrap();
+            make_executable(&command).unwrap();
+            command
+        };
+
+        let result = run_desktop_pack_command_with_recovery_policy(
+            &command,
+            &desktop_dir,
+            &npm_cache,
+            false,
+            &[electron_cache.clone()],
+        )
+        .unwrap();
+
+        assert_eq!(result.fallback_mirror_used, false);
+        assert!(result.purged_paths.iter().any(|path| path == &cache_zip));
+        assert!(result
+            .purged_paths
+            .iter()
+            .any(|path| path == &stale_unpacked));
+        assert!(!cache_zip.exists());
+        assert!(!stale_unpacked.exists());
 
         let _ = std::fs::remove_dir_all(&root);
     }
