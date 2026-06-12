@@ -547,6 +547,8 @@ language-specific setup where needed.
   `wheelhouse-manifest.json` with platform, architecture, Python tag, size, and SHA-256 for every wheel.
 - The no-UI installer self-check now accepts `--self-check-wheelhouse` and validates the bundled wheelhouse manifest,
   every wheel checksum, and unmanifested payloads before release artifacts are accepted.
+- Runtime Python dependency planning now trusts a local wheelhouse manifest when present and skips the offline
+  wheelhouse tier if any listed wheel size or SHA-256 does not match, while preserving manifestless dev wheelhouses.
 - The validate-only gate now also requires every archive record to retain its download URL, keeping the packaged
   runtime archive update path auditable alongside size and SHA-256.
 - Archive URLs in the retained bootstrap-tools manifest must be HTTPS, so release review cannot accidentally accept an

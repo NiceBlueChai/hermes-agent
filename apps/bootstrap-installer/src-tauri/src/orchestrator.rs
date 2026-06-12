@@ -9,7 +9,7 @@ use crate::install_script::ScriptKind;
 use anyhow::{anyhow, Context, Result};
 use chrono::{SecondsFormat, Utc};
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,6 +17,9 @@ use std::process::{Command, ExitStatus, Output, Stdio};
 
 const BOOTSTRAP_TOOLS_MANIFEST: &str = "bootstrap-tools-manifest.json";
 const BOOTSTRAP_TOOLS_MANIFEST_SCHEMA_VERSION: u32 = 1;
+const WHEELHOUSE_MANIFEST: &str = "wheelhouse-manifest.json";
+const WHEELHOUSE_MANIFEST_SCHEMA_VERSION: u32 = 1;
+const ALLOWED_WHEELHOUSE_METADATA: [&str; 2] = [".gitignore", "README.md"];
 const DESKTOP_ELECTRON_FALLBACK_MIRROR: &str = "https://npmmirror.com/mirrors/electron/";
 const PYTHON_KNOWN_BROKEN_EXTRAS: &[&str] = &[];
 const SCRIPT_REASON_INTERACTIVE: &str = "requires user input; handled by post-install UI";
@@ -308,6 +311,24 @@ struct BootstrapToolsManifestArchive {
     name: String,
     platform: Option<String>,
     arch: Option<String>,
+    #[serde(rename = "sizeBytes", default)]
+    size_bytes: Option<u64>,
+    sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WheelhouseManifest {
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    wheels: Vec<WheelhouseManifestWheel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WheelhouseManifestWheel {
+    name: String,
+    platform: Option<String>,
+    arch: Option<String>,
+    python: Option<String>,
     #[serde(rename = "sizeBytes", default)]
     size_bytes: Option<u64>,
     sha256: String,
@@ -2493,6 +2514,9 @@ fn python_dependency_install_tiers_for_cwd_with_wheelhouse(
 }
 
 fn wheelhouse_has_wheels(path: &Path) -> bool {
+    if path.join(WHEELHOUSE_MANIFEST).is_file() {
+        return wheelhouse_manifest_is_valid(path);
+    }
     let Ok(entries) = fs::read_dir(path) else {
         return false;
     };
@@ -2502,6 +2526,80 @@ fn wheelhouse_has_wheels(path: &Path) -> bool {
             .extension()
             .is_some_and(|extension| extension == OsStr::new("whl"))
     })
+}
+
+fn wheelhouse_manifest_is_valid(path: &Path) -> bool {
+    let manifest_path = path.join(WHEELHOUSE_MANIFEST);
+    let Some(manifest) = fs::read_to_string(&manifest_path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<WheelhouseManifest>(&text).ok())
+    else {
+        return false;
+    };
+    if manifest.schema_version != WHEELHOUSE_MANIFEST_SCHEMA_VERSION || manifest.wheels.is_empty() {
+        return false;
+    }
+
+    let mut expected = BTreeSet::from([WHEELHOUSE_MANIFEST.to_string()]);
+    for name in ALLOWED_WHEELHOUSE_METADATA {
+        expected.insert(name.to_string());
+    }
+    for wheel in &manifest.wheels {
+        if !wheel_name_is_plain_file(&wheel.name) || !expected.insert(wheel.name.clone()) {
+            return false;
+        }
+        if !matches!(wheel.platform.as_deref(), Some("windows" | "linux" | "macos")) {
+            return false;
+        }
+        if wheel
+            .arch
+            .as_deref()
+            .map(|value| value.trim().is_empty())
+            .unwrap_or(true)
+        {
+            return false;
+        }
+        if wheel
+            .python
+            .as_deref()
+            .map(|value| !value.starts_with("cp") || value.len() <= 2)
+            .unwrap_or(true)
+        {
+            return false;
+        }
+        if wheel.sha256.len() != 64 || !wheel.sha256.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            return false;
+        }
+        let Ok(bytes) = fs::read(path.join(&wheel.name)) else {
+            return false;
+        };
+        if wheel.size_bytes != Some(bytes.len() as u64) {
+            return false;
+        }
+        if !crate::artifact::sha256_hex(&bytes).eq_ignore_ascii_case(&wheel.sha256) {
+            return false;
+        }
+    }
+
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !expected.contains(&name) || !entry.path().is_file() {
+            return false;
+        }
+    }
+    true
+}
+
+fn wheel_name_is_plain_file(name: &str) -> bool {
+    !name.is_empty()
+        && name.ends_with(".whl")
+        && name != "."
+        && name != ".."
+        && !name.contains('/')
+        && !name.contains('\\')
 }
 
 fn python_dependency_install_tiers_for_pyproject(
@@ -7647,6 +7745,42 @@ mod tests {
             tiers[0].args[4],
             resource_wheelhouse.display().to_string()
         );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn python_dependency_install_tiers_skip_manifest_mismatched_wheelhouse() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-wheelhouse-manifest-tier-{}",
+            std::process::id()
+        ));
+        let wheelhouse = root.join("resources").join("wheelhouse");
+        std::fs::create_dir_all(&wheelhouse).unwrap();
+        std::fs::write(wheelhouse.join("demo-0.1-py3-none-any.whl"), b"wheel").unwrap();
+        std::fs::write(
+            wheelhouse.join("wheelhouse-manifest.json"),
+            r#"{
+  "schemaVersion": 1,
+  "wheels": [
+    {
+      "arch": "x64",
+      "platform": "windows",
+      "python": "cp311",
+      "name": "demo-0.1-py3-none-any.whl",
+      "sizeBytes": 5,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("pyproject.toml"), b"").unwrap();
+
+        let tiers = python_dependency_install_tiers_for_cwd_with_wheelhouse(&root, None);
+
+        assert_eq!(tiers[0].name, "hash-verified (uv.lock)");
 
         let _ = std::fs::remove_dir_all(&root);
     }

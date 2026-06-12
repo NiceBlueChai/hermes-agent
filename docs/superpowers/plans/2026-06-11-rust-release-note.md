@@ -37,6 +37,8 @@ User-visible behavior:
   the retained wheel payload for release review.
 - The built installer's no-UI self-check now verifies the bundled wheelhouse manifest and rejects missing, mismatched,
   or unmanifested wheel payloads during release smoke tests.
+- At install time, a wheelhouse with a manifest is used only when every listed wheel still matches its recorded size and
+  SHA-256; manifestless local wheelhouses remain supported for development fallback.
 - Release staging writes a checksummed bundled manifest beside the Rust manager binary and retains a
   `bootstrap-tools-manifest.json` artifact for packaged runtime archives. Installer workflows now run a no-UI binary
   self-check against the just-built setup executable, embedded install scripts, commit pin, and bootstrap-tools manifest.
