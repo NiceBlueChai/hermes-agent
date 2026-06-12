@@ -856,11 +856,14 @@ def validate_manifest(
                 f"unexpected bootstrap tools platform for {name}: expected {expected_platform}, got {platform}"
             )
         target = archive_target_from_name(name)
-        if target is not None and target != (platform, arch):
+        if target is None:
+            raise RuntimeError(f"unknown bootstrap tool archive: {name}")
+        if target != (platform, arch):
             raise RuntimeError(f"manifest archive target mismatch: {name}")
         tool_kind = archive_tool_kind_from_name(name)
-        if tool_kind is not None:
-            seen_tool_kinds.add(tool_kind)
+        if tool_kind is None:
+            raise RuntimeError(f"unknown bootstrap tool archive: {name}")
+        seen_tool_kinds.add(tool_kind)
         url = archive.get("url")
         if not isinstance(url, str) or not url:
             raise RuntimeError(f"manifest archive is missing url: {name}")

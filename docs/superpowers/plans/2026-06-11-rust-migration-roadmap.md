@@ -729,6 +729,8 @@ language-specific setup where needed.
   not match the selected archive name, keeping packaged payload identity checks aligned with release validation.
 - Release helper validation and the Rust binary self-check now perform the same archive-name target check, so CI rejects
   mismatched bootstrap-tool platform or architecture labels before upload.
+- Release helper validation and the Rust binary self-check now reject unknown bootstrap-tool archive names, so every
+  packaged payload must map to a registered runtime tool or optional cache kind before upload.
 - Installer artifact validation now receives the expected release platform from the Windows/Linux/macOS workflows and
   rejects `bootstrap-tools` manifests whose archive records target a different platform.
 - Duplicate archive names are rejected by the validate-only gate, keeping each bundled runtime archive's ownership,

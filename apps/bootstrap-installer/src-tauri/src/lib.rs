@@ -366,14 +366,16 @@ fn validate_bootstrap_tools_for_self_check(
                 ));
             }
         }
-        if let Some((expected_platform, expected_arch)) = bootstrap_tool_archive_target(name) {
-            if platform != expected_platform || arch != expected_arch {
-                return Err(format!("bootstrap tool archive target mismatch: {name}"));
-            }
+        let Some((expected_platform, expected_arch)) = bootstrap_tool_archive_target(name) else {
+            return Err(format!("unknown bootstrap tool archive: {name}"));
+        };
+        if platform != expected_platform || arch != expected_arch {
+            return Err(format!("bootstrap tool archive target mismatch: {name}"));
         }
-        if let Some(tool_kind) = bootstrap_tool_archive_kind(name) {
-            seen_tool_kinds.insert(tool_kind);
-        }
+        let Some(tool_kind) = bootstrap_tool_archive_kind(name) else {
+            return Err(format!("unknown bootstrap tool archive: {name}"));
+        };
+        seen_tool_kinds.insert(tool_kind);
         let url = archive
             .get("url")
             .and_then(|value| value.as_str())
@@ -1693,6 +1695,55 @@ mod tests {
             .errors
             .iter()
             .any(|err| err.contains("missing required bootstrap tool archive: git")));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn self_check_rejects_unknown_bootstrap_tool_archive_kind() {
+        let root = unique_tmp_dir("tools-unknown-kind");
+        let tools = root.join("bootstrap-tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        let archive = tools.join("mystery-cache-windows-x64.zip");
+        std::fs::write(&archive, b"mystery").unwrap();
+        let sha256 = crate::artifact::sha256_hex(b"mystery");
+        std::fs::write(
+            tools.join("bootstrap-tools-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "archives": [
+    {{
+      "arch": "x64",
+      "platform": "windows",
+      "name": "mystery-cache-windows-x64.zip",
+      "url": "https://example.invalid/mystery.zip",
+      "sizeBytes": 7,
+      "sha256": "{sha256}"
+    }}
+  ]
+}}
+"#
+            ),
+        )
+        .unwrap();
+
+        let report = bootstrap_self_check_report(
+            Some("abcdef1234567890"),
+            Some("main"),
+            Some(&tools),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        assert!(!report.ok);
+        assert!(report
+            .errors
+            .iter()
+            .any(|err| err.contains("unknown bootstrap tool archive")));
 
         let _ = std::fs::remove_dir_all(&root);
     }
