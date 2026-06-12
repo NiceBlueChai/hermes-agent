@@ -48,7 +48,8 @@ pub fn uninstall_lite(hermes_home: &Path) -> Result<Vec<String>> {
     validate_manifest_home(hermes_home, &manifest)?;
     preflight_uninstall_lite_entries(hermes_home, &manifest)?;
 
-    let mut removed = remove_managed_profile_updates(hermes_home)?;
+    let mut removed = remove_managed_windows_env_vars(hermes_home)?;
+    removed.extend(remove_managed_profile_updates(hermes_home)?);
     removed.extend(remove_managed_command_links(hermes_home)?);
 
     for entry in manifest.entries.iter().rev() {
@@ -77,10 +78,12 @@ pub fn uninstall_lite_plan(hermes_home: &Path) -> Result<Vec<String>> {
     validate_manifest_home(hermes_home, &manifest)?;
     preflight_uninstall_lite_entries(hermes_home, &manifest)?;
 
-    let mut planned = managed_profile_update_plan(hermes_home)?
-        .into_iter()
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>();
+    let mut planned = managed_windows_env_var_plan(hermes_home)?;
+    planned.extend(
+        managed_profile_update_plan(hermes_home)?
+            .into_iter()
+            .map(|path| path.display().to_string()),
+    );
     planned.extend(
         managed_command_link_plan(hermes_home)?
             .into_iter()
@@ -224,6 +227,40 @@ fn remove_managed_command_links(hermes_home: &Path) -> Result<Vec<String>> {
         }
     }
     Ok(removed)
+}
+
+fn remove_managed_windows_env_vars(hermes_home: &Path) -> Result<Vec<String>> {
+    let mut removed = Vec::new();
+    for name in managed_windows_env_var_names(hermes_home)? {
+        if crate::platform::remove_windows_user_env_var(&name)? {
+            removed.push(windows_env_var_display_name(&name));
+        }
+    }
+    Ok(removed)
+}
+
+fn managed_windows_env_var_plan(hermes_home: &Path) -> Result<Vec<String>> {
+    Ok(managed_windows_env_var_names(hermes_home)?
+        .into_iter()
+        .map(|name| windows_env_var_display_name(&name))
+        .collect())
+}
+
+fn managed_windows_env_var_names(hermes_home: &Path) -> Result<Vec<String>> {
+    let mut names = Vec::new();
+    for name in ["HERMES_HOME", "HERMES_GIT_BASH_PATH"] {
+        let Some(value) = crate::platform::read_windows_user_env_var(name)? else {
+            continue;
+        };
+        if crate::platform::windows_env_var_matches_hermes_home(name, &value, hermes_home) {
+            names.push(name.to_string());
+        }
+    }
+    Ok(names)
+}
+
+fn windows_env_var_display_name(name: &str) -> String {
+    format!("HKCU\\Environment\\{name}")
 }
 
 fn remove_managed_profile_updates(hermes_home: &Path) -> Result<Vec<String>> {

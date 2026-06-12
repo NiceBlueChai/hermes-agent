@@ -445,6 +445,28 @@ pub fn write_windows_user_env_var(name: &str, value: &str) -> Result<()> {
         .map_err(|err| ManagerError::io(format!("HKCU\\Environment\\{name}"), err))
 }
 
+/// Remove a current-user Windows environment variable.
+#[cfg(target_os = "windows")]
+pub fn remove_windows_user_env_var(name: &str) -> Result<bool> {
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
+    use winreg::RegKey;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let environment = match hkcu.open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE) {
+        Ok(key) => key,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(ManagerError::io("HKCU\\Environment", err)),
+    };
+    if read_windows_user_env_var(name)?.is_none() {
+        return Ok(false);
+    }
+    environment
+        .delete_value(name)
+        .map_err(|err| ManagerError::io(format!("HKCU\\Environment\\{name}"), err))?;
+    broadcast_windows_environment_change();
+    Ok(true)
+}
+
 /// Return an actionable error on non-Windows platforms.
 #[cfg(not(target_os = "windows"))]
 pub fn write_windows_user_path_update(_plan: &PathUpdatePlan) -> Result<bool> {
@@ -459,6 +481,35 @@ pub fn write_windows_user_env_var(_name: &str, _value: &str) -> Result<()> {
     Err(ManagerError::InvalidManifest(
         "Windows user environment writes are only supported on Windows".to_string(),
     ))
+}
+
+/// No-op current-user Windows environment variable removal off Windows.
+#[cfg(not(target_os = "windows"))]
+pub fn remove_windows_user_env_var(_name: &str) -> Result<bool> {
+    Ok(false)
+}
+
+/// Return true when a Windows env var value belongs to the active Hermes home.
+pub fn windows_env_var_matches_hermes_home(name: &str, value: &str, hermes_home: &Path) -> bool {
+    let value = normalize_windows_env_path(value);
+    let home = normalize_windows_env_path(&hermes_home.display().to_string());
+    if name.eq_ignore_ascii_case("HERMES_HOME") {
+        return value == home;
+    }
+    if name.eq_ignore_ascii_case("HERMES_GIT_BASH_PATH") {
+        let git_root = format!("{home}\\git");
+        return value == git_root || value.starts_with(&format!("{git_root}\\"));
+    }
+    false
+}
+
+fn normalize_windows_env_path(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('"')
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_ascii_lowercase()
 }
 
 #[cfg(target_os = "windows")]
@@ -729,6 +780,32 @@ mod tests {
         assert!(text.contains("export EDITOR=vim"));
         assert!(!text.contains(HERMES_PROFILE_BEGIN));
         assert!(!text.contains("/tmp/hermes"));
+    }
+
+    #[test]
+    fn windows_env_var_cleanup_matches_only_active_home() {
+        let home = PathBuf::from("C:/Users/example/AppData/Local/hermes");
+
+        assert!(windows_env_var_matches_hermes_home(
+            "HERMES_HOME",
+            "C:\\Users\\example\\AppData\\Local\\hermes\\",
+            &home
+        ));
+        assert!(!windows_env_var_matches_hermes_home(
+            "HERMES_HOME",
+            "C:\\Users\\example\\OtherHermes",
+            &home
+        ));
+        assert!(windows_env_var_matches_hermes_home(
+            "HERMES_GIT_BASH_PATH",
+            "C:\\Users\\example\\AppData\\Local\\hermes\\git\\bin\\bash.exe",
+            &home
+        ));
+        assert!(!windows_env_var_matches_hermes_home(
+            "HERMES_GIT_BASH_PATH",
+            "C:\\Program Files\\Git\\bin\\bash.exe",
+            &home
+        ));
     }
 
     #[test]
