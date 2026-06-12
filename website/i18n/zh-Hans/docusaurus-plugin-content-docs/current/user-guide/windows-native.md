@@ -1,4 +1,4 @@
-P---
+---
 title: "Windows（原生）指南"
 description: "在 Windows 10 / 11 上原生运行 Hermes Agent — 安装、功能矩阵、UTF-8 控制台、Git Bash、将 gateway 作为计划任务、编辑器处理、PATH、卸载及常见问题"
 sidebar_label: "Windows（原生）"
@@ -45,7 +45,7 @@ iex (irm https://hermes-agent.nousresearch.com/install.ps1)
 
 ### 桌面安装程序（备选方案）
 
-也提供了一个轻量 GUI 安装程序——如果你更倾向于双击 `.exe` 而非打开 PowerShell，可以使用它。下载 Hermes Desktop，运行安装程序，首次启动时 GUI 会在后台调用 `install.ps1` 来配置 Python（通过 `uv`）、Node、PortableGit 以及下文描述的其余依赖引导流程。首次运行后，桌面应用与 PowerShell 安装的 `hermes` CLI 共享同一个 `%LOCALAPPDATA%\hermes\hermes-agent` 安装目录和 `%USERPROFILE%\.hermes` 数据目录——可以在 GUI 和 CLI 之间自由切换。
+也提供了一个轻量 GUI 安装程序——如果你更倾向于双击 `.exe` 而非打开 PowerShell，可以使用它。下载 Hermes Desktop 并运行安装程序；发布版会先使用 Rust Tauri 引导器，从仓库归档安装运行时，并在包内资源存在且校验通过时配置内置的 `uv`、Node、Git for Windows、ripgrep 和 Python wheelhouse，只有不支持或失败的原生阶段才回退到 `install.ps1`。首次运行后，桌面应用与 PowerShell 安装的 `hermes` CLI 共享同一个 `%LOCALAPPDATA%\hermes\hermes-agent` 安装目录和 `%LOCALAPPDATA%\hermes` 数据目录——可以在 GUI 和 CLI 之间自由切换。
 
 如果你想要熟悉的 Windows 安装体验，或者要将 Hermes 交给非开发者使用，请使用桌面安装程序；如果你已经在终端中，请使用 PowerShell 一行命令。
 
@@ -67,16 +67,18 @@ iex (irm https://hermes-agent.nousresearch.com/install.ps1)
 
 从头到尾，按顺序：
 
-1. **引导 `uv`** — Astral 的快速 Python 管理器。安装到 `%USERPROFILE%\.local\bin`。
-2. **通过 `uv` 安装 Python 3.11**。无需预先安装 Python。
-3. **安装 Node.js 22**（优先使用 winget，否则将便携式 Node 压缩包解压到 `%LOCALAPPDATA%\hermes\node`）。用于浏览器工具和 WhatsApp 桥接。
-4. **安装便携式 Git** — 如果 `git` 已在 PATH 中，安装程序直接使用；否则从官方 `git-for-windows` 发布版下载精简的自包含 **PortableGit**（约 45 MB）到 `%LOCALAPPDATA%\hermes\git`。无需管理员权限，不写入 Windows 安装程序注册表，不干扰系统上的其他任何内容。
-5. **将仓库克隆**到 `%LOCALAPPDATA%\hermes\hermes-agent` 并在其中创建 virtualenv。
-6. **分层 `uv pip install`** — 先尝试 `.[all]`，如果 `git+https` 依赖在 GitHub 限速时失败，则逐步回退到更小的集合（`[messaging,dashboard,ext]` → `[messaging]` → `.`）。防止"单次失败导致裸安装"的故障模式。
-7. **根据 `.env` 自动安装消息 SDK** — 如果存在 `TELEGRAM_BOT_TOKEN` / `DISCORD_BOT_TOKEN` / `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `WHATSAPP_ENABLED`，则运行 `python -m ensurepip --upgrade` 并针对性地调用 `pip install`，确保各平台 SDK 可正常导入。
-8. **设置 `HERMES_GIT_BASH_PATH`** 为解析后的 `bash.exe` 路径，使 Hermes 在新 shell 中能确定性地找到它。
-9. **将 `%LOCALAPPDATA%\hermes\bin` 添加到用户 PATH** — 打开新终端后即可使用 `hermes` 命令。
-10. **运行 `hermes setup`** — 正常的首次运行向导（模型、提供商、工具集）。使用 `-SkipSetup` 跳过。
+1. **桌面发布版优先使用 Rust 引导器** — 校验包内 manifest，并在资源可用时从打包归档安装。
+2. **引导 `uv`** — Astral 的快速 Python 管理器。发布包可以提供内置归档；需要时脚本回退路径仍会下载它。
+3. **通过 `uv` 安装 Python 3.11**。无需预先安装 Python。
+4. **安装 Node.js 22** — 有效时优先使用内置或缓存的便携 Node 归档，需要时再回退到下载路径。用于浏览器工具和 WhatsApp 桥接。
+5. **仅在需要时安装便携式 Git** — 基于归档的全新安装不需要 Git 完成初始源码安装。如果 Git 安装或恢复路径需要它，安装程序会先使用现有 Git，否则从内置或下载的官方发布版配置 PortableGit。
+6. **通过仓库归档或 Git 克隆安装运行时** 到 `%LOCALAPPDATA%\hermes\hermes-agent`，并在其中创建 virtualenv。
+7. **优先使用本地 wheelhouse 安装 Python 依赖** — 校验通过的 wheelhouse 会先用 `--no-index` 安装，然后才进入既有 `uv.lock` 和在线回退层级。
+8. **分层 `uv pip install`** — 先尝试 `.[all]`，如果在线依赖失败，则逐步回退到更小的集合（`[messaging,dashboard,ext]` → `[messaging]` → `.`）。防止"单次失败导致裸安装"的故障模式。
+9. **根据 `.env` 自动安装消息 SDK** — 如果存在 `TELEGRAM_BOT_TOKEN` / `DISCORD_BOT_TOKEN` / `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `WHATSAPP_ENABLED`，针对性 SDK 恢复会先尝试本地 wheelhouse，再回退到网络 pip/uv。
+10. **设置 `HERMES_GIT_BASH_PATH`** 为解析后的 `bash.exe` 路径，使 Hermes 在新 shell 中能确定性地找到它。
+11. **将 `%LOCALAPPDATA%\hermes\bin` 添加到用户 PATH，并设置 `HERMES_HOME=%LOCALAPPDATA%\hermes`** — 打开新终端后即可使用 `hermes` 命令。
+12. **运行 `hermes setup`** — 正常的首次运行向导（模型、提供商、工具集）。使用 `-SkipSetup` 跳过。
 
 :::tip 在 Windows 上跳过繁琐的提供商配置
 在 Windows 上，逐个配置工具 API key（Firecrawl、FAL、Browser Use、OpenAI TTS）是获得可用 agent 摩擦最大的部分。[Nous Portal](/user-guide/features/tool-gateway) 订阅通过一次 OAuth 登录即可覆盖模型**以及**所有这些工具。安装程序完成后，运行 `hermes setup --portal` 完成配置。

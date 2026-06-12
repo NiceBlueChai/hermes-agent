@@ -41,7 +41,7 @@ iex (irm https://hermes-agent.nousresearch.com/install.ps1)
 
 如果你偏好 WSL2，上方的 Linux 安装程序可在其中运行；原生安装和 WSL 安装可以共存而不冲突（原生数据位于 `%LOCALAPPDATA%\hermes`，WSL 数据位于 `~/.hermes`）。
 
-**桌面安装程序（替代方案）：** 也提供一个轻量 GUI 安装程序——下载 Hermes Desktop，运行 `.exe`，首次启动时它会在后台调用 `install.ps1` 来配置 Python（通过 `uv`）、Node、PortableGit 及其余依赖。桌面应用和 PowerShell 安装的 CLI 共享相同的安装目录和数据目录，可以单独或同时使用。详见 [Windows（原生）指南](../user-guide/windows-native#desktop-installer-alternative)。
+**桌面安装程序（替代方案）：** 也提供一个轻量 GUI 安装程序——下载 Hermes Desktop 并运行安装包。发布版会先使用 Rust 原生引导器，优先消费包内经过校验的工具归档和 Python wheelhouse，再回退到在线脚本路径。桌面应用和 PowerShell 安装的 CLI 共享相同的安装目录和数据目录，可以单独或同时使用。详见 [Windows（原生）指南](../user-guide/windows-native#desktop-installer-alternative)。
 
 ### Android / Termux
 
@@ -78,6 +78,14 @@ curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 ### 安装程序做了什么
 
 安装程序自动处理一切——所有依赖（Python、Node.js、ripgrep、ffmpeg）、仓库克隆、虚拟环境、全局 `hermes` 命令配置以及 LLM 提供商配置。完成后即可开始聊天。
+
+### 打包安装程序行为
+
+macOS 和 Windows 桌面安装程序是最接近自包含的安装路径。它们会先运行 Rust 原生引导器，由它负责仓库归档安装、PATH/profile 更新、快捷方式、安装元数据、修复清理和轻量卸载路径。当发布包内包含引导资源时，安装程序会先校验 manifest、目标平台、架构、大小、SHA-256 和源输入元数据，校验通过后才会使用这些资源。
+
+发布包可以包含经过审核的 Node.js、`uv`、Git for Windows、ripgrep 以及 Python wheelhouse。这些资源会优先于网络下载使用，因此全新安装不必总是现场解析 Python/npm 依赖，也更不容易受到 PyPI、npm、GitHub 或 Git-for-Windows 可用性的影响。直接运行的 `install.sh` 和 `install.ps1` 仍然受支持，并继续作为不支持平台、缺少包内资源或原生恢复失败时的回退路径。
+
+浏览器自动化功能保持不变：安装程序会先复用已存在且兼容的 Chrome、Chromium、Edge 或 Brave；找不到时再回退到 Playwright Chromium 安装。`ffmpeg` 和 Playwright 浏览器二进制默认不随包内置，除非某个发布版明确接受对应的体积和安全更新节奏取舍。
 
 #### 安装目录结构
 
