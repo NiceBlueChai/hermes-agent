@@ -682,6 +682,7 @@ pub fn platform_sdks_skip_result(
 pub fn platform_sdk_stage_plan(
     hermes_home: &Path,
     install_root: &Path,
+    bundled_wheelhouse_dir: Option<&Path>,
 ) -> Result<PlatformSdkStagePlan> {
     let env_path = hermes_home.join(".env");
     let env_text = fs::read_to_string(&env_path)
@@ -698,8 +699,13 @@ pub fn platform_sdk_stage_plan(
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
     let uv = uv_tool_path(hermes_home, path_env, &pathext).ok();
     let checkout_wheelhouse = install_root.join("resources").join("wheelhouse");
-    let wheelhouse_dir =
-        wheelhouse_has_wheels(&checkout_wheelhouse, Some(install_root)).then_some(checkout_wheelhouse);
+    let wheelhouse_dir = bundled_wheelhouse_dir
+        .filter(|path| wheelhouse_has_wheels(path, Some(install_root)))
+        .map(Path::to_path_buf)
+        .or_else(|| {
+            wheelhouse_has_wheels(&checkout_wheelhouse, Some(install_root))
+                .then_some(checkout_wheelhouse)
+        });
     Ok(PlatformSdkStagePlan {
         python,
         uv,
@@ -714,8 +720,9 @@ pub fn platform_sdk_stage_plan(
 pub fn install_platform_sdks_stage(
     hermes_home: &Path,
     install_root: &Path,
+    bundled_wheelhouse_dir: Option<&Path>,
 ) -> Result<serde_json::Value> {
-    let plan = platform_sdk_stage_plan(hermes_home, install_root)?;
+    let plan = platform_sdk_stage_plan(hermes_home, install_root, bundled_wheelhouse_dir)?;
     let missing = plan
         .requirements
         .iter()
@@ -9197,19 +9204,31 @@ mod tests {
         let hermes_home = root.join("home");
         let install_root = hermes_home.join("hermes-agent");
         let venv_python = venv_python_path(&install_root.join("venv"));
-        let wheelhouse = install_root.join("resources").join("wheelhouse");
+        let checkout_wheelhouse = install_root.join("resources").join("wheelhouse");
+        let resource_wheelhouse = root.join("tauri-resources").join("wheelhouse");
         std::fs::create_dir_all(venv_python.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(&wheelhouse).unwrap();
+        std::fs::create_dir_all(&checkout_wheelhouse).unwrap();
+        std::fs::create_dir_all(&resource_wheelhouse).unwrap();
         std::fs::write(&venv_python, b"python").unwrap();
-        std::fs::write(wheelhouse.join("demo-0.1-py3-none-any.whl"), b"wheel").unwrap();
+        std::fs::write(
+            checkout_wheelhouse.join("checkout-0.1-py3-none-any.whl"),
+            b"wheel",
+        )
+        .unwrap();
+        std::fs::write(
+            resource_wheelhouse.join("resource-0.1-py3-none-any.whl"),
+            b"wheel",
+        )
+        .unwrap();
         std::fs::create_dir_all(&hermes_home).unwrap();
         std::fs::write(hermes_home.join(".env"), "WHATSAPP_ENABLED=true\n").unwrap();
 
-        let plan = platform_sdk_stage_plan(&hermes_home, &install_root).unwrap();
+        let plan =
+            platform_sdk_stage_plan(&hermes_home, &install_root, Some(&resource_wheelhouse)).unwrap();
 
         assert_eq!(plan.python, venv_python);
         assert_eq!(plan.pip_cache_dir, hermes_home.join("pip-cache"));
-        assert_eq!(plan.wheelhouse_dir, Some(wheelhouse));
+        assert_eq!(plan.wheelhouse_dir, Some(resource_wheelhouse));
         assert_eq!(plan.requirements.len(), 1);
         assert_eq!(plan.requirements[0].import_name, "qrcode");
         assert_eq!(plan.requirements[0].pip_spec, "qrcode>=7.0,<8");

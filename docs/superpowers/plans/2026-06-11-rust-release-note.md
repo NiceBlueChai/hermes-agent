@@ -66,9 +66,8 @@ User-visible behavior:
   the retained wheel payload for release review.
 - Linux and macOS installer workflows now upload installer binaries, bootstrap tool payloads, and Python wheelhouse
   payloads as separate artifacts, matching Windows and making bundled dependency review explicit.
-- If native Python dependency setup or platform SDK recovery falls back to the install scripts, the Rust bootstrapper
-  now passes its bundled wheelhouse path through so script recovery can still avoid PyPI when the release package
-  contains valid wheels.
+- Native platform SDK recovery and script fallback now receive the Rust bootstrapper's bundled wheelhouse path, so SDK
+  recovery can still avoid PyPI when the release package contains valid wheels.
 - The built installer's no-UI self-check now verifies the bundled wheelhouse manifest and rejects missing, mismatched,
   or unmanifested wheel payloads during release smoke tests.
 - At install time, a wheelhouse with a manifest is used only when every listed wheel still matches its recorded size and

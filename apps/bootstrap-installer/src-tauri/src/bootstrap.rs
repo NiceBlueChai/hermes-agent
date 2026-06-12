@@ -787,6 +787,7 @@ async fn run_bootstrap(
                 Some(crate::orchestrator::install_platform_sdks_stage(
                     &hermes_home,
                     &install_root,
+                    bundled_wheelhouse_dir.as_deref(),
                 ))
             } else if (cfg!(target_os = "windows") || cfg!(target_os = "macos") || cfg!(target_os = "linux"))
                 && stage.name.eq_ignore_ascii_case("desktop")
@@ -1272,6 +1273,12 @@ fn stage_script_extra_env(
             env.push((
                 "PIP_CACHE_DIR".to_string(),
                 home.join("pip-cache").display().to_string(),
+            ));
+        }
+        if let Some(wheelhouse) = bundled_wheelhouse_dir {
+            env.push((
+                "HERMES_BUNDLED_WHEELHOUSE_DIR".to_string(),
+                wheelhouse.display().to_string(),
             ));
         }
     }
@@ -1886,8 +1893,20 @@ mod tests {
             ]
         );
         assert_eq!(
-            stage_script_extra_env("platform-sdks", &install_root, Some(&hermes_home), None, None),
-            vec![("PIP_CACHE_DIR".to_string(), hermes_home.join("pip-cache").display().to_string())]
+            stage_script_extra_env(
+                "platform-sdks",
+                &install_root,
+                Some(&hermes_home),
+                None,
+                Some(&bundled_wheelhouse),
+            ),
+            vec![
+                ("PIP_CACHE_DIR".to_string(), hermes_home.join("pip-cache").display().to_string()),
+                (
+                    "HERMES_BUNDLED_WHEELHOUSE_DIR".to_string(),
+                    bundled_wheelhouse.display().to_string()
+                )
+            ]
         );
 
         let _ = std::fs::remove_dir_all(&root);
