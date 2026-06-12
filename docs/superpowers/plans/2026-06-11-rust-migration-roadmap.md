@@ -314,6 +314,8 @@ language-specific setup where needed.
   aligning one-liner installs with the Rust bootstrap cache layout and lite-uninstall ownership model.
 - Unix installer workflows now upload installer binaries, bootstrap tool manifests/archives, and Python wheelhouse
   payloads as separate release artifacts, matching Windows and keeping bundled dependency payloads directly auditable.
+- Script fallback for Python dependency stages now receives the Tauri bundled wheelhouse path from the Rust
+  bootstrapper, so fallback retries can still use release-bundled wheels before network PyPI tiers.
 - `venv` now runs native-first through Rust by invoking `uv venv venv --python 3.11` in the checkout, with script
   fallback preserved if native venv creation fails.
 - Python dependency installation now has a Rust native-first lockfile path using `uv sync --extra all --locked` with

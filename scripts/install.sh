@@ -1379,8 +1379,18 @@ PY
     return 0
 }
 
+local_wheelhouse_dir() {
+    local fallback_dir="$1"
+    if [ -n "${HERMES_BUNDLED_WHEELHOUSE_DIR:-}" ]; then
+        printf '%s\n' "$HERMES_BUNDLED_WHEELHOUSE_DIR"
+    else
+        printf '%s\n' "$fallback_dir"
+    fi
+}
+
 install_local_wheelhouse_tier() {
-    local wheelhouse_dir="$INSTALL_DIR/resources/wheelhouse"
+    local wheelhouse_dir
+    wheelhouse_dir="$(local_wheelhouse_dir "$INSTALL_DIR/resources/wheelhouse")"
 
     if ! local_wheelhouse_manifest_is_valid "$wheelhouse_dir"; then
         return 1

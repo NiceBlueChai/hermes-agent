@@ -924,7 +924,12 @@ async fn run_bootstrap(
         }
 
         let stage_args = stage_script_args(&stage.name, &manifest_args, args.include_desktop);
-        let stage_extra_env = stage_script_extra_env(&stage.name, &install_root, Some(&hermes_home));
+        let stage_extra_env = stage_script_extra_env(
+            &stage.name,
+            &install_root,
+            Some(&hermes_home),
+            bundled_wheelhouse_dir.as_deref(),
+        );
 
         // Each stage gets its own cancel receiver because tokio::select!
         // in run_script consumes it. Take/return through the Arc<Mutex>.
@@ -1185,6 +1190,7 @@ fn stage_script_extra_env(
     stage_name: &str,
     install_root: &std::path::Path,
     hermes_home: Option<&std::path::Path>,
+    bundled_wheelhouse_dir: Option<&std::path::Path>,
 ) -> Vec<(String, String)> {
     let mut env = Vec::new();
     if stage_name.eq_ignore_ascii_case("prerequisites") {
@@ -1240,6 +1246,14 @@ fn stage_script_extra_env(
             env.push((
                 "PIP_CACHE_DIR".to_string(),
                 home.join("pip-cache").display().to_string(),
+            ));
+        }
+    }
+    if is_python_dependencies_stage(stage_name) {
+        if let Some(wheelhouse) = bundled_wheelhouse_dir {
+            env.push((
+                "HERMES_BUNDLED_WHEELHOUSE_DIR".to_string(),
+                wheelhouse.display().to_string(),
             ));
         }
     }
@@ -1751,7 +1765,7 @@ mod tests {
         let install_root = root.join("hermes-agent");
 
         assert_eq!(
-            stage_script_extra_env("prerequisites", &install_root, None),
+            stage_script_extra_env("prerequisites", &install_root, None, None),
             vec![
                 ("HERMES_NATIVE_REPOSITORY_ARCHIVE".to_string(), "1".to_string()),
                 ("HERMES_NATIVE_NODE_STAGE".to_string(), "1".to_string()),
@@ -1760,7 +1774,7 @@ mod tests {
                 ("HERMES_NATIVE_UV_STAGE".to_string(), "1".to_string())
             ]
         );
-        assert!(stage_script_extra_env("repository", &install_root, None).is_empty());
+        assert!(stage_script_extra_env("repository", &install_root, None, None).is_empty());
         assert!(should_try_native_repository_archive(
             "repository",
             &install_root
@@ -1769,7 +1783,7 @@ mod tests {
 
         std::fs::create_dir_all(&install_root).unwrap();
         assert_eq!(
-            stage_script_extra_env("prerequisites", &install_root, None),
+            stage_script_extra_env("prerequisites", &install_root, None, None),
             vec![
                 ("HERMES_NATIVE_NODE_STAGE".to_string(), "1".to_string()),
                 ("HERMES_NATIVE_PYTHON_STAGE".to_string(), "1".to_string()),
@@ -1793,7 +1807,7 @@ mod tests {
         let hermes_home = root.join("home");
 
         assert_eq!(
-            stage_script_extra_env("node-deps", &install_root, Some(&hermes_home)),
+            stage_script_extra_env("node-deps", &install_root, Some(&hermes_home), None),
             vec![
                 ("npm_config_cache".to_string(), hermes_home.join("npm-cache").display().to_string()),
                 (
@@ -1823,9 +1837,15 @@ mod tests {
         let root = unique_tmp_dir("python-fallback-env");
         let install_root = root.join("hermes-agent");
         let hermes_home = root.join("home");
+        let bundled_wheelhouse = root.join("resources").join("wheelhouse");
 
         assert_eq!(
-            stage_script_extra_env("python-deps", &install_root, Some(&hermes_home)),
+            stage_script_extra_env(
+                "python-deps",
+                &install_root,
+                Some(&hermes_home),
+                Some(&bundled_wheelhouse),
+            ),
             vec![
                 ("UV_CACHE_DIR".to_string(), hermes_home.join("uv-cache").display().to_string()),
                 (
@@ -1836,11 +1856,15 @@ mod tests {
                     "UV_PYTHON_BIN_DIR".to_string(),
                     hermes_home.join("bin").display().to_string()
                 ),
-                ("PIP_CACHE_DIR".to_string(), hermes_home.join("pip-cache").display().to_string())
+                ("PIP_CACHE_DIR".to_string(), hermes_home.join("pip-cache").display().to_string()),
+                (
+                    "HERMES_BUNDLED_WHEELHOUSE_DIR".to_string(),
+                    bundled_wheelhouse.display().to_string()
+                )
             ]
         );
         assert_eq!(
-            stage_script_extra_env("platform-sdks", &install_root, Some(&hermes_home)),
+            stage_script_extra_env("platform-sdks", &install_root, Some(&hermes_home), None),
             vec![("PIP_CACHE_DIR".to_string(), hermes_home.join("pip-cache").display().to_string())]
         );
 

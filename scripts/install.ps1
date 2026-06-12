@@ -1525,8 +1525,17 @@ function Test-LocalWheelhouseManifest {
     }
 }
 
+function Get-LocalWheelhouseDir {
+    param([string]$FallbackDir)
+    if (-not [string]::IsNullOrWhiteSpace($env:HERMES_BUNDLED_WHEELHOUSE_DIR)) {
+        return $env:HERMES_BUNDLED_WHEELHOUSE_DIR
+    }
+    return $FallbackDir
+}
+
 function Install-LocalWheelhouseTier {
-    $wheelhouseDir = Join-Path $InstallDir "resources\wheelhouse"
+    $fallbackWheelhouseDir = Join-Path $InstallDir "resources\wheelhouse"
+    $wheelhouseDir = Get-LocalWheelhouseDir -FallbackDir $fallbackWheelhouseDir
     if (-not (Test-LocalWheelhouseManifest -WheelhouseDir $wheelhouseDir)) {
         return $false
     }
