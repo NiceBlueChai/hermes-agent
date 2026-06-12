@@ -83,6 +83,12 @@ pub struct PythonDependenciesStagePlan {
     pub uv_cache_dir: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PythonDependencyInstallTier {
+    name: &'static str,
+    args: Vec<&'static str>,
+}
+
 /// Native Node dependency stage execution plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeDependenciesStagePlan {
@@ -2241,20 +2247,23 @@ pub fn sync_python_dependencies_stage(
     let path_env = std::env::var_os("PATH").unwrap_or_default();
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
     let plan = python_dependencies_stage_plan(install_root, hermes_home, path_env, &pathext)?;
-    let status = Command::new(&plan.uv)
-        .args(["sync", "--extra", "all", "--locked"])
-        .current_dir(&plan.cwd)
-        .env("VIRTUAL_ENV", &plan.venv)
-        .env("UV_PYTHON", &plan.python)
-        .env("UV_PROJECT_ENVIRONMENT", &plan.venv)
-        .env("UV_CACHE_DIR", &plan.uv_cache_dir)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .with_context(|| format!("running {}", plan.uv.display()))?;
-    if !status.success() {
-        return Err(anyhow!("uv sync failed with exit {:?}", status.code()));
+    let tiers = python_dependency_install_tiers();
+    let mut selected_tier = None;
+    let mut last_exit_code = None;
+    for tier in &tiers {
+        let status = run_python_dependency_install_tier(&plan, tier)?;
+        if status.success() {
+            selected_tier = Some(tier.name);
+            break;
+        }
+        last_exit_code = status.code();
     }
+    let selected_tier = selected_tier.ok_or_else(|| {
+        anyhow!(
+            "Python dependency install failed; last tier exited {:?}",
+            last_exit_code
+        )
+    })?;
     let baseline = Command::new(&plan.python)
         .args(["-c", "import dotenv, openai, rich, prompt_toolkit"])
         .stdout(Stdio::null())
@@ -2263,7 +2272,7 @@ pub fn sync_python_dependencies_stage(
         .with_context(|| format!("checking baseline imports with {}", plan.python.display()))?;
     if !baseline.success() {
         return Err(anyhow!(
-            "baseline imports failed after uv sync with exit {:?}",
+            "baseline imports failed after {selected_tier} with exit {:?}",
             baseline.code()
         ));
     }
@@ -2272,8 +2281,42 @@ pub fn sync_python_dependencies_stage(
         "venv": plan.venv,
         "python": plan.python,
         "uvCacheDir": plan.uv_cache_dir,
-        "tier": "hash-verified (uv.lock)",
+        "tier": selected_tier,
     }))
+}
+
+fn python_dependency_install_tiers() -> Vec<PythonDependencyInstallTier> {
+    vec![
+        PythonDependencyInstallTier {
+            name: "hash-verified (uv.lock)",
+            args: vec!["sync", "--extra", "all", "--locked"],
+        },
+        PythonDependencyInstallTier {
+            name: "all",
+            args: vec!["pip", "install", "-e", ".[all]"],
+        },
+        PythonDependencyInstallTier {
+            name: "core only (no extras)",
+            args: vec!["pip", "install", "-e", "."],
+        },
+    ]
+}
+
+fn run_python_dependency_install_tier(
+    plan: &PythonDependenciesStagePlan,
+    tier: &PythonDependencyInstallTier,
+) -> Result<ExitStatus> {
+    Command::new(&plan.uv)
+        .args(&tier.args)
+        .current_dir(&plan.cwd)
+        .env("VIRTUAL_ENV", &plan.venv)
+        .env("UV_PYTHON", &plan.python)
+        .env("UV_PROJECT_ENVIRONMENT", &plan.venv)
+        .env("UV_CACHE_DIR", &plan.uv_cache_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .with_context(|| format!("running {} for {}", plan.uv.display(), tier.name))
 }
 
 /// Build the native Node dependencies stage plan.
@@ -6536,6 +6579,19 @@ mod tests {
         assert_eq!(plan.uv_cache_dir, hermes_home.join("uv-cache"));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn python_dependency_install_tiers_preserve_script_fallback_order() {
+        let tiers = python_dependency_install_tiers();
+
+        assert_eq!(tiers.len(), 3);
+        assert_eq!(tiers[0].name, "hash-verified (uv.lock)");
+        assert_eq!(tiers[0].args, vec!["sync", "--extra", "all", "--locked"]);
+        assert_eq!(tiers[1].name, "all");
+        assert_eq!(tiers[1].args, vec!["pip", "install", "-e", ".[all]"]);
+        assert_eq!(tiers[2].name, "core only (no extras)");
+        assert_eq!(tiers[2].args, vec!["pip", "install", "-e", "."]);
     }
 
     #[test]

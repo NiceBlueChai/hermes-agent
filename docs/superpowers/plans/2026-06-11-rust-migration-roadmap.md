@@ -284,6 +284,8 @@ language-specific setup where needed.
   fallback preserved if native venv creation fails.
 - Python dependency installation now has a Rust native-first lockfile path using `uv sync --extra all --locked` with
   `UV_PROJECT_ENVIRONMENT` pinned to `venv`, while the script keeps all PyPI fallback tiers.
+- Python dependency installation now keeps the script's basic PyPI fallback order in Rust: hash-verified `uv sync`
+  first, then `uv pip install -e .[all]`, then core-only `uv pip install -e .`.
 - `node-deps` now uses a Rust no-op skip when npm is unavailable on every platform, matching the existing script
   behavior without starting PowerShell or bash for a stage that can only skip.
 - Windows `node-deps` now has a Rust native-first path for root npm dependencies, Playwright Chromium, and TUI npm
@@ -328,9 +330,9 @@ language-specific setup where needed.
 
 **Still script-backed:**
 - Recovery tiers remain script-backed for failure cases that still need package-manager or mirror-specific handling:
-  Python dependency fallback when `uv sync --locked` cannot complete, unknown Linux Playwright system-library recovery,
-  npm install permission diagnostics, privileged Linux `chrome-sandbox` repair, unsupported or failed Unix
-  package-manager recovery, and messaging-platform SDK recovery if the native targeted pip path fails.
+  dynamic Python known-broken-extra filtering, unknown Linux Playwright system-library recovery, npm install permission
+  diagnostics, privileged Linux `chrome-sandbox` repair, unsupported or failed Unix package-manager recovery, and
+  messaging-platform SDK recovery if the native targeted pip path fails.
 - Fresh archive installs and archive updates do not require Git. Unix Git acquisition now has a native-first package
   manager path for common Linux/macOS/Termux setups, while unsupported distro handling, macOS CLT dialog recovery, and
   package-manager failures remain shell fallbacks.
