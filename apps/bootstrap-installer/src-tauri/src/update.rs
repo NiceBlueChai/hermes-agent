@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
-use tauri::{AppHandle, Emitter};
+use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
@@ -117,6 +117,8 @@ async fn run_update(app: AppHandle) -> Result<()> {
     let update_branch = update_branch_from_args(std::env::args().skip(1))
         .or_else(|| option_env_string("BUILD_PIN_BRANCH"))
         .unwrap_or_else(|| "main".to_string());
+    let update_commit = option_env_string("BUILD_PIN_COMMIT");
+    let bundled_source_archive_dir = source_archive_resource_dir(&app);
     let target_app = if cfg!(target_os = "macos") {
         target_app_from_args(std::env::args().skip(1))
     } else {
@@ -155,7 +157,14 @@ async fn run_update(app: AppHandle) -> Result<()> {
                 LogStream::Stdout,
                 "[update] archive-created checkout is missing .git; refreshing archive natively",
             );
-            refresh_archive_checkout_from_source(&app, &install_root, &update_branch).await?;
+            refresh_archive_checkout_from_source(
+                &app,
+                &install_root,
+                &update_branch,
+                update_commit.as_deref(),
+                bundled_source_archive_dir.as_deref(),
+            )
+            .await?;
             finalize_only_update = true;
         }
     }
@@ -683,11 +692,16 @@ fn update_command_args(update_branch: &str, finalize_only: bool) -> Vec<String> 
 fn archive_refresh_spec(
     marker: &serde_json::Value,
     update_branch: &str,
+    update_commit: Option<&str>,
 ) -> Result<crate::repo_archive::RepoArchiveSpec> {
+    let commit = update_commit
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     Ok(crate::repo_archive::RepoArchiveSpec {
         owner: marker_string(marker, "owner")?,
         repo: marker_string(marker, "repo")?,
-        commit: None,
+        commit,
         branch: Some(update_branch.to_string()),
     })
 }
@@ -696,31 +710,49 @@ async fn refresh_archive_checkout_from_source(
     app: &AppHandle,
     install_root: &Path,
     update_branch: &str,
+    update_commit: Option<&str>,
+    bundled_source_dir: Option<&Path>,
 ) -> Result<PathBuf> {
     let marker = crate::repo_archive::read_archive_source_marker(install_root)?
         .ok_or_else(|| anyhow!("archive source marker is missing"))?;
-    let spec = archive_refresh_spec(&marker, update_branch)?;
+    let spec = archive_refresh_spec(&marker, update_branch, update_commit)?;
     let cache_dir = crate::paths::bootstrap_cache_dir();
-    let archive_path = crate::repo_archive::archive_cache_path(&cache_dir, &spec)?;
-    emit_log(
-        app,
-        Some("update"),
-        LogStream::Stdout,
-        &format!(
-            "[update] downloading repository archive from {}",
-            spec.github_zip_url()?
-        ),
-    );
-    crate::artifact::download_to_cache(
-        crate::artifact::DownloadSpec {
-            url: spec.github_zip_url()?,
-            user_agent: "hermes-setup/0.0.1",
-            expected_sha256: None,
-        },
-        &archive_path,
-    )
-    .await
-    .context("downloading repository archive for update")?;
+    let archive_path = if let Some(resolved) =
+        crate::repo_archive::bundled_archive_for_spec(bundled_source_dir, &spec)
+    {
+        emit_log(
+            app,
+            Some("update"),
+            LogStream::Stdout,
+            &format!(
+                "[update] using bundled repository archive {}",
+                resolved.path.display()
+            ),
+        );
+        resolved.path
+    } else {
+        let archive_path = crate::repo_archive::archive_cache_path(&cache_dir, &spec)?;
+        emit_log(
+            app,
+            Some("update"),
+            LogStream::Stdout,
+            &format!(
+                "[update] downloading repository archive from {}",
+                spec.github_zip_url()?
+            ),
+        );
+        crate::artifact::download_to_cache(
+            crate::artifact::DownloadSpec {
+                url: spec.github_zip_url()?,
+                user_agent: "hermes-setup/0.0.1",
+                expected_sha256: None,
+            },
+            &archive_path,
+        )
+        .await
+        .context("downloading repository archive for update")?;
+        archive_path
+    };
     emit_log(
         app,
         Some("update"),
@@ -731,6 +763,13 @@ async fn refresh_archive_checkout_from_source(
         .context("refreshing repository from archive")?;
     crate::repo_archive::write_archive_source_marker(install_root, &spec, &archive_path, false)?;
     Ok(archive_path)
+}
+
+fn source_archive_resource_dir(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .resolve("source-archive", BaseDirectory::Resource)
+        .ok()
+        .filter(|path| path.is_dir())
 }
 
 fn archive_git_prepare_plan(marker: &serde_json::Value) -> Result<ArchiveGitPreparePlan> {
@@ -1378,7 +1417,7 @@ mod tests {
     }
 
     #[test]
-    fn archive_refresh_spec_uses_marker_repo_and_update_branch() {
+    fn archive_refresh_spec_uses_marker_repo_and_update_branch_without_commit_pin() {
         let marker = serde_json::json!({
             "schemaVersion": 1,
             "method": "github_archive",
@@ -1388,11 +1427,30 @@ mod tests {
             "branch": "old-branch",
         });
 
-        let spec = archive_refresh_spec(&marker, "feature/rust-release").unwrap();
+        let spec = archive_refresh_spec(&marker, "feature/rust-release", None).unwrap();
 
         assert_eq!(spec.owner, "NiceBlueChai");
         assert_eq!(spec.repo, "hermes-agent");
         assert_eq!(spec.commit, None);
+        assert_eq!(spec.branch, Some("feature/rust-release".to_string()));
+    }
+
+    #[test]
+    fn archive_refresh_spec_prefers_installer_commit_pin() {
+        let marker = serde_json::json!({
+            "schemaVersion": 1,
+            "method": "github_archive",
+            "owner": "NiceBlueChai",
+            "repo": "hermes-agent",
+            "ref": "old-commit",
+            "branch": "old-branch",
+        });
+
+        let spec = archive_refresh_spec(&marker, "feature/rust-release", Some("abcdef123")).unwrap();
+
+        assert_eq!(spec.owner, "NiceBlueChai");
+        assert_eq!(spec.repo, "hermes-agent");
+        assert_eq!(spec.commit, Some("abcdef123".to_string()));
         assert_eq!(spec.branch, Some("feature/rust-release".to_string()));
     }
 

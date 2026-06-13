@@ -277,8 +277,10 @@ cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml self_ch
 
 - Fresh packaged installs prefer native source archive or bundled source snapshot. **Done for manifest-verified Tauri
   `source-archive/` resources; falls back to GitHub archive download.**
-- Archive-created updates refresh source through Rust and call `hermes update --finalize-only`.
-- Git preparation is not entered before dependency finalization for archive-created installs.
+- Archive-created updates refresh source through Rust and call `hermes update --finalize-only`. **Done for Windows,
+  Linux, and macOS targets; update refresh now prefers the installer commit pin and bundled source archive.**
+- Git preparation is not entered before dependency finalization for archive-created installs. **Done for supported
+  desktop targets; unsupported targets still fall back to Git preparation.**
 - Script Git clone/update remains available for direct installs and recovery.
 
 **Verification command:**
