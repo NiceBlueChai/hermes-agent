@@ -61,6 +61,8 @@ enum Command {
         #[arg(long)]
         desktop_entries: bool,
     },
+    /// Report native bootstrap bridge capabilities.
+    BootstrapCapabilities,
     /// Plan PATH changes needed to expose the Hermes command.
     PlanPath {
         /// Override install root; defaults to HERMES_HOME/hermes-agent.
@@ -177,6 +179,18 @@ struct ShortcutApplyReport {
     dry_run: bool,
     applied: bool,
     shortcuts: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct BootstrapCapabilitiesReport {
+    ok: bool,
+    command: &'static str,
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    #[serde(rename = "canRunFullBootstrap")]
+    can_run_full_bootstrap: bool,
+    #[serde(rename = "supportedStages")]
+    supported_stages: Vec<&'static str>,
 }
 
 fn main() {
@@ -309,6 +323,26 @@ fn run() -> hermes_manager::Result<()> {
                     println!("{prefix}={path}");
                 }
                 println!("uninstall_gui_build=ok");
+            }
+        }
+        Command::BootstrapCapabilities => {
+            let report = BootstrapCapabilitiesReport {
+                ok: true,
+                command: "bootstrap-capabilities",
+                schema_version: 1,
+                can_run_full_bootstrap: false,
+                supported_stages: vec!["install-metadata"],
+            };
+            if cli.json {
+                let text = serde_json::to_string_pretty(&report).map_err(|err| {
+                    hermes_manager::ManagerError::InvalidManifest(err.to_string())
+                })?;
+                println!("{text}");
+            } else {
+                println!("bootstrap_capabilities=ok");
+                println!("schema_version={}", report.schema_version);
+                println!("can_run_full_bootstrap={}", report.can_run_full_bootstrap);
+                println!("supported_stages={}", report.supported_stages.join(","));
             }
         }
         Command::PlanPath {

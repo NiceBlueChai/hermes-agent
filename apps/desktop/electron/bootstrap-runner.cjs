@@ -657,6 +657,17 @@ async function runBootstrap(opts) {
   })
 
   try {
+    const nativeProbe = probeNativeBootstrapCapabilities({ hermesHome, resourcesPath, platform })
+    if (nativeProbe.available) {
+      emit({
+        type: 'log',
+        line:
+          '[bootstrap] native bootstrap bridge available; ' +
+          `canRunFullBootstrap=${nativeProbe.canRunFullBootstrap}; ` +
+          `stages=${nativeProbe.supportedStages.join(',') || '<none>'}`
+      })
+    }
+
     // 1. Resolve the platform installer.
     const scriptInfo = await resolveInstallScript({ installStamp, sourceRepoRoot, hermesHome, emit })
     const installerKind = scriptInfo.kind || 'powershell'
@@ -761,10 +772,50 @@ function recordInstallMetadata({
   return true
 }
 
+function probeNativeBootstrapCapabilities({
+  hermesHome,
+  resourcesPath,
+  platform = process.platform,
+  exists = fs.existsSync,
+  _execFileSync = execFileSync
+}) {
+  const managerPath = resolveHermesManagerPath(resourcesPath, platform, exists)
+  if (!managerPath) {
+    return { available: false, canRunFullBootstrap: false, supportedStages: [] }
+  }
+  try {
+    const stdout = _execFileSync(
+      managerPath,
+      ['--hermes-home', hermesHome, '--json', 'bootstrap-capabilities'],
+      hiddenWindowsChildOptions({
+        cwd: hermesHome,
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+    )
+    const parsed = JSON.parse(Buffer.isBuffer(stdout) ? stdout.toString('utf8') : String(stdout))
+    if (
+      parsed &&
+      parsed.ok === true &&
+      parsed.command === 'bootstrap-capabilities' &&
+      parsed.schemaVersion === 1
+    ) {
+      return {
+        available: true,
+        canRunFullBootstrap: parsed.canRunFullBootstrap === true,
+        supportedStages: Array.isArray(parsed.supportedStages) ? parsed.supportedStages.filter(Boolean) : []
+      }
+    }
+  } catch {
+    void 0
+  }
+  return { available: false, canRunFullBootstrap: false, supportedStages: [] }
+}
+
 module.exports = {
   runBootstrap,
   // Exposed for testability
   parseStageResult,
+  probeNativeBootstrapCapabilities,
   recordInstallMetadata,
   resolveHermesManagerPath,
   resolveLocalInstallScript,

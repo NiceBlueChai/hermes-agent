@@ -6,6 +6,7 @@ const path = require('node:path')
 
 const {
   runBootstrap,
+  probeNativeBootstrapCapabilities,
   recordInstallMetadata,
   resolveHermesManagerPath,
   resolveInstallScript,
@@ -171,6 +172,40 @@ test('recordInstallMetadata runs hermes-manager install-metadata with Hermes hom
   assert.equal(calls[0].command, 'C:\\Hermes\\resources\\hermes-manager\\hermes-manager.exe')
   assert.deepEqual(calls[0].args, ['--hermes-home', 'C:\\Users\\x\\.hermes', 'install-metadata'])
   assert.equal(calls[0].options.cwd, 'C:\\Users\\x\\.hermes')
+})
+
+test('probeNativeBootstrapCapabilities parses manager bootstrap bridge support', () => {
+  const probe = probeNativeBootstrapCapabilities({
+    hermesHome: '/home/x/.hermes',
+    resourcesPath: '/opt/Hermes/resources',
+    platform: 'linux',
+    exists: file => file.endsWith('/hermes-manager'),
+    _execFileSync: (command, args, options) => {
+      assert.equal(command, '/opt/Hermes/resources/hermes-manager/hermes-manager')
+      assert.deepEqual(args, [
+        '--hermes-home',
+        '/home/x/.hermes',
+        '--json',
+        'bootstrap-capabilities'
+      ])
+      assert.equal(options.cwd, '/home/x/.hermes')
+      return Buffer.from(
+        JSON.stringify({
+          ok: true,
+          command: 'bootstrap-capabilities',
+          schemaVersion: 1,
+          canRunFullBootstrap: false,
+          supportedStages: ['install-metadata']
+        })
+      )
+    }
+  })
+
+  assert.deepEqual(probe, {
+    available: true,
+    canRunFullBootstrap: false,
+    supportedStages: ['install-metadata']
+  })
 })
 
 test('runBootstrap records install metadata through the native manager hook after success', async () => {

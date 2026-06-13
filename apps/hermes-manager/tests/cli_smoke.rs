@@ -205,3 +205,29 @@ fn manager_binary_uses_packaged_smoke_override() {
         PathBuf::from(env!("CARGO_BIN_EXE_hermes-manager"))
     );
 }
+
+#[test]
+fn cli_smoke_reports_bootstrap_bridge_capabilities() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    fs::create_dir_all(&hermes_home).expect("Hermes home should be created");
+    let hermes_home_text = hermes_home.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-capabilities",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("capabilities output should be json");
+
+    assert_eq!(report["command"], "bootstrap-capabilities");
+    assert_eq!(report["schemaVersion"], 1);
+    assert_eq!(report["canRunFullBootstrap"], false);
+    assert!(report["supportedStages"]
+        .as_array()
+        .expect("supportedStages should be array")
+        .iter()
+        .any(|stage| stage.as_str() == Some("install-metadata")));
+}
