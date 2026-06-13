@@ -767,10 +767,18 @@ function recordInstallMetadata({
 }) {
   const managerPath = resolveHermesManagerPath(resourcesPath, platform, exists)
   if (!managerPath) return false
-  _execFileSync(managerPath, ['--hermes-home', hermesHome, 'install-metadata'], hiddenWindowsChildOptions({
-    cwd: hermesHome,
-    stdio: 'ignore'
-  }))
+  const stdout = _execFileSync(
+    managerPath,
+    ['--hermes-home', hermesHome, '--json', 'bootstrap-stage', 'install-metadata'],
+    hiddenWindowsChildOptions({
+      cwd: hermesHome,
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+  )
+  const parsed = JSON.parse(Buffer.isBuffer(stdout) ? stdout.toString('utf8') : String(stdout))
+  if (!parsed || parsed.ok !== true || parsed.stage !== 'install-metadata') {
+    throw new Error('native install-metadata bootstrap stage did not report success')
+  }
   return true
 }
 

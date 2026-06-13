@@ -375,11 +375,14 @@ duplicating inference across JavaScript and Rust.
 **Required gates:**
 
 - JavaScript resolves the packaged native bridge path and delegates environment preparation to it. **Started:
-  bootstrap runner now owns packaged `hermes-manager install-metadata` after successful first-launch install.**
+  bootstrap runner now owns packaged `hermes-manager bootstrap-stage install-metadata` after successful first-launch
+  install.**
 - JavaScript still owns UI progress, IPC, and desktop-specific presentation.
 - Native bridge returns structured stage events and failure categories. **Started: `hermes-manager bootstrap-capabilities`
-  exposes a schema-versioned JSON capability probe; desktop runner logs the probe and keeps script fallback when full
-  native bootstrap is not available.**
+  exposes a schema-versioned JSON capability probe; `hermes-manager bootstrap-manifest` reports the native bridge
+  manifest; `hermes-manager bootstrap-stage install-metadata` returns script-compatible stage JSON and is now used by
+  the desktop runner after first-launch bootstrap. Desktop still keeps script fallback when full native bootstrap is not
+  available.**
 - Python/shell fallback remains available if native bridge is missing or exits with a known fallback code.
 
 **Verification command:**

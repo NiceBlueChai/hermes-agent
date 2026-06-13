@@ -1,6 +1,7 @@
 //! Command-line entrypoint for the Hermes install manager.
 
 use std::path::PathBuf;
+use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 use serde::Serialize;
@@ -63,6 +64,13 @@ enum Command {
     },
     /// Report native bootstrap bridge capabilities.
     BootstrapCapabilities,
+    /// Report the native bootstrap bridge manifest.
+    BootstrapManifest,
+    /// Run one native bootstrap bridge stage.
+    BootstrapStage {
+        /// Stage name from `bootstrap-manifest`.
+        stage: String,
+    },
     /// Plan PATH changes needed to expose the Hermes command.
     PlanPath {
         /// Override install root; defaults to HERMES_HOME/hermes-agent.
@@ -192,6 +200,45 @@ struct BootstrapCapabilitiesReport {
     #[serde(rename = "supportedStages")]
     supported_stages: Vec<&'static str>,
 }
+
+#[derive(Clone, Copy, Debug, Serialize)]
+struct BootstrapStageDescriptor {
+    name: &'static str,
+    title: &'static str,
+    category: &'static str,
+    #[serde(rename = "needs_user_input")]
+    needs_user_input: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct BootstrapManifestReport {
+    ok: bool,
+    command: &'static str,
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    protocol_version: u32,
+    stages: Vec<BootstrapStageDescriptor>,
+}
+
+#[derive(Debug, Serialize)]
+struct BootstrapStageReport {
+    ok: bool,
+    command: &'static str,
+    stage: String,
+    skipped: bool,
+    reason: Option<String>,
+    #[serde(rename = "duration_ms")]
+    duration_ms: u128,
+    #[serde(rename = "failureCategory", skip_serializing_if = "Option::is_none")]
+    failure_category: Option<&'static str>,
+}
+
+const NATIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 1] = [BootstrapStageDescriptor {
+    name: "install-metadata",
+    title: "Record install metadata",
+    category: "finalize",
+    needs_user_input: false,
+}];
 
 fn main() {
     if let Err(err) = run() {
@@ -331,18 +378,57 @@ fn run() -> hermes_manager::Result<()> {
                 command: "bootstrap-capabilities",
                 schema_version: 1,
                 can_run_full_bootstrap: false,
-                supported_stages: vec!["install-metadata"],
+                supported_stages: native_bootstrap_stage_names(),
             };
             if cli.json {
-                let text = serde_json::to_string_pretty(&report).map_err(|err| {
-                    hermes_manager::ManagerError::InvalidManifest(err.to_string())
-                })?;
-                println!("{text}");
+                print_json(&report)?;
             } else {
                 println!("bootstrap_capabilities=ok");
                 println!("schema_version={}", report.schema_version);
                 println!("can_run_full_bootstrap={}", report.can_run_full_bootstrap);
                 println!("supported_stages={}", report.supported_stages.join(","));
+            }
+        }
+        Command::BootstrapManifest => {
+            let report = BootstrapManifestReport {
+                ok: true,
+                command: "bootstrap-manifest",
+                schema_version: 1,
+                protocol_version: 1,
+                stages: NATIVE_BOOTSTRAP_STAGES.to_vec(),
+            };
+            if cli.json {
+                print_json(&report)?;
+            } else {
+                println!("bootstrap_manifest=ok");
+                println!("protocol_version={}", report.protocol_version);
+                for stage in report.stages {
+                    println!("stage={}", stage.name);
+                }
+            }
+        }
+        Command::BootstrapStage { stage } => {
+            let report = run_native_bootstrap_stage(&home, &stage);
+            let ok = report.ok;
+            let failure_category = report.failure_category;
+            if cli.json {
+                print_json(&report)?;
+            } else if ok {
+                println!("bootstrap_stage=ok");
+                println!("stage={stage}");
+            } else {
+                println!("bootstrap_stage=error");
+                println!("stage={stage}");
+                if let Some(reason) = &report.reason {
+                    println!("reason={reason}");
+                }
+            }
+            if !ok {
+                std::process::exit(if failure_category == Some("unknown-stage") {
+                    2
+                } else {
+                    1
+                });
             }
         }
         Command::PlanPath {
@@ -572,10 +658,53 @@ fn default_windows_desktop_dir() -> PathBuf {
 }
 
 fn print_json_report(report: CommandReport) -> hermes_manager::Result<()> {
-    let text = serde_json::to_string_pretty(&report)
+    print_json(&report)
+}
+
+fn print_json<T: Serialize>(report: &T) -> hermes_manager::Result<()> {
+    let text = serde_json::to_string_pretty(report)
         .map_err(|err| hermes_manager::ManagerError::InvalidManifest(err.to_string()))?;
     println!("{text}");
     Ok(())
+}
+
+fn native_bootstrap_stage_names() -> Vec<&'static str> {
+    NATIVE_BOOTSTRAP_STAGES
+        .iter()
+        .map(|stage| stage.name)
+        .collect()
+}
+
+fn run_native_bootstrap_stage(home: &std::path::Path, stage: &str) -> BootstrapStageReport {
+    let started_at = Instant::now();
+    let result = match stage {
+        "install-metadata" => hermes_manager::commands::install_metadata(home)
+            .map_err(|err| ("stage-failed", err.to_string())),
+        other => Err((
+            "unknown-stage",
+            format!("unknown native bootstrap stage: {other}"),
+        )),
+    };
+    match result {
+        Ok(()) => BootstrapStageReport {
+            ok: true,
+            command: "bootstrap-stage",
+            stage: stage.to_string(),
+            skipped: false,
+            reason: None,
+            duration_ms: started_at.elapsed().as_millis(),
+            failure_category: None,
+        },
+        Err((failure_category, reason)) => BootstrapStageReport {
+            ok: false,
+            command: "bootstrap-stage",
+            stage: stage.to_string(),
+            skipped: false,
+            reason: Some(reason),
+            duration_ms: started_at.elapsed().as_millis(),
+            failure_category: Some(failure_category),
+        },
+    }
 }
 
 #[cfg(test)]

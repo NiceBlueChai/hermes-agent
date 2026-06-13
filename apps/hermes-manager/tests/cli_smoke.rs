@@ -231,3 +231,55 @@ fn cli_smoke_reports_bootstrap_bridge_capabilities() {
         .iter()
         .any(|stage| stage.as_str() == Some("install-metadata")));
 }
+
+#[test]
+fn cli_smoke_reports_native_bootstrap_manifest() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    fs::create_dir_all(&hermes_home).expect("Hermes home should be created");
+    let hermes_home_text = hermes_home.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-manifest",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("bootstrap manifest output should be json");
+
+    assert_eq!(report["command"], "bootstrap-manifest");
+    assert_eq!(report["protocol_version"], 1);
+    let stages = report["stages"].as_array().expect("stages should be array");
+    assert_eq!(stages.len(), 1);
+    assert_eq!(stages[0]["name"], "install-metadata");
+    assert_eq!(stages[0]["needs_user_input"], false);
+}
+
+#[test]
+fn cli_smoke_runs_native_install_metadata_bootstrap_stage() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    fs::create_dir_all(&hermes_home).expect("Hermes home should be created");
+    fs::write(hermes_home.join("config.yaml"), "model: test")
+        .expect("user config should be created");
+    let hermes_home_text = hermes_home.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "install-metadata",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("bootstrap stage output should be json");
+
+    assert_eq!(report["stage"], "install-metadata");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], false);
+    assert!(hermes_home
+        .join("manager")
+        .join("installed-files.json")
+        .is_file());
+}

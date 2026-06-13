@@ -156,7 +156,7 @@ test('resolveHermesManagerPath returns the packaged manager only when present', 
   assert.equal(resolveHermesManagerPath('/missing/resources', 'linux', () => false), null)
 })
 
-test('recordInstallMetadata runs hermes-manager install-metadata with Hermes home', () => {
+test('recordInstallMetadata runs the native install-metadata bootstrap stage', () => {
   const calls = []
   const ok = recordInstallMetadata({
     hermesHome: 'C:\\Users\\x\\.hermes',
@@ -165,13 +165,21 @@ test('recordInstallMetadata runs hermes-manager install-metadata with Hermes hom
     exists: file => file.endsWith('hermes-manager.exe'),
     _execFileSync: (command, args, options) => {
       calls.push({ command, args, options })
+      return Buffer.from(JSON.stringify({ ok: true, stage: 'install-metadata' }))
     }
   })
 
   assert.equal(ok, true)
   assert.equal(calls[0].command, 'C:\\Hermes\\resources\\hermes-manager\\hermes-manager.exe')
-  assert.deepEqual(calls[0].args, ['--hermes-home', 'C:\\Users\\x\\.hermes', 'install-metadata'])
+  assert.deepEqual(calls[0].args, [
+    '--hermes-home',
+    'C:\\Users\\x\\.hermes',
+    '--json',
+    'bootstrap-stage',
+    'install-metadata'
+  ])
   assert.equal(calls[0].options.cwd, 'C:\\Users\\x\\.hermes')
+  assert.deepEqual(calls[0].options.stdio, ['ignore', 'pipe', 'ignore'])
 })
 
 test('probeNativeBootstrapCapabilities parses manager bootstrap bridge support', () => {
