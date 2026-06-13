@@ -337,6 +337,13 @@ const WINDOWS_REPOSITORY_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapSt
     needs_user_input: false,
 };
 
+const WINDOWS_VENV_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "venv",
+    title: "Create Python virtual environment",
+    category: "install",
+    needs_user_input: false,
+};
+
 const WINDOWS_INTERACTIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
     BootstrapStageDescriptor {
         name: "configure",
@@ -832,6 +839,7 @@ fn run_native_bootstrap_stage(
         "git" => run_native_git_stage(home, options),
         "python" => run_native_python_stage(options),
         "repository" => run_native_repository_stage(home, options),
+        "venv" => run_native_venv_stage(home, options),
         "node" => run_native_node_stage(home, options),
         "system-packages" => run_native_system_packages_stage(options),
         "config-templates" => {
@@ -874,6 +882,7 @@ fn native_bootstrap_stages() -> Vec<BootstrapStageDescriptor> {
         stages.push(WINDOWS_GIT_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_PYTHON_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_REPOSITORY_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_VENV_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_NODE_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_SYSTEM_PACKAGES_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_NODE_DEPS_BOOTSTRAP_STAGE);
@@ -1076,6 +1085,79 @@ fn run_native_repository_stage(
     ))
 }
 
+fn run_native_venv_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native venv stage is only complete on Windows".to_string(),
+        ));
+    }
+    let install_root = options
+        .install_root
+        .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    if !install_root.is_dir() {
+        return Err((
+            "fallback-to-script",
+            "install root missing; script creates the repository before venv".to_string(),
+        ));
+    }
+    let path_text = windows_stage_path(options.current_path)?;
+    let Some(uv) = windows_uv_command(home, &path_text) else {
+        return Err((
+            "fallback-to-script",
+            "uv missing; script creates the virtual environment after installing uv".to_string(),
+        ));
+    };
+    let venv = install_root.join("venv");
+    if options.dry_run {
+        return Ok((
+            false,
+            Some(format!(
+                "venv stage would run {} in {}",
+                uv.display(),
+                install_root.display()
+            )),
+        ));
+    }
+    if venv.exists() {
+        fs::remove_dir_all(&venv).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    let status = ProcessCommand::new(&uv)
+        .args(["venv", "venv", "--python", "3.11"])
+        .current_dir(&install_root)
+        .env("UV_CACHE_DIR", home.join("uv-cache"))
+        .env("UV_PYTHON_INSTALL_DIR", home.join("python"))
+        .env("UV_PYTHON_BIN_DIR", home.join("bin"))
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if !status.success() {
+        return Err((
+            "fallback-to-script",
+            format!(
+                "uv venv failed with exit {:?}; script creates the virtual environment",
+                status.code()
+            ),
+        ));
+    }
+    let python = venv.join("Scripts").join("python.exe");
+    if !python.is_file() {
+        return Err((
+            "fallback-to-script",
+            format!(
+                "uv venv completed but Python was missing at {}; script verifies venv output",
+                python.display()
+            ),
+        ));
+    }
+    Ok((
+        false,
+        Some(format!("created virtual environment at {}", venv.display())),
+    ))
+}
+
 fn run_native_node_deps_stage(
     options: NativeBootstrapStageOptions<'_>,
 ) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
@@ -1265,6 +1347,17 @@ fn windows_stage_path(
         parts.push(path);
     }
     Ok(parts.join(";"))
+}
+
+fn windows_uv_command(home: &std::path::Path, path_text: &str) -> Option<PathBuf> {
+    [
+        home.join("bin").join("uv.exe"),
+        home.join("bin").join("uv.cmd"),
+        home.join("bin").join("uv.bat"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .or_else(|| windows_path_command(path_text, "uv"))
 }
 
 fn windows_path_command(path_text: &str, command_name: &str) -> Option<PathBuf> {

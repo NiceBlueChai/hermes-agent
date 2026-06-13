@@ -317,6 +317,10 @@ fn cli_smoke_reports_native_bootstrap_manifest() {
         .iter()
         .any(|stage| stage["name"].as_str() == Some("repository")));
     #[cfg(target_os = "windows")]
+    assert!(stages
+        .iter()
+        .any(|stage| stage["name"].as_str() == Some("venv")));
+    #[cfg(target_os = "windows")]
     assert!(stages.iter().any(|stage| {
         stage["name"].as_str() == Some("configure") && stage["needs_user_input"] == true
     }));
@@ -582,6 +586,55 @@ fn cli_smoke_falls_back_for_native_platform_sdks_when_tokens_are_configured() {
     assert_eq!(report["stage"], "platform-sdks");
     assert_eq!(report["ok"], false);
     assert_eq!(report["failureCategory"], "fallback-to-script");
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_runs_native_venv_stage_with_managed_uv() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let install_root = temp.path().join("repo");
+    let bin_dir = hermes_home.join("bin");
+    fs::create_dir_all(&install_root).expect("install root should be created");
+    fs::create_dir_all(&bin_dir).expect("bin dir should be created");
+    fs::write(
+        bin_dir.join("uv.cmd"),
+        concat!(
+            "@echo off\r\n",
+            "if \"%1\"==\"venv\" (\r\n",
+            "  mkdir \"%CD%\\%2\\Scripts\" >nul 2>nul\r\n",
+            "  echo python>\"%CD%\\%2\\Scripts\\python.exe\"\r\n",
+            "  exit /b 0\r\n",
+            ")\r\n",
+            "exit /b 1\r\n",
+        ),
+    )
+    .expect("uv shim should be written");
+    let hermes_home_text = hermes_home.display().to_string();
+    let install_root_text = install_root.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "venv",
+        "--install-root",
+        &install_root_text,
+        "--current-path",
+        "",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("venv stage output should be json");
+
+    assert_eq!(report["stage"], "venv");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], false);
+    assert!(install_root
+        .join("venv")
+        .join("Scripts")
+        .join("python.exe")
+        .is_file());
 }
 
 #[cfg(target_os = "windows")]
