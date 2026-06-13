@@ -321,6 +321,10 @@ fn cli_smoke_reports_native_bootstrap_manifest() {
         .iter()
         .any(|stage| stage["name"].as_str() == Some("venv")));
     #[cfg(target_os = "windows")]
+    assert!(stages
+        .iter()
+        .any(|stage| stage["name"].as_str() == Some("dependencies")));
+    #[cfg(target_os = "windows")]
     assert!(stages.iter().any(|stage| {
         stage["name"].as_str() == Some("configure") && stage["needs_user_input"] == true
     }));
@@ -635,6 +639,70 @@ fn cli_smoke_runs_native_venv_stage_with_managed_uv() {
         .join("Scripts")
         .join("python.exe")
         .is_file());
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_runs_native_dependencies_stage_with_managed_uv() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let install_root = temp.path().join("repo");
+    let bin_dir = hermes_home.join("bin");
+    let scripts_dir = install_root.join("venv").join("Scripts");
+    fs::create_dir_all(&bin_dir).expect("bin dir should be created");
+    fs::create_dir_all(&scripts_dir).expect("venv scripts dir should be created");
+    fs::write(install_root.join("uv.lock"), "").expect("lockfile should be written");
+    fs::write(
+        install_root.join("pyproject.toml"),
+        "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("pyproject should be written");
+    fs::write(
+        bin_dir.join("uv.cmd"),
+        concat!(
+            "@echo off\r\n",
+            "echo %*>>\"%HERMES_UV_LOG%\"\r\n",
+            "exit /b 0\r\n",
+        ),
+    )
+    .expect("uv shim should be written");
+    fs::write(scripts_dir.join("python.cmd"), "@echo off\r\nexit /b 0\r\n")
+        .expect("python shim should be written");
+    let uv_log = temp.path().join("uv.log");
+    let hermes_home_text = hermes_home.display().to_string();
+    let install_root_text = install_root.display().to_string();
+    let uv_log_text = uv_log.display().to_string();
+
+    let out = Command::new(manager_binary())
+        .env("HERMES_UV_LOG", &uv_log_text)
+        .args([
+            "--hermes-home",
+            &hermes_home_text,
+            "--json",
+            "bootstrap-stage",
+            "dependencies",
+            "--install-root",
+            &install_root_text,
+            "--current-path",
+            "",
+        ])
+        .output()
+        .expect("manager command should run");
+    assert!(
+        out.status.success(),
+        "dependencies stage failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("dependencies stage output should be json");
+
+    assert_eq!(report["stage"], "dependencies");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], false);
+    assert!(fs::read_to_string(uv_log)
+        .expect("uv log should exist")
+        .contains("sync --extra all --locked"));
 }
 
 #[cfg(target_os = "windows")]

@@ -725,6 +725,7 @@ async function runBootstrap(opts) {
         ev = await _runNativeBootstrapStage({
           stage,
           hermesHome,
+          activeRoot,
           resourcesPath,
           platform,
           abortSignal,
@@ -838,6 +839,7 @@ function recordInstallMetadata({
 async function runNativeBootstrapStage({
   stage,
   hermesHome,
+  activeRoot,
   resourcesPath,
   platform = process.platform,
   abortSignal,
@@ -863,6 +865,13 @@ async function runNativeBootstrapStage({
 
   try {
     const args = ['--hermes-home', hermesHome, '--json', 'bootstrap-stage', stage.name]
+    if (activeRoot) {
+      args.push('--install-root', activeRoot)
+    }
+    if (resourcesPath) {
+      const platformPath = platform === 'win32' ? path.win32 : path.posix
+      args.push('--wheelhouse-dir', platformPath.join(resourcesPath, 'wheelhouse'))
+    }
     if (installStamp && installStamp.commit) {
       args.push('--commit', installStamp.commit)
     }

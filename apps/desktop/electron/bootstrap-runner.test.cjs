@@ -261,6 +261,7 @@ test('runNativeBootstrapStage passes install pins to manager stage command', asy
   const ev = await runNativeBootstrapStage({
     stage: { name: 'bootstrap-marker' },
     hermesHome: 'C:\\Users\\x\\.hermes',
+    activeRoot: 'C:\\Users\\x\\.hermes\\hermes-agent',
     resourcesPath: 'C:\\Hermes\\resources',
     platform: 'win32',
     installStamp: { commit: 'abcdef1234567890', branch: 'main' },
@@ -278,6 +279,10 @@ test('runNativeBootstrapStage passes install pins to manager stage command', asy
     '--json',
     'bootstrap-stage',
     'bootstrap-marker',
+    '--install-root',
+    'C:\\Users\\x\\.hermes\\hermes-agent',
+    '--wheelhouse-dir',
+    'C:\\Hermes\\resources\\wheelhouse',
     '--commit',
     'abcdef1234567890',
     '--branch',

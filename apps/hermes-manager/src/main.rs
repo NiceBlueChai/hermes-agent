@@ -78,6 +78,9 @@ enum Command {
         /// Current PATH value for planning or tests.
         #[arg(long)]
         current_path: Option<String>,
+        /// Optional bundled Python wheelhouse directory.
+        #[arg(long)]
+        wheelhouse_dir: Option<PathBuf>,
         /// Plan the stage without writing OS/user state.
         #[arg(long)]
         dry_run: bool,
@@ -344,6 +347,13 @@ const WINDOWS_VENV_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDes
     needs_user_input: false,
 };
 
+const WINDOWS_DEPENDENCIES_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "dependencies",
+    title: "Install Python dependencies",
+    category: "install",
+    needs_user_input: false,
+};
+
 const WINDOWS_INTERACTIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
     BootstrapStageDescriptor {
         name: "configure",
@@ -530,6 +540,7 @@ fn run() -> hermes_manager::Result<()> {
             stage,
             install_root,
             current_path,
+            wheelhouse_dir,
             dry_run,
             commit,
             branch,
@@ -540,6 +551,7 @@ fn run() -> hermes_manager::Result<()> {
                 NativeBootstrapStageOptions {
                     install_root,
                     current_path,
+                    wheelhouse_dir,
                     dry_run,
                     commit: commit.as_deref(),
                     branch: branch.as_deref(),
@@ -814,6 +826,7 @@ fn native_bootstrap_stage_names() -> Vec<&'static str> {
 struct NativeBootstrapStageOptions<'a> {
     install_root: Option<PathBuf>,
     current_path: Option<String>,
+    wheelhouse_dir: Option<PathBuf>,
     dry_run: bool,
     commit: Option<&'a str>,
     branch: Option<&'a str>,
@@ -840,6 +853,7 @@ fn run_native_bootstrap_stage(
         "python" => run_native_python_stage(options),
         "repository" => run_native_repository_stage(home, options),
         "venv" => run_native_venv_stage(home, options),
+        "dependencies" | "python-deps" => run_native_dependencies_stage(home, options),
         "node" => run_native_node_stage(home, options),
         "system-packages" => run_native_system_packages_stage(options),
         "config-templates" => {
@@ -883,6 +897,7 @@ fn native_bootstrap_stages() -> Vec<BootstrapStageDescriptor> {
         stages.push(WINDOWS_PYTHON_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_REPOSITORY_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_VENV_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_DEPENDENCIES_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_NODE_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_SYSTEM_PACKAGES_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_NODE_DEPS_BOOTSTRAP_STAGE);
@@ -1158,6 +1173,98 @@ fn run_native_venv_stage(
     ))
 }
 
+fn run_native_dependencies_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native dependency stage is only complete on Windows".to_string(),
+        ));
+    }
+    let install_root = options
+        .install_root
+        .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    if !install_root.is_dir() {
+        return Err((
+            "fallback-to-script",
+            "install root missing; script creates the repository before dependencies".to_string(),
+        ));
+    }
+    if !install_root.join("uv.lock").is_file() {
+        return Err((
+            "fallback-to-script",
+            "uv.lock missing; script handles dependency installation for this checkout".to_string(),
+        ));
+    }
+    let Some(python) = venv_python_command(&install_root) else {
+        return Err((
+            "fallback-to-script",
+            "venv Python missing; script recreates the virtual environment before dependencies"
+                .to_string(),
+        ));
+    };
+    let path_text = windows_stage_path(options.current_path)?;
+    let Some(uv) = windows_uv_command(home, &path_text) else {
+        return Err((
+            "fallback-to-script",
+            "uv missing; script installs uv before dependencies".to_string(),
+        ));
+    };
+    if options.dry_run {
+        return Ok((
+            false,
+            Some(format!(
+                "dependencies stage would run {} in {}",
+                uv.display(),
+                install_root.display()
+            )),
+        ));
+    }
+
+    let tiers = dependency_install_tiers(&install_root, options.wheelhouse_dir.as_deref());
+    let mut last_exit = None;
+    for (tier_name, args) in tiers {
+        let status = ProcessCommand::new(&uv)
+            .args(args.iter().map(String::as_str))
+            .current_dir(&install_root)
+            .env("UV_PROJECT_ENVIRONMENT", install_root.join("venv"))
+            .env("UV_CACHE_DIR", home.join("uv-cache"))
+            .env("UV_PYTHON_INSTALL_DIR", home.join("python"))
+            .env("UV_PYTHON_BIN_DIR", home.join("bin"))
+            .status()
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+        if status.success() {
+            let baseline = ProcessCommand::new(&python)
+                .args(["-c", "import dotenv, openai, rich, prompt_toolkit"])
+                .status()
+                .map_err(|err| ("fallback-to-script", err.to_string()))?;
+            if baseline.success() {
+                return Ok((
+                    false,
+                    Some(format!("Python dependencies installed using {tier_name}")),
+                ));
+            }
+            return Err((
+                "fallback-to-script",
+                format!(
+                    "baseline imports failed after {tier_name} with exit {:?}; script verifies dependencies",
+                    baseline.code()
+                ),
+            ));
+        }
+        last_exit = status.code();
+    }
+    Err((
+        "fallback-to-script",
+        format!(
+            "native dependency install failed; last tier exited {:?}; script installs dependencies",
+            last_exit
+        ),
+    ))
+}
+
 fn run_native_node_deps_stage(
     options: NativeBootstrapStageOptions<'_>,
 ) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
@@ -1347,6 +1454,73 @@ fn windows_stage_path(
         parts.push(path);
     }
     Ok(parts.join(";"))
+}
+
+fn venv_python_command(install_root: &std::path::Path) -> Option<PathBuf> {
+    [
+        install_root.join("venv").join("Scripts").join("python.exe"),
+        install_root.join("venv").join("Scripts").join("python.cmd"),
+        install_root.join("venv").join("Scripts").join("python.bat"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+}
+
+fn dependency_install_tiers(
+    install_root: &std::path::Path,
+    wheelhouse_dir: Option<&std::path::Path>,
+) -> Vec<(String, Vec<String>)> {
+    let mut tiers = Vec::new();
+    let checkout_wheelhouse = install_root.join("resources").join("wheelhouse");
+    let wheelhouse = wheelhouse_dir
+        .filter(|path| wheelhouse_has_wheels(path))
+        .map(Path::to_path_buf)
+        .or_else(|| wheelhouse_has_wheels(&checkout_wheelhouse).then_some(checkout_wheelhouse));
+    if let Some(wheelhouse) = wheelhouse {
+        tiers.push((
+            "local wheelhouse (all)".to_string(),
+            vec![
+                "pip".to_string(),
+                "install".to_string(),
+                "--no-index".to_string(),
+                "--find-links".to_string(),
+                wheelhouse.display().to_string(),
+                "-e".to_string(),
+                ".[all]".to_string(),
+            ],
+        ));
+    }
+    tiers.push((
+        "hash-verified (uv.lock)".to_string(),
+        vec![
+            "sync".to_string(),
+            "--extra".to_string(),
+            "all".to_string(),
+            "--locked".to_string(),
+        ],
+    ));
+    tiers.push((
+        "all".to_string(),
+        vec![
+            "pip".to_string(),
+            "install".to_string(),
+            "-e".to_string(),
+            ".[all]".to_string(),
+        ],
+    ));
+    tiers
+}
+
+fn wheelhouse_has_wheels(path: &std::path::Path) -> bool {
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == std::ffi::OsStr::new("whl"))
+    })
 }
 
 fn windows_uv_command(home: &std::path::Path, path_text: &str) -> Option<PathBuf> {
