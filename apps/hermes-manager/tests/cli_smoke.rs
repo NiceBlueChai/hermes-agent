@@ -264,6 +264,14 @@ fn cli_smoke_reports_native_bootstrap_manifest() {
     assert!(stages
         .iter()
         .any(|stage| stage["name"].as_str() == Some("config-templates")));
+    #[cfg(target_os = "windows")]
+    assert!(stages.iter().any(|stage| {
+        stage["name"].as_str() == Some("configure") && stage["needs_user_input"] == true
+    }));
+    #[cfg(target_os = "windows")]
+    assert!(stages.iter().any(|stage| {
+        stage["name"].as_str() == Some("gateway") && stage["needs_user_input"] == true
+    }));
 }
 
 #[test]
@@ -420,4 +428,33 @@ fn cli_smoke_runs_native_config_templates_bootstrap_stage() {
         .join("example")
         .join("SKILL.md")
         .is_file());
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_skips_native_interactive_bootstrap_stages() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    fs::create_dir_all(&hermes_home).expect("Hermes home should be created");
+    let hermes_home_text = hermes_home.display().to_string();
+
+    for stage in ["configure", "gateway"] {
+        let out = run_manager(&[
+            "--hermes-home",
+            &hermes_home_text,
+            "--json",
+            "bootstrap-stage",
+            stage,
+        ]);
+        let report: serde_json::Value =
+            serde_json::from_str(&out).expect("interactive skip output should be json");
+
+        assert_eq!(report["stage"], stage);
+        assert_eq!(report["ok"], true);
+        assert_eq!(report["skipped"], true);
+        assert!(report["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("non-interactive"));
+    }
 }

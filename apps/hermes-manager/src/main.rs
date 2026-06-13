@@ -278,6 +278,21 @@ const WINDOWS_CONFIG_TEMPLATES_BOOTSTRAP_STAGE: BootstrapStageDescriptor =
         needs_user_input: false,
     };
 
+const WINDOWS_INTERACTIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
+    BootstrapStageDescriptor {
+        name: "configure",
+        title: "Configure API keys and models",
+        category: "post-install",
+        needs_user_input: true,
+    },
+    BootstrapStageDescriptor {
+        name: "gateway",
+        title: "Start messaging gateway",
+        category: "post-install",
+        needs_user_input: true,
+    },
+];
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("{err}");
@@ -746,27 +761,30 @@ fn run_native_bootstrap_stage(
     let started_at = Instant::now();
     let result = match stage {
         "install-metadata" => hermes_manager::commands::install_metadata(home)
-            .map(|()| false)
+            .map(|()| (false, None))
             .map_err(|err| ("stage-failed", err.to_string())),
         "bootstrap-marker" => {
             hermes_manager::commands::write_bootstrap_marker(home, options.commit, options.branch)
-                .map(|path| path.is_none())
+                .map(|path| (path.is_none(), None))
                 .map_err(|err| ("stage-failed", err.to_string()))
         }
-        "path" => run_native_path_stage(home, options),
-        "config-templates" => run_native_config_templates_stage(home, options),
+        "path" => run_native_path_stage(home, options).map(|skipped| (skipped, None)),
+        "config-templates" => {
+            run_native_config_templates_stage(home, options).map(|skipped| (skipped, None))
+        }
+        "configure" | "gateway" => run_native_interactive_skip_stage(stage),
         other => Err((
             "unknown-stage",
             format!("unknown native bootstrap stage: {other}"),
         )),
     };
     match result {
-        Ok(skipped) => BootstrapStageReport {
+        Ok((skipped, reason)) => BootstrapStageReport {
             ok: true,
             command: "bootstrap-stage",
             stage: stage.to_string(),
             skipped,
-            reason: None,
+            reason,
             duration_ms: started_at.elapsed().as_millis(),
             failure_category: None,
         },
@@ -787,6 +805,7 @@ fn native_bootstrap_stages() -> Vec<BootstrapStageDescriptor> {
     if cfg!(target_os = "windows") {
         stages.push(WINDOWS_PATH_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_CONFIG_TEMPLATES_BOOTSTRAP_STAGE);
+        stages.extend_from_slice(&WINDOWS_INTERACTIVE_BOOTSTRAP_STAGES);
     }
     stages
 }
@@ -839,6 +858,21 @@ fn run_native_config_templates_stage(
     hermes_manager::commands::write_config_templates(home, &install_root)
         .map(|()| false)
         .map_err(|err| ("stage-failed", err.to_string()))
+}
+
+fn run_native_interactive_skip_stage(
+    stage: &str,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            format!("native interactive stage skip is only complete on Windows: {stage}"),
+        ));
+    }
+    Ok((
+        true,
+        Some("skipped by native bridge for non-interactive desktop bootstrap".to_string()),
+    ))
 }
 
 #[cfg(test)]

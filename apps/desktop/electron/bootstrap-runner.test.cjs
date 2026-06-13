@@ -429,6 +429,71 @@ test('runBootstrap dispatches native path stage when the bridge advertises it', 
   }
 })
 
+test('runBootstrap dispatches non-interactive stages through the native bridge', async () => {
+  const home = mkTmpHome()
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-bootstrap-repo-'))
+  try {
+    const scripts = path.join(repo, 'scripts')
+    fs.mkdirSync(scripts, { recursive: true })
+    const script = path.join(scripts, SCRIPT_NAME)
+    fs.writeFileSync(
+      script,
+      fakeInstallerScript({
+        manifestStages: [
+          { name: 'configure', title: 'Configure API keys and models', needs_user_input: true },
+          { name: 'gateway', title: 'Starting messaging gateway', needs_user_input: true }
+        ],
+        stageOk: false
+      }),
+      { mode: 0o755 }
+    )
+
+    const nativeCalls = []
+    const result = await runBootstrap({
+      installStamp: { commit: 'a'.repeat(40), branch: 'main' },
+      activeRoot: path.join(home, 'hermes-agent'),
+      sourceRepoRoot: repo,
+      hermesHome: home,
+      logRoot: path.join(home, 'logs'),
+      resourcesPath: 'C:\\Hermes\\resources',
+      platform: 'win32',
+      onEvent: () => {},
+      writeMarker: payload => ({ ...payload, schemaVersion: 1 }),
+      _recordInstallMetadata: () => true,
+      _probeNativeBootstrapCapabilities: () => ({
+        available: true,
+        canRunFullBootstrap: false,
+        supportedStages: ['configure', 'gateway']
+      }),
+      _probeNativeBootstrapManifest: () => ({
+        available: true,
+        protocolVersion: 1,
+        stages: [
+          { name: 'configure', title: 'Configure API keys and models', needs_user_input: true },
+          { name: 'gateway', title: 'Starting messaging gateway', needs_user_input: true }
+        ]
+      }),
+      _runNativeBootstrapStage: async ({ stage }) => {
+        nativeCalls.push(stage.name)
+        return {
+          type: 'stage',
+          name: stage.name,
+          state: 'skipped',
+          durationMs: 1,
+          runner: 'native',
+          json: { ok: true, stage: stage.name, skipped: true }
+        }
+      }
+    })
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(nativeCalls, ['configure', 'gateway'])
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+    fs.rmSync(repo, { recursive: true, force: true })
+  }
+})
+
 test('runBootstrap falls back to script when native stage asks for fallback', async () => {
   const home = mkTmpHome()
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-bootstrap-repo-'))
@@ -489,9 +554,10 @@ test('runBootstrap falls back to script when native stage asks for fallback', as
 function fakeInstallerScript(options = {}) {
   const stageName = options.stageName || 'metadata'
   const stageOk = options.stageOk !== false
-  const manifestJson =
-    `{"stages":[{"name":"${stageName}","title":"Metadata",` +
-    '"category":"install","needs_user_input":false}],"protocol_version":1}'
+  const manifestStages = options.manifestStages || [
+    { name: stageName, title: 'Metadata', category: 'install', needs_user_input: false }
+  ]
+  const manifestJson = JSON.stringify({ stages: manifestStages, protocol_version: 1 })
   const stageJson = stageOk
     ? `{"ok":true,"stage":"${stageName}"}`
     : `{"ok":false,"stage":"${stageName}","reason":"script fallback should not run"}`
