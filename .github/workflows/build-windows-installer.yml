@@ -265,6 +265,9 @@ jobs:
         run: >
           python scripts/validate_installer_artifacts.py
           --artifact "apps/bootstrap-installer/src-tauri/python-runtime/python-runtime-manifest.json"
+          --wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse
+          --wheelhouse-platform windows
+          --wheelhouse-arch x64
           --python-runtime-dir apps/bootstrap-installer/src-tauri/python-runtime
           --python-runtime-platform windows
           --python-runtime-arch x64

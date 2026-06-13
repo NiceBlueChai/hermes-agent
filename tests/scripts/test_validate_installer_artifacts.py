@@ -635,6 +635,219 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
 
             self.assertEqual(checked, [manifest])
 
+    def test_validate_artifacts_accepts_matching_wheelhouse_and_python_runtime_tags(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wheelhouse = root / "wheelhouse"
+            runtime = root / "python-runtime"
+            wheel = wheelhouse / "demo-0.1-py3-none-any.whl"
+            python = runtime / "python.exe"
+            wheelhouse.mkdir(parents=True)
+            runtime.mkdir(parents=True)
+            wheel.write_bytes(b"wheel bytes")
+            python.write_bytes(b"python runtime")
+            (wheelhouse / "wheelhouse-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "wheels": [
+                            {
+                                "arch": "x64",
+                                "platform": "windows",
+                                "python": "cp311",
+                                "name": wheel.name,
+                                "sizeBytes": len(b"wheel bytes"),
+                                "sha256": module.sha256_file(wheel),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (runtime / "python-runtime-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "platform": "windows",
+                        "arch": "x64",
+                        "pythonTag": "cp311",
+                        "files": [
+                            {
+                                "name": python.name,
+                                "url": "https://example.invalid/python-runtime.zip",
+                                "sizeBytes": len(b"python runtime"),
+                                "sha256": module.sha256_file(python),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            checked = module.validate_artifacts(
+                root,
+                [
+                    "wheelhouse/wheelhouse-manifest.json",
+                    "python-runtime/python-runtime-manifest.json",
+                ],
+                wheelhouse_dir=wheelhouse,
+                wheelhouse_platform="windows",
+                wheelhouse_arch="x64",
+                python_runtime_dir=runtime,
+                python_runtime_platform="windows",
+                python_runtime_arch="x64",
+            )
+
+            self.assertEqual(
+                checked,
+                [
+                    wheelhouse / "wheelhouse-manifest.json",
+                    runtime / "python-runtime-manifest.json",
+                ],
+            )
+
+    def test_validate_artifacts_rejects_mismatched_wheelhouse_and_python_runtime_tags(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wheelhouse = root / "wheelhouse"
+            runtime = root / "python-runtime"
+            wheel = wheelhouse / "demo-0.1-py3-none-any.whl"
+            python = runtime / "python.exe"
+            wheelhouse.mkdir(parents=True)
+            runtime.mkdir(parents=True)
+            wheel.write_bytes(b"wheel bytes")
+            python.write_bytes(b"python runtime")
+            (wheelhouse / "wheelhouse-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "wheels": [
+                            {
+                                "arch": "x64",
+                                "platform": "windows",
+                                "python": "cp311",
+                                "name": wheel.name,
+                                "sizeBytes": len(b"wheel bytes"),
+                                "sha256": module.sha256_file(wheel),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (runtime / "python-runtime-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "platform": "windows",
+                        "arch": "x64",
+                        "pythonTag": "cp312",
+                        "files": [
+                            {
+                                "name": python.name,
+                                "url": "https://example.invalid/python-runtime.zip",
+                                "sizeBytes": len(b"python runtime"),
+                                "sha256": module.sha256_file(python),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "python runtime tag mismatch"):
+                module.validate_artifacts(
+                    root,
+                    [
+                        "wheelhouse/wheelhouse-manifest.json",
+                        "python-runtime/python-runtime-manifest.json",
+                    ],
+                    wheelhouse_dir=wheelhouse,
+                    wheelhouse_platform="windows",
+                    wheelhouse_arch="x64",
+                    python_runtime_dir=runtime,
+                    python_runtime_platform="windows",
+                    python_runtime_arch="x64",
+                )
+
+    def test_runtime_tag_match_uses_wheelhouse_without_counting_it_against_runtime_budget(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wheelhouse = root / "wheelhouse"
+            runtime = root / "python-runtime"
+            wheel = wheelhouse / "demo-0.1-py3-none-any.whl"
+            python = runtime / "python.exe"
+            wheelhouse.mkdir(parents=True)
+            runtime.mkdir(parents=True)
+            wheel.write_bytes(b"x" * 4096)
+            python.write_bytes(b"py")
+            (wheelhouse / "wheelhouse-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "wheels": [
+                            {
+                                "arch": "x64",
+                                "platform": "windows",
+                                "python": "cp311",
+                                "name": wheel.name,
+                                "sizeBytes": 4096,
+                                "sha256": module.sha256_file(wheel),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (runtime / "python-runtime-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "platform": "windows",
+                        "arch": "x64",
+                        "pythonTag": "cp311",
+                        "files": [
+                            {
+                                "name": python.name,
+                                "url": "https://example.invalid/python-runtime.zip",
+                                "sizeBytes": 2,
+                                "sha256": module.sha256_file(python),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            checked = module.validate_artifacts(
+                root,
+                ["python-runtime/python-runtime-manifest.json"],
+                wheelhouse_dir=wheelhouse,
+                wheelhouse_platform="windows",
+                wheelhouse_arch="x64",
+                python_runtime_dir=runtime,
+                python_runtime_platform="windows",
+                python_runtime_arch="x64",
+                max_artifact_bytes=1024,
+            )
+
+            self.assertEqual(checked, [runtime / "python-runtime-manifest.json"])
+
     def test_validate_artifacts_rejects_unmanifested_python_runtime_payload(self):
         module = _load_script_module()
         with tempfile.TemporaryDirectory() as tmp:

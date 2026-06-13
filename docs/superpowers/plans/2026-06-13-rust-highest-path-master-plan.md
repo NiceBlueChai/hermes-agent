@@ -246,6 +246,8 @@ python -m unittest tests.scripts.test_prepare_bootstrap_tools
   `uv python find 3.11`, and falls back to `uv python install 3.11` without deleting the legacy path.
 - `scripts/build_python_runtime_archive.py` now rejects host/target label mismatches by default so a locally generated
   uv runtime cannot be uploaded with the wrong platform or architecture metadata.
+- Release artifact validation now checks that the bundled runtime `pythonTag` matches the wheelhouse Python tag whenever
+  both resources are present.
 
 **Verification command:**
 

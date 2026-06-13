@@ -197,6 +197,8 @@ class PreparePythonRuntimeTests(unittest.TestCase):
         self.assertIn('@("--audited-archive", "$env:HERMES_PYTHON_RUNTIME_ARCHIVE")', windows_workflow)
         self.assertIn("scripts/prepare_python_runtime.py", windows_workflow)
         self.assertIn("--self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime", windows_workflow)
+        self.assertIn("--wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse", windows_workflow)
+        self.assertIn("--wheelhouse-platform windows", windows_workflow)
         self.assertIn("--python-runtime-dir apps/bootstrap-installer/src-tauri/python-runtime", windows_workflow)
         self.assertIn("apps/bootstrap-installer/src-tauri/python-runtime/*", windows_workflow)
 
@@ -213,6 +215,8 @@ class PreparePythonRuntimeTests(unittest.TestCase):
         self.assertIn("--audited-archive \"${HERMES_PYTHON_RUNTIME_ARCHIVE}\"", unix_workflow)
         self.assertIn("scripts/prepare_python_runtime.py", unix_workflow)
         self.assertIn("--self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime", unix_workflow)
+        self.assertIn("--wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse", unix_workflow)
+        self.assertIn("--wheelhouse-platform ${{ matrix.platform }}", unix_workflow)
         self.assertIn("--python-runtime-dir apps/bootstrap-installer/src-tauri/python-runtime", unix_workflow)
         self.assertIn("apps/bootstrap-installer/src-tauri/python-runtime/*", unix_workflow)
 

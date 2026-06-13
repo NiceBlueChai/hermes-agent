@@ -80,6 +80,8 @@ def validate_artifacts(
 
     checked: list[Path] = []
     budget_paths: list[Path] = []
+    validated_wheelhouse_dir = None
+    validated_python_runtime_dir = None
     for pattern in patterns:
         matches = sorted(root.glob(pattern))
         if not matches:
@@ -94,7 +96,8 @@ def validate_artifacts(
     manifest_paths = [path for path in checked if path.name == MANIFEST_NAME]
     if bootstrap_tools_dir is not None:
         validate_bootstrap_tools_payload(bootstrap_tools_dir, bootstrap_tools_platform, bootstrap_tools_arch)
-        budget_paths.append(bootstrap_tools_dir)
+        if checked_contains_payload_dir(checked, bootstrap_tools_dir, MANIFEST_NAME):
+            budget_paths.append(bootstrap_tools_dir)
     elif manifest_paths:
         validate_bootstrap_tools_payload(manifest_paths[0].parent, bootstrap_tools_platform, bootstrap_tools_arch)
         budget_paths.append(manifest_paths[0].parent)
@@ -102,7 +105,9 @@ def validate_artifacts(
     wheelhouse_repo_root = root if wheelhouse_source_inputs_exist(root) else None
     if wheelhouse_dir is not None:
         validate_wheelhouse_payload(wheelhouse_dir, wheelhouse_platform, wheelhouse_arch, wheelhouse_repo_root)
-        budget_paths.append(wheelhouse_dir)
+        validated_wheelhouse_dir = wheelhouse_dir
+        if checked_contains_payload_dir(checked, wheelhouse_dir, WHEELHOUSE_MANIFEST_NAME):
+            budget_paths.append(wheelhouse_dir)
     elif wheelhouse_manifest_paths:
         validate_wheelhouse_payload(
             wheelhouse_manifest_paths[0].parent,
@@ -110,6 +115,7 @@ def validate_artifacts(
             wheelhouse_arch,
             wheelhouse_repo_root,
         )
+        validated_wheelhouse_dir = wheelhouse_manifest_paths[0].parent
         budget_paths.append(wheelhouse_manifest_paths[0].parent)
     python_runtime_manifest_paths = [
         path for path in checked if path.name == PYTHON_RUNTIME_MANIFEST_NAME
@@ -120,14 +126,22 @@ def validate_artifacts(
             python_runtime_platform,
             python_runtime_arch,
         )
-        budget_paths.append(python_runtime_dir)
+        validated_python_runtime_dir = python_runtime_dir
+        if checked_contains_payload_dir(checked, python_runtime_dir, PYTHON_RUNTIME_MANIFEST_NAME):
+            budget_paths.append(python_runtime_dir)
     elif python_runtime_manifest_paths:
         validate_python_runtime_payload(
             python_runtime_manifest_paths[0].parent,
             python_runtime_platform,
             python_runtime_arch,
         )
+        validated_python_runtime_dir = python_runtime_manifest_paths[0].parent
         budget_paths.append(python_runtime_manifest_paths[0].parent)
+    if validated_wheelhouse_dir is not None and validated_python_runtime_dir is not None:
+        validate_python_runtime_matches_wheelhouse(
+            validated_wheelhouse_dir,
+            validated_python_runtime_dir,
+        )
     if max_artifact_bytes is not None:
         for path in budget_paths:
             validate_artifact_size_gate(path, max_artifact_bytes)
@@ -139,6 +153,38 @@ def validate_artifacts(
                 f"{max_total_artifact_bytes}"
             )
     return checked
+
+
+def checked_contains_payload_dir(checked: list[Path], payload_dir: Path, manifest_name: str) -> bool:
+    """Return whether matched artifacts explicitly include a payload directory or its manifest."""
+
+    payload_dir = payload_dir.resolve()
+    manifest_path = payload_dir / manifest_name
+    for path in checked:
+        resolved = path.resolve()
+        if resolved == payload_dir or resolved == manifest_path or resolved.parent == payload_dir:
+            return True
+    return False
+
+
+def validate_python_runtime_matches_wheelhouse(wheelhouse_dir: Path, python_runtime_dir: Path) -> None:
+    """Validate that bundled wheels and the bundled runtime target the same Python ABI."""
+
+    wheelhouse_manifest = json.loads((wheelhouse_dir / WHEELHOUSE_MANIFEST_NAME).read_text(encoding="utf-8"))
+    runtime_manifest = json.loads((python_runtime_dir / PYTHON_RUNTIME_MANIFEST_NAME).read_text(encoding="utf-8"))
+    wheel_tags = {
+        wheel.get("python")
+        for wheel in wheelhouse_manifest.get("wheels", [])
+        if isinstance(wheel.get("python"), str)
+    }
+    if len(wheel_tags) != 1:
+        raise RuntimeError("wheelhouse manifest must contain exactly one Python tag")
+    wheel_tag = next(iter(wheel_tags))
+    runtime_tag = runtime_manifest.get("pythonTag")
+    if wheel_tag != runtime_tag:
+        raise RuntimeError(
+            f"python runtime tag mismatch: wheelhouse uses {wheel_tag}, runtime uses {runtime_tag}"
+        )
 
 
 def validate_artifact_path(path: Path) -> None:
