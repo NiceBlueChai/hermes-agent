@@ -492,11 +492,15 @@ async fn run_bootstrap(
     let rust_plan = crate::orchestrator::build_stage_plan(&manifest.stages, args.include_desktop);
     let bundled_tools_dir = bootstrap_tools_resource_dir(&app);
     let bundled_wheelhouse_dir = wheelhouse_resource_dir(&app);
+    let bundled_python_runtime_dir = python_runtime_resource_dir(&app);
     if let Some(path) = &bundled_tools_dir {
         emit_log(&format!("[bootstrap] bundled tool archives at {}", path.display()));
     }
     if let Some(path) = &bundled_wheelhouse_dir {
         emit_log(&format!("[bootstrap] bundled Python wheelhouse at {}", path.display()));
+    }
+    if let Some(path) = &bundled_python_runtime_dir {
+        emit_log(&format!("[bootstrap] bundled Python runtime at {}", path.display()));
     }
     emit_log(&crate::orchestrator::summarize_plan(
         &install_state,
@@ -747,6 +751,7 @@ async fn run_bootstrap(
                 Some(crate::orchestrator::install_python_runtime_stage(
                     &hermes_home,
                     &install_root,
+                    bundled_python_runtime_dir.as_deref(),
                 ))
             } else if cfg!(target_os = "windows") && stage.name.eq_ignore_ascii_case("node") {
                 Some(
@@ -1403,6 +1408,13 @@ fn bootstrap_tools_resource_dir(app: &AppHandle) -> Option<PathBuf> {
 fn wheelhouse_resource_dir(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .resolve("wheelhouse", BaseDirectory::Resource)
+        .ok()
+        .filter(|path| path.is_dir())
+}
+
+fn python_runtime_resource_dir(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .resolve("python-runtime", BaseDirectory::Resource)
         .ok()
         .filter(|path| path.is_dir())
 }

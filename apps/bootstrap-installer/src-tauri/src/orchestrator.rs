@@ -19,6 +19,8 @@ const BOOTSTRAP_TOOLS_MANIFEST: &str = "bootstrap-tools-manifest.json";
 const BOOTSTRAP_TOOLS_MANIFEST_SCHEMA_VERSION: u32 = 1;
 const WHEELHOUSE_MANIFEST: &str = "wheelhouse-manifest.json";
 const WHEELHOUSE_MANIFEST_SCHEMA_VERSION: u32 = 1;
+const PYTHON_RUNTIME_MANIFEST: &str = "python-runtime-manifest.json";
+const PYTHON_RUNTIME_MANIFEST_SCHEMA_VERSION: u32 = 1;
 const ALLOWED_WHEELHOUSE_METADATA: [&str; 2] = [".gitignore", "README.md"];
 const DESKTOP_ELECTRON_FALLBACK_MIRROR: &str = "https://npmmirror.com/mirrors/electron/";
 const PYTHON_KNOWN_BROKEN_EXTRAS: &[&str] = &[];
@@ -73,6 +75,15 @@ pub struct PythonRuntimeStagePlan {
     pub uv_cache_dir: PathBuf,
     pub python_install_dir: PathBuf,
     pub python_bin_dir: PathBuf,
+    pub runtime_archive: Option<PythonRuntimeArchiveSource>,
+}
+
+/// Manifest-verified Python runtime archive bundled with the installer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PythonRuntimeArchiveSource {
+    pub path: PathBuf,
+    pub name: String,
+    pub python_tag: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -391,6 +402,26 @@ struct WheelhouseManifestWheel {
     python: Option<String>,
     #[serde(rename = "sizeBytes", default)]
     size_bytes: Option<u64>,
+    sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PythonRuntimeManifest {
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    platform: String,
+    arch: String,
+    #[serde(rename = "pythonTag")]
+    python_tag: String,
+    files: Vec<PythonRuntimeManifestFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PythonRuntimeManifestFile {
+    name: String,
+    url: String,
+    #[serde(rename = "sizeBytes")]
+    size_bytes: u64,
     sha256: String,
 }
 
@@ -1368,6 +1399,7 @@ pub fn python_runtime_stage_plan_for_layout<P>(
     install_root: &Path,
     path_env: P,
     pathext: &str,
+    python_runtime_dir: Option<&Path>,
 ) -> Result<PythonRuntimeStagePlan>
 where
     P: AsRef<OsStr>,
@@ -1378,14 +1410,63 @@ where
         uv_cache_dir: hermes_home.join("uv-cache"),
         python_install_dir: dirs.install_dir,
         python_bin_dir: dirs.bin_dir,
+        runtime_archive: python_runtime_dir.and_then(resolve_python_runtime_archive),
     })
 }
 
 /// Install the required Python runtime natively through uv.
-pub fn install_python_runtime_stage(hermes_home: &Path, install_root: &Path) -> Result<serde_json::Value> {
+pub fn install_python_runtime_stage(
+    hermes_home: &Path,
+    install_root: &Path,
+    python_runtime_dir: Option<&Path>,
+) -> Result<serde_json::Value> {
     let path_env = std::env::var_os("PATH").unwrap_or_default();
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
-    let plan = python_runtime_stage_plan_for_layout(hermes_home, install_root, path_env, &pathext)?;
+    let plan = python_runtime_stage_plan_for_layout(
+        hermes_home,
+        install_root,
+        path_env,
+        &pathext,
+        python_runtime_dir,
+    )?;
+
+    let mut fallback_reason = None;
+    if let Some(source) = &plan.runtime_archive {
+        match install_bundled_python_runtime_archive(&plan, source)
+            .and_then(|()| find_python_with_uv(&plan))
+        {
+            Ok(python) => {
+                return Ok(serde_json::json!({
+                    "uv": plan.uv,
+                    "python": python,
+                    "uvCacheDir": plan.uv_cache_dir,
+                    "pythonInstallDir": plan.python_install_dir,
+                    "pythonBinDir": plan.python_bin_dir,
+                    "pythonRuntimeSource": "bundled",
+                    "pythonRuntimeArchive": source.path,
+                }));
+            }
+            Err(err) => {
+                let _ = remove_path_if_exists(&plan.python_install_dir);
+                fallback_reason = Some(err.to_string());
+            }
+        }
+    }
+
+    run_uv_python_install(&plan)?;
+    let python = find_python_with_uv(&plan)?;
+    Ok(serde_json::json!({
+        "uv": plan.uv,
+        "python": python,
+        "uvCacheDir": plan.uv_cache_dir,
+        "pythonInstallDir": plan.python_install_dir,
+        "pythonBinDir": plan.python_bin_dir,
+        "pythonRuntimeSource": "uv",
+        "pythonRuntimeFallbackReason": fallback_reason,
+    }))
+}
+
+fn run_uv_python_install(plan: &PythonRuntimeStagePlan) -> Result<()> {
     let status = Command::new(&plan.uv)
         .args(["python", "install", "3.11"])
         .env("UV_CACHE_DIR", &plan.uv_cache_dir)
@@ -1401,6 +1482,10 @@ pub fn install_python_runtime_stage(hermes_home: &Path, install_root: &Path) -> 
             status.code()
         ));
     }
+    Ok(())
+}
+
+fn find_python_with_uv(plan: &PythonRuntimeStagePlan) -> Result<String> {
     let output = Command::new(&plan.uv)
         .args(["python", "find", "3.11"])
         .env("UV_CACHE_DIR", &plan.uv_cache_dir)
@@ -1420,13 +1505,45 @@ pub fn install_python_runtime_stage(hermes_home: &Path, install_root: &Path) -> 
     if python.is_empty() {
         return Err(anyhow!("uv python find returned an empty path after install"));
     }
-    Ok(serde_json::json!({
-        "uv": plan.uv,
-        "python": python,
-        "uvCacheDir": plan.uv_cache_dir,
-        "pythonInstallDir": plan.python_install_dir,
-        "pythonBinDir": plan.python_bin_dir,
-    }))
+    Ok(python)
+}
+
+fn install_bundled_python_runtime_archive(
+    plan: &PythonRuntimeStagePlan,
+    source: &PythonRuntimeArchiveSource,
+) -> Result<()> {
+    let tmp_dir = plan.python_install_dir.with_extension("extracting");
+    if let Some(parent) = plan.python_install_dir.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("creating Python runtime parent {}", parent.display()))?;
+    }
+    remove_path_if_exists(&tmp_dir)?;
+    fs::create_dir_all(&tmp_dir)
+        .with_context(|| format!("creating Python runtime extract dir {}", tmp_dir.display()))?;
+    let extract_result: Result<()> = if source.name.ends_with(".zip") {
+        crate::artifact::extract_zip_archive(&source.path, &tmp_dir).map(|_| ())
+    } else if source.name.ends_with(".tar.gz") {
+        extract_tar_gz_archive(&source.path, &tmp_dir, "Python runtime")
+    } else {
+        remove_path_if_exists(&tmp_dir)?;
+        return Err(anyhow!(
+            "unsupported Python runtime archive extension: {}",
+            source.name
+        ));
+    };
+    if let Err(err) = extract_result {
+        let _ = remove_path_if_exists(&tmp_dir);
+        return Err(err);
+    }
+    remove_path_if_exists(&plan.python_install_dir)?;
+    fs::rename(&tmp_dir, &plan.python_install_dir).with_context(|| {
+        format!(
+            "installing Python runtime from {} to {}",
+            source.path.display(),
+            plan.python_install_dir.display()
+        )
+    })?;
+    Ok(())
 }
 
 /// Build a Windows Node runtime plan from the Node.js latest-v22.x index.
@@ -3205,6 +3322,65 @@ fn wheelhouse_source_files_match(
         }
     }
     true
+}
+
+fn resolve_python_runtime_archive(runtime_dir: &Path) -> Option<PythonRuntimeArchiveSource> {
+    let manifest_path = runtime_dir.join(PYTHON_RUNTIME_MANIFEST);
+    let manifest = fs::read_to_string(&manifest_path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<PythonRuntimeManifest>(&text).ok())?;
+    if manifest.schema_version != PYTHON_RUNTIME_MANIFEST_SCHEMA_VERSION {
+        return None;
+    }
+    if manifest.platform != current_wheelhouse_platform() {
+        return None;
+    }
+    if current_wheelhouse_arch()
+        .map(|arch| manifest.arch.as_str() != arch)
+        .unwrap_or(true)
+    {
+        return None;
+    }
+    if !manifest.python_tag.starts_with("cp") || manifest.python_tag.len() <= 2 {
+        return None;
+    }
+
+    manifest.files.into_iter().find_map(|file| {
+        if !python_runtime_archive_name_is_plain_file(&file.name) {
+            return None;
+        }
+        if !file.url.starts_with("https://") {
+            return None;
+        }
+        if file.sha256.len() != 64 || !file.sha256.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            return None;
+        }
+        let path = runtime_dir.join(&file.name);
+        let Ok(bytes) = fs::read(&path) else {
+            return None;
+        };
+        if file.size_bytes != bytes.len() as u64 {
+            return None;
+        }
+        if !crate::artifact::sha256_hex(&bytes).eq_ignore_ascii_case(&file.sha256) {
+            return None;
+        }
+        Some(PythonRuntimeArchiveSource {
+            path,
+            name: file.name,
+            python_tag: manifest.python_tag.clone(),
+        })
+    })
+}
+
+fn python_runtime_archive_name_is_plain_file(name: &str) -> bool {
+    !name.trim().is_empty()
+        && name == name.trim()
+        && name != "."
+        && name != ".."
+        && !name.contains('/')
+        && !name.contains('\\')
+        && (name.ends_with(".zip") || name.ends_with(".tar.gz"))
 }
 
 fn current_wheelhouse_platform() -> &'static str {
@@ -6426,6 +6602,37 @@ mod tests {
         zip.finish().unwrap();
     }
 
+    fn write_test_bootstrap_tools_manifest(dir: &Path, archive_name: &str) {
+        let archive = dir.join(archive_name);
+        let bytes = std::fs::read(&archive).unwrap();
+        let target = bootstrap_archive_target_from_name(archive_name).unwrap();
+        std::fs::write(
+            dir.join("bootstrap-tools-manifest.json"),
+            format!(
+                r#"{{
+                    "schemaVersion": 1,
+                    "archives": [
+                        {{
+                            "arch": "{}",
+                            "platform": "{}",
+                            "name": "{}",
+                            "url": "https://example.invalid/{}",
+                            "sizeBytes": {},
+                            "sha256": "{}"
+                        }}
+                    ]
+                }}"#,
+                target.arch,
+                target.platform,
+                archive_name,
+                archive_name,
+                bytes.len(),
+                crate::artifact::sha256_hex(&bytes)
+            ),
+        )
+        .unwrap();
+    }
+
     fn write_test_tar_gz(path: &Path, entries: &[(&str, &[u8])]) {
         let file = std::fs::File::create(path).unwrap();
         let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
@@ -7300,6 +7507,7 @@ mod tests {
             &bundled.join("playwright-browsers-windows-x64.zip"),
             &[("playwright-browsers/chromium-1208/chrome-win/chrome.exe", b"chrome")],
         );
+        write_test_bootstrap_tools_manifest(&bundled, "playwright-browsers-windows-x64.zip");
 
         let source = install_bundled_playwright_browsers_if_available(
             &hermes_home,
@@ -7416,6 +7624,7 @@ mod tests {
             &bundled.join("electron-cache-windows-x64.zip"),
             &[("electron-cache/electron-v40.9.3-win32-x64.zip", b"electron zip")],
         );
+        write_test_bootstrap_tools_manifest(&bundled, "electron-cache-windows-x64.zip");
 
         let source = install_bundled_electron_cache_if_available(
             &hermes_home,
@@ -7545,6 +7754,7 @@ mod tests {
             &bundled.join("npm-cache-windows-x64.zip"),
             &[("npm-cache/_cacache/content-v2/sha512/aa/bb", b"cached package")],
         );
+        write_test_bootstrap_tools_manifest(&bundled, "npm-cache-windows-x64.zip");
 
         let source = install_bundled_npm_cache_if_available(
             &hermes_home,
@@ -9447,6 +9657,7 @@ mod tests {
             &hermes_home.join("hermes-agent"),
             &path_tools,
             ".EXE",
+            None,
         )
         .unwrap();
 
@@ -9454,6 +9665,148 @@ mod tests {
         assert_eq!(plan.uv_cache_dir, hermes_home.join("uv-cache"));
         assert_eq!(plan.python_install_dir, hermes_home.join("python"));
         assert_eq!(plan.python_bin_dir, hermes_home.join("bin"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn python_runtime_stage_plan_prefers_manifest_verified_bundled_archive() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-python-runtime-resource-plan-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+        let path_tools = root.join("tools");
+        let runtime_dir = root.join("resources").join("python-runtime");
+        let archive = runtime_dir.join("python-runtime.zip");
+        let arch = current_wheelhouse_arch().unwrap_or("x64");
+        std::fs::create_dir_all(hermes_home.join("bin")).unwrap();
+        std::fs::create_dir_all(&path_tools).unwrap();
+        std::fs::create_dir_all(&runtime_dir).unwrap();
+        std::fs::write(hermes_home.join("bin").join("uv.exe"), b"managed uv").unwrap();
+        std::fs::write(path_tools.join("uv.exe"), b"path uv").unwrap();
+        std::fs::write(&archive, b"runtime archive").unwrap();
+        std::fs::write(
+            runtime_dir.join("python-runtime-manifest.json"),
+            format!(
+                r#"{{
+                    "schemaVersion": 1,
+                    "platform": "{}",
+                    "arch": "{}",
+                    "pythonTag": "cp311",
+                    "files": [
+                        {{
+                            "name": "python-runtime.zip",
+                            "url": "https://example.invalid/python-runtime.zip",
+                            "sizeBytes": 15,
+                            "sha256": "{}"
+                        }}
+                    ]
+                }}"#,
+                current_wheelhouse_platform(),
+                arch,
+                crate::artifact::sha256_hex(b"runtime archive")
+            ),
+        )
+        .unwrap();
+
+        let plan = python_runtime_stage_plan_for_layout(
+            &hermes_home,
+            &hermes_home.join("hermes-agent"),
+            &path_tools,
+            ".EXE",
+            Some(&runtime_dir),
+        )
+        .unwrap();
+
+        let runtime_archive = plan.runtime_archive.unwrap();
+        assert_eq!(runtime_archive.path, archive);
+        assert_eq!(runtime_archive.name, "python-runtime.zip");
+        assert_eq!(runtime_archive.python_tag, "cp311");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn python_runtime_stage_plan_ignores_wrong_target_runtime_archive() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-python-runtime-wrong-target-plan-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+        let path_tools = root.join("tools");
+        let runtime_dir = root.join("resources").join("python-runtime");
+        let archive = runtime_dir.join("python-runtime.zip");
+        std::fs::create_dir_all(hermes_home.join("bin")).unwrap();
+        std::fs::create_dir_all(&path_tools).unwrap();
+        std::fs::create_dir_all(&runtime_dir).unwrap();
+        std::fs::write(hermes_home.join("bin").join("uv.exe"), b"managed uv").unwrap();
+        std::fs::write(&archive, b"runtime archive").unwrap();
+        std::fs::write(
+            runtime_dir.join("python-runtime-manifest.json"),
+            format!(
+                r#"{{
+                    "schemaVersion": 1,
+                    "platform": "unsupported",
+                    "arch": "mismatch",
+                    "pythonTag": "cp311",
+                    "files": [
+                        {{
+                            "name": "python-runtime.zip",
+                            "url": "https://example.invalid/python-runtime.zip",
+                            "sizeBytes": 15,
+                            "sha256": "{}"
+                        }}
+                    ]
+                }}"#,
+                crate::artifact::sha256_hex(b"runtime archive")
+            ),
+        )
+        .unwrap();
+
+        let plan = python_runtime_stage_plan_for_layout(
+            &hermes_home,
+            &hermes_home.join("hermes-agent"),
+            &path_tools,
+            ".EXE",
+            Some(&runtime_dir),
+        )
+        .unwrap();
+
+        assert!(plan.runtime_archive.is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn install_bundled_python_runtime_archive_extracts_zip_payload() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-python-runtime-extract-{}",
+            std::process::id()
+        ));
+        let archive = root.join("python-runtime.zip");
+        let install_dir = root.join("home").join("python");
+        let source = PythonRuntimeArchiveSource {
+            path: archive.clone(),
+            name: "python-runtime.zip".to_string(),
+            python_tag: "cp311".to_string(),
+        };
+        let plan = PythonRuntimeStagePlan {
+            uv: root.join("uv.exe"),
+            uv_cache_dir: root.join("uv-cache"),
+            python_install_dir: install_dir.clone(),
+            python_bin_dir: root.join("home").join("bin"),
+            runtime_archive: Some(source.clone()),
+        };
+        std::fs::create_dir_all(&root).unwrap();
+        write_test_zip(&archive, &[("cpython/python.exe", b"python")]);
+
+        install_bundled_python_runtime_archive(&plan, &source).unwrap();
+
+        assert_eq!(
+            std::fs::read(install_dir.join("cpython").join("python.exe")).unwrap(),
+            b"python"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
