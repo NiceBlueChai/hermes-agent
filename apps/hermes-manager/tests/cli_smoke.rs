@@ -288,6 +288,10 @@ fn cli_smoke_reports_native_bootstrap_manifest() {
         .iter()
         .any(|stage| stage["name"].as_str() == Some("node")));
     #[cfg(target_os = "windows")]
+    assert!(stages
+        .iter()
+        .any(|stage| stage["name"].as_str() == Some("uv")));
+    #[cfg(target_os = "windows")]
     assert!(stages.iter().any(|stage| {
         stage["name"].as_str() == Some("configure") && stage["needs_user_input"] == true
     }));
@@ -718,6 +722,61 @@ fn cli_smoke_falls_back_for_native_node_stage_when_node_is_missing() {
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(report["stage"], "node");
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["failureCategory"], "fallback-to-script");
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_skips_native_uv_stage_when_uv_is_available() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let uv_dir = temp.path().join("uv");
+    fs::create_dir_all(&uv_dir).expect("uv dir should be created");
+    fs::write(uv_dir.join("uv.cmd"), "@echo uv 0.8.0\r\n").expect("uv shim should be written");
+    let hermes_home_text = hermes_home.display().to_string();
+    let uv_path = uv_dir.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "uv",
+        "--current-path",
+        &uv_path,
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("uv stage skip output should be json");
+
+    assert_eq!(report["stage"], "uv");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], true);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_falls_back_for_native_uv_stage_when_uv_is_missing() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    fs::create_dir_all(&hermes_home).expect("Hermes home should be created");
+    let hermes_home_text = hermes_home.display().to_string();
+
+    let output = run_manager_output(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "uv",
+        "--current-path",
+        "",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("uv fallback output should be json");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(report["stage"], "uv");
     assert_eq!(report["ok"], false);
     assert_eq!(report["failureCategory"], "fallback-to-script");
 }

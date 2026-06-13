@@ -309,6 +309,13 @@ const WINDOWS_NODE_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDes
     needs_user_input: false,
 };
 
+const WINDOWS_UV_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "uv",
+    title: "Install uv package manager",
+    category: "prereqs",
+    needs_user_input: false,
+};
+
 const WINDOWS_INTERACTIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
     BootstrapStageDescriptor {
         name: "configure",
@@ -800,6 +807,7 @@ fn run_native_bootstrap_stage(
                 .map_err(|err| ("stage-failed", err.to_string()))
         }
         "path" => run_native_path_stage(home, options).map(|skipped| (skipped, None)),
+        "uv" => run_native_uv_stage(home, options),
         "node" => run_native_node_stage(home, options),
         "system-packages" => run_native_system_packages_stage(options),
         "config-templates" => {
@@ -838,6 +846,7 @@ fn run_native_bootstrap_stage(
 fn native_bootstrap_stages() -> Vec<BootstrapStageDescriptor> {
     let mut stages = BASE_NATIVE_BOOTSTRAP_STAGES.to_vec();
     if cfg!(target_os = "windows") {
+        stages.push(WINDOWS_UV_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_NODE_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_SYSTEM_PACKAGES_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_NODE_DEPS_BOOTSTRAP_STAGE);
@@ -879,6 +888,43 @@ fn run_native_path_stage(
         .map_err(|err| ("stage-failed", err.to_string()))?;
     }
     Ok(false)
+}
+
+fn run_native_uv_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native uv probe is only complete on Windows".to_string(),
+        ));
+    }
+    let path_text = windows_stage_path(options.current_path)?;
+    let uv = Some(home.join("bin").join("uv.exe"))
+        .filter(|path| path.is_file())
+        .or_else(|| windows_path_command(&path_text, "uv"));
+    let Some(uv) = uv else {
+        return Err((
+            "fallback-to-script",
+            "uv missing; script installs managed uv".to_string(),
+        ));
+    };
+    let output = ProcessCommand::new(&uv)
+        .arg("--version")
+        .output()
+        .map_err(|err| ("stage-failed", err.to_string()))?;
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if output.status.success() {
+        return Ok((
+            true,
+            Some(format!("{version} already available; uv stage skipped")),
+        ));
+    }
+    Err((
+        "fallback-to-script",
+        "uv exists but did not run successfully; script reinstalls managed uv".to_string(),
+    ))
 }
 
 fn run_native_node_deps_stage(
