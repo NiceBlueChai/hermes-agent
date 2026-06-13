@@ -9820,6 +9820,39 @@ mod tests {
     }
 
     #[test]
+    fn install_bundled_python_runtime_archive_rejects_unsafe_zip_entries() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-python-runtime-unsafe-zip-{}",
+            std::process::id()
+        ));
+        let archive = root.join("python-runtime.zip");
+        let install_dir = root.join("home").join("python");
+        let source = PythonRuntimeArchiveSource {
+            path: archive.clone(),
+            name: "python-runtime.zip".to_string(),
+            python_tag: "cp311".to_string(),
+        };
+        let plan = PythonRuntimeStagePlan {
+            uv: root.join("uv.exe"),
+            uv_cache_dir: root.join("uv-cache"),
+            python_install_dir: install_dir.clone(),
+            python_bin_dir: root.join("home").join("bin"),
+            runtime_archive: Some(source.clone()),
+        };
+        std::fs::create_dir_all(&root).unwrap();
+        write_test_zip(&archive, &[("../escape.txt", b"escape")]);
+
+        let err = install_bundled_python_runtime_archive(&plan, &source).unwrap_err();
+
+        assert!(err.to_string().contains("unsafe zip entry"));
+        assert!(!install_dir.with_extension("extracting").exists());
+        assert!(!install_dir.exists());
+        assert!(!root.join("escape.txt").exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn python_runtime_dirs_use_shared_paths_for_fhs_layout() {
         let hermes_home = PathBuf::from("/root/.hermes");
 

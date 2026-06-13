@@ -248,6 +248,8 @@ python -m unittest tests.scripts.test_prepare_bootstrap_tools
   uv runtime cannot be uploaded with the wrong platform or architecture metadata.
 - Release artifact validation now checks that the bundled runtime `pythonTag` matches the wheelhouse Python tag whenever
   both resources are present.
+- The Rust runtime extraction path has a dedicated unsafe ZIP-entry regression test in addition to shared archive
+  extraction safety coverage.
 
 **Verification command:**
 
