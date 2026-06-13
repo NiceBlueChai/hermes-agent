@@ -1,5 +1,6 @@
 //! Command-line entrypoint for the Hermes install manager.
 
+use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -277,6 +278,13 @@ const WINDOWS_CONFIG_TEMPLATES_BOOTSTRAP_STAGE: BootstrapStageDescriptor =
         category: "finalize",
         needs_user_input: false,
     };
+
+const WINDOWS_PLATFORM_SDKS_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "platform-sdks",
+    title: "Install messaging platform SDKs",
+    category: "finalize",
+    needs_user_input: false,
+};
 
 const WINDOWS_INTERACTIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
     BootstrapStageDescriptor {
@@ -772,6 +780,7 @@ fn run_native_bootstrap_stage(
         "config-templates" => {
             run_native_config_templates_stage(home, options).map(|skipped| (skipped, None))
         }
+        "platform-sdks" => run_native_platform_sdks_stage(home, options),
         "configure" | "gateway" => run_native_interactive_skip_stage(stage),
         other => Err((
             "unknown-stage",
@@ -805,6 +814,7 @@ fn native_bootstrap_stages() -> Vec<BootstrapStageDescriptor> {
     if cfg!(target_os = "windows") {
         stages.push(WINDOWS_PATH_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_CONFIG_TEMPLATES_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_PLATFORM_SDKS_BOOTSTRAP_STAGE);
         stages.extend_from_slice(&WINDOWS_INTERACTIVE_BOOTSTRAP_STAGES);
     }
     stages
@@ -858,6 +868,72 @@ fn run_native_config_templates_stage(
     hermes_manager::commands::write_config_templates(home, &install_root)
         .map(|()| false)
         .map_err(|err| ("stage-failed", err.to_string()))
+}
+
+fn run_native_platform_sdks_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native platform SDK probe is only complete on Windows".to_string(),
+        ));
+    }
+    let install_root = options
+        .install_root
+        .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    let python = install_root.join("venv").join("Scripts").join("python.exe");
+    if !python.is_file() {
+        return Ok((
+            true,
+            Some("venv Python missing; platform SDK verification skipped".to_string()),
+        ));
+    }
+    let env_path = home.join(".env");
+    if !env_path.is_file() {
+        return Ok((
+            true,
+            Some("no .env file; no messaging platform SDKs required".to_string()),
+        ));
+    }
+    let env_text =
+        fs::read_to_string(&env_path).map_err(|err| ("stage-failed", err.to_string()))?;
+    if !has_configured_platform_sdk_token(&env_text) {
+        return Ok((
+            true,
+            Some(
+                "no configured messaging platform tokens; platform SDK verification skipped"
+                    .to_string(),
+            ),
+        ));
+    }
+    Err((
+        "fallback-to-script",
+        "messaging platform tokens found; script verifies and installs SDKs".to_string(),
+    ))
+}
+
+fn has_configured_platform_sdk_token(env_text: &str) -> bool {
+    const TOKEN_NAMES: [&str; 5] = [
+        "TELEGRAM_BOT_TOKEN",
+        "DISCORD_BOT_TOKEN",
+        "SLACK_BOT_TOKEN",
+        "SLACK_APP_TOKEN",
+        "WHATSAPP_ENABLED",
+    ];
+    env_text.lines().any(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.contains("your-token-here") {
+            return false;
+        }
+        TOKEN_NAMES.iter().any(|name| {
+            trimmed
+                .strip_prefix(&format!("{name}="))
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false)
+        })
+    })
 }
 
 fn run_native_interactive_skip_stage(

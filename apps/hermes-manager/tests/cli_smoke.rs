@@ -32,6 +32,13 @@ fn run_manager(args: &[&str]) -> String {
     String::from_utf8(output.stdout).expect("stdout should be utf-8")
 }
 
+fn run_manager_output(args: &[&str]) -> std::process::Output {
+    Command::new(manager_binary())
+        .args(args)
+        .output()
+        .expect("manager command should run")
+}
+
 fn create_runtime_dirs(hermes_home: &Path) -> Vec<PathBuf> {
     let paths = hermes_manager::paths::managed_runtime_roots(hermes_home);
     for path in &paths {
@@ -265,6 +272,10 @@ fn cli_smoke_reports_native_bootstrap_manifest() {
         .iter()
         .any(|stage| stage["name"].as_str() == Some("config-templates")));
     #[cfg(target_os = "windows")]
+    assert!(stages
+        .iter()
+        .any(|stage| stage["name"].as_str() == Some("platform-sdks")));
+    #[cfg(target_os = "windows")]
     assert!(stages.iter().any(|stage| {
         stage["name"].as_str() == Some("configure") && stage["needs_user_input"] == true
     }));
@@ -457,4 +468,77 @@ fn cli_smoke_skips_native_interactive_bootstrap_stages() {
             .unwrap_or_default()
             .contains("non-interactive"));
     }
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_skips_native_platform_sdks_when_no_tokens_are_configured() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let install_root = hermes_manager::paths::agent_root(&hermes_home);
+    fs::create_dir_all(install_root.join("venv").join("Scripts")).expect("venv should be created");
+    fs::write(
+        install_root.join("venv").join("Scripts").join("python.exe"),
+        "",
+    )
+    .expect("python placeholder should be written");
+    fs::write(
+        hermes_home.join(".env"),
+        "TELEGRAM_BOT_TOKEN=your-token-here\n# DISCORD_BOT_TOKEN=abc\n",
+    )
+    .expect("env file should be written");
+    let hermes_home_text = hermes_home.display().to_string();
+    let install_root_text = install_root.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "platform-sdks",
+        "--install-root",
+        &install_root_text,
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("platform sdk skip output should be json");
+
+    assert_eq!(report["stage"], "platform-sdks");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], true);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_falls_back_for_native_platform_sdks_when_tokens_are_configured() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let install_root = hermes_manager::paths::agent_root(&hermes_home);
+    fs::create_dir_all(install_root.join("venv").join("Scripts")).expect("venv should be created");
+    fs::write(
+        install_root.join("venv").join("Scripts").join("python.exe"),
+        "",
+    )
+    .expect("python placeholder should be written");
+    fs::write(hermes_home.join(".env"), "TELEGRAM_BOT_TOKEN=abc\n")
+        .expect("env file should be written");
+    let hermes_home_text = hermes_home.display().to_string();
+    let install_root_text = install_root.display().to_string();
+
+    let output = run_manager_output(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "platform-sdks",
+        "--install-root",
+        &install_root_text,
+    ]);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("platform sdk fallback output should be json");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(report["stage"], "platform-sdks");
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["failureCategory"], "fallback-to-script");
 }
