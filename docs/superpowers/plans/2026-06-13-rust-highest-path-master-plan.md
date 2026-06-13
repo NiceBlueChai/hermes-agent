@@ -408,6 +408,11 @@ Do not delete a fallback in the same phase that introduces its Rust replacement.
 - Modify: fallback branches in `scripts/install.ps1`, `scripts/install.sh`,
   `apps/bootstrap-installer/src-tauri/src/orchestrator.rs`, and desktop bootstrap files only when all gates above are
   satisfied.
+- Add: `docs/release/fallback-burn-down.json` records retained fallback branches, removal gates, and release evidence.
+- Add: `scripts/validate_fallback_burn_down.py` verifies every registry entry points at a live source marker.
+
+**Status:** Started. Key installer/desktop fallbacks now have stable burn-down markers and a CI-enforced registry; no
+fallback has been removed yet because release evidence is not available.
 
 ## Phase 9: Larger Rust Candidate Review
 

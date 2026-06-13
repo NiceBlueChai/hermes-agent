@@ -1453,6 +1453,8 @@ pub fn install_python_runtime_stage(
         }
     }
 
+    // HERMES-FALLBACK-BURN-DOWN: installer-python-runtime-download-fallback
+    // Keep uv-managed Python install until bundled runtime releases have cross-platform evidence.
     run_uv_python_install(&plan)?;
     let python = find_python_with_uv(&plan)?;
     Ok(serde_json::json!({

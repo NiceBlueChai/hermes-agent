@@ -369,6 +369,9 @@ jobs:
                   --max-artifact-bytes 2147483648
                   --max-total-artifact-bytes 3221225472
 
+            - name: Validate fallback burn-down registry
+              run: python scripts/validate_fallback_burn_down.py
+
             - name: Validate Python runtime artifacts
               if: >-
                   ${{

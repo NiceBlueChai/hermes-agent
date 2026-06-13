@@ -668,6 +668,8 @@ async function runBootstrap(opts) {
       })
     }
 
+    // HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback
+    // Keep script bootstrap until the native bridge can run every first-launch stage.
     // 1. Resolve the platform installer.
     const scriptInfo = await resolveInstallScript({ installStamp, sourceRepoRoot, hermesHome, emit })
     const installerKind = scriptInfo.kind || 'powershell'

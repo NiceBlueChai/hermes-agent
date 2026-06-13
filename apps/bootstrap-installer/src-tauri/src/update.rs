@@ -731,6 +731,8 @@ async fn refresh_archive_checkout_from_source(
         );
         resolved.path
     } else {
+        // HERMES-FALLBACK-BURN-DOWN: installer-source-archive-download-fallback
+        // Keep network archive refresh until signed releases prove bundled archives on every target.
         let archive_path = crate::repo_archive::archive_cache_path(&cache_dir, &spec)?;
         emit_log(
             app,
