@@ -250,6 +250,8 @@ python -m unittest tests.scripts.test_prepare_bootstrap_tools
   both resources are present.
 - The Rust runtime extraction path has a dedicated unsafe ZIP-entry regression test in addition to shared archive
   extraction safety coverage.
+- The runtime bundle is still decision-gated for default release inclusion. The next runtime work is packaged smoke and
+  release-size/security-update review, not another runtime schema rewrite.
 
 **Verification command:**
 
@@ -399,6 +401,25 @@ duplicating inference across JavaScript and Rust.
   when full native bootstrap is not available or the native stage returns a known fallback category.**
 - Python/shell fallback remains available if native bridge is missing or exits with a known fallback code.
 
+**Current branch status:**
+
+- The desktop runner probes `hermes-manager bootstrap-manifest` and dispatches matching script stages through
+  `hermes-manager bootstrap-stage` before invoking PowerShell.
+- Windows `uv`, `git`, `python`, `node`, `repository`, `path`, `config-templates`, `bootstrap-marker`,
+  `install-metadata`, `system-packages`, `node-deps`, `platform-sdks`, `configure`, and `gateway` are native handled,
+  native probed, or native skipped with structured stage output.
+- Windows `venv` is now a real native stage: it uses managed or PATH `uv`, creates `venv` with Python 3.11, verifies the
+  venv Python shim, and returns a script fallback category for missing or failed prerequisites.
+- Windows `dependencies` is now a real native stage: it uses the managed venv, prefers a bundled wheelhouse when
+  present, falls back through locked `uv sync` and editable install tiers, and verifies baseline imports before
+  declaring success.
+- The desktop runner passes the active install root and packaged `wheelhouse/` resource path into native stages, so the
+  bridge can use the same local resources as the script fallback.
+- The remaining script-visible normal install gap is the optional `desktop` build stage. That stage should be handled
+  next as native-first with explicit fallback because it affects first-launch speed but still needs Electron/npm parity.
+- `configure` and `gateway` remain user-input stages. In GUI bootstrap they should stay native skipped unless the user
+  explicitly starts an interactive setup flow.
+
 **Verification command:**
 
 ```powershell
@@ -486,13 +507,21 @@ git diff --check
 
 ## Execution Order From This Commit
 
-1. Finish Phase 1 Windows packaged artifact gate.
-2. Tighten Phase 2 shell-budget tests so packaged normal path cannot gain silent script-only stages.
-3. Start Phase 3 Python runtime bundle with Windows x64 only.
-4. Extend Phase 3 to macOS and Linux after Windows runtime smoke is stable.
-5. Revisit Phase 7 desktop native bridge once the bootstrap runtime contract stops moving.
-6. Only then start Phase 8 fallback removal.
-7. Defer Phase 9 until after a real release has validated the native install path.
+1. Finish the Phase 7 Windows native bridge burn-down before deeper rewrites:
+   `desktop` native-first stage, then a stage-budget test that documents any intentionally retained fallback.
+2. Tighten Phase 2 shell-budget tests so packaged normal path cannot regain silent script-only stages after the bridge
+   covers the current Windows script manifest.
+3. Finish Phase 1 packaged artifact gates that are still release-workflow-only: Windows NSIS artifact validation stays
+   conservative unless the installer can safely forward no-UI self-check flags.
+4. Promote Phase 3 Python runtime from optional resource to default only after packaged smoke proves the runtime,
+   wheelhouse, venv, and dependency stages work together on Windows x64.
+5. Extend the Python runtime default path to macOS and Linux after Windows packaged smoke is stable and size/security
+   notes are written.
+6. Expand Phase 6 bundles only when the default package still downloads a high-frequency dependency during first launch;
+   each new bundle needs manifest ownership, checksum validation, and a size gate.
+7. Start Phase 8 fallback removal only after one release ships the native path on Windows, macOS, and Linux with
+   packaged smoke evidence.
+8. Defer Phase 9 deeper Rust migration until install-time dependency reduction is no longer the dominant user pain.
 
 ## Self-Review
 
