@@ -377,6 +377,63 @@ test('runBootstrap dispatches manifest-matched native stages through the manager
   }
 })
 
+test('runBootstrap falls back to script when native stage asks for fallback', async () => {
+  const home = mkTmpHome()
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-bootstrap-repo-'))
+  try {
+    const scripts = path.join(repo, 'scripts')
+    fs.mkdirSync(scripts, { recursive: true })
+    const script = path.join(scripts, SCRIPT_NAME)
+    fs.writeFileSync(script, fakeInstallerScript({ stageName: 'bootstrap-marker' }), { mode: 0o755 })
+
+    const events = []
+    const result = await runBootstrap({
+      installStamp: { commit: 'a'.repeat(40), branch: 'main' },
+      activeRoot: path.join(home, 'hermes-agent'),
+      sourceRepoRoot: repo,
+      hermesHome: home,
+      logRoot: path.join(home, 'logs'),
+      resourcesPath: '/opt/Hermes/resources',
+      platform: 'linux',
+      onEvent: ev => events.push(ev),
+      writeMarker: payload => ({ ...payload, schemaVersion: 1 }),
+      _recordInstallMetadata: () => true,
+      _probeNativeBootstrapCapabilities: () => ({
+        available: true,
+        canRunFullBootstrap: false,
+        supportedStages: ['bootstrap-marker']
+      }),
+      _probeNativeBootstrapManifest: () => ({
+        available: true,
+        protocolVersion: 1,
+        stages: [{ name: 'bootstrap-marker', title: 'Mark install complete' }]
+      }),
+      _runNativeBootstrapStage: async ({ stage }) => ({
+        type: 'stage',
+        name: stage.name,
+        state: 'failed',
+        durationMs: 1,
+        runner: 'native',
+        fallbackToScript: true,
+        error: 'native stage unavailable at runtime'
+      })
+    })
+
+    assert.equal(result.ok, true)
+    assert.ok(
+      events.some(ev => ev.type === 'log' && /falling back to script stage bootstrap-marker/.test(ev.line || '')),
+      'fallback should be logged'
+    )
+    assert.ok(
+      events.some(ev => ev.type === 'stage' && ev.name === 'bootstrap-marker' && ev.state === 'succeeded'),
+      'script stage should succeed after native fallback'
+    )
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+    fs.rmSync(repo, { recursive: true, force: true })
+  }
+})
+
 function fakeInstallerScript(options = {}) {
   const stageName = options.stageName || 'metadata'
   const stageOk = options.stageOk !== false

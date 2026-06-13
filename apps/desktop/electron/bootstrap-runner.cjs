@@ -731,6 +731,24 @@ async function runBootstrap(opts) {
           installStamp
         })
         emit(ev)
+        if (ev.state === 'failed' && ev.fallbackToScript) {
+          emit({
+            type: 'log',
+            stage: stage.name,
+            line: `[bootstrap] native stage ${stage.name} unavailable; falling back to script stage ${stage.name}`,
+            stream: 'stderr'
+          })
+          ev = await runStage({
+            scriptPath: scriptInfo.path,
+            installerKind,
+            stage,
+            emit,
+            hermesHome,
+            activeRoot,
+            abortSignal,
+            installStamp
+          })
+        }
       } else {
         ev = await runStage({
           scriptPath: scriptInfo.path,
@@ -877,6 +895,7 @@ async function runNativeBootstrapStage({
     if (json.ok) {
       return { type: 'stage', name: stage.name, state: 'succeeded', durationMs, runner: 'native', json }
     }
+    const failureCategory = json.failureCategory || json.failure_category || null
     return {
       type: 'stage',
       name: stage.name,
@@ -884,7 +903,8 @@ async function runNativeBootstrapStage({
       durationMs,
       runner: 'native',
       json,
-      error: json.reason || 'native bootstrap stage failed'
+      error: json.reason || 'native bootstrap stage failed',
+      fallbackToScript: failureCategory === 'unknown-stage' || failureCategory === 'fallback-to-script'
     }
   } catch (err) {
     return {
@@ -893,7 +913,8 @@ async function runNativeBootstrapStage({
       state: 'failed',
       durationMs: Date.now() - startedAt,
       runner: 'native',
-      error: err && err.message ? err.message : String(err)
+      error: err && err.message ? err.message : String(err),
+      fallbackToScript: err && err.status === 2
     }
   }
 }

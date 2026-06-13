@@ -383,7 +383,8 @@ duplicating inference across JavaScript and Rust.
   manifest and is probed by the desktop runner; `hermes-manager bootstrap-stage install-metadata` returns
   script-compatible stage JSON and is now used by the desktop runner after first-launch bootstrap. Desktop runner now
   dispatches manifest-matched native stages through the bridge, and `bootstrap-marker` is the first real script manifest
-  stage handled natively. Desktop still keeps script fallback when full native bootstrap is not available.**
+  stage handled natively. Desktop keeps script fallback when full native bootstrap is not available or the native stage
+  returns a known fallback category.**
 - Python/shell fallback remains available if native bridge is missing or exits with a known fallback code.
 
 **Verification command:**
