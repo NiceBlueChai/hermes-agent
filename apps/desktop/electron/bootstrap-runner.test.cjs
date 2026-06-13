@@ -499,6 +499,94 @@ test('runBootstrap dispatches non-interactive stages through the native bridge',
   }
 })
 
+test('runBootstrap keeps current Windows non-interactive stage budget native-covered', async () => {
+  const home = mkTmpHome()
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-bootstrap-repo-'))
+  try {
+    const stages = [
+      { name: 'uv', title: 'Installing uv package manager', category: 'prereqs', needs_user_input: false },
+      { name: 'python', title: 'Verifying Python 3.11', category: 'prereqs', needs_user_input: false },
+      { name: 'git', title: 'Installing Git', category: 'prereqs', needs_user_input: false },
+      { name: 'node', title: 'Detecting Node.js', category: 'prereqs', needs_user_input: false },
+      { name: 'system-packages', title: 'Installing ripgrep and ffmpeg', category: 'prereqs', needs_user_input: false },
+      { name: 'repository', title: 'Cloning Hermes repository', category: 'install', needs_user_input: false },
+      { name: 'venv', title: 'Creating Python virtual environment', category: 'install', needs_user_input: false },
+      { name: 'dependencies', title: 'Installing Python dependencies', category: 'install', needs_user_input: false },
+      { name: 'node-deps', title: 'Installing Node.js dependencies', category: 'install', needs_user_input: false },
+      { name: 'desktop', title: 'Building desktop app', category: 'install', needs_user_input: false },
+      { name: 'path', title: 'Adding Hermes to PATH', category: 'finalize', needs_user_input: false },
+      {
+        name: 'config-templates',
+        title: 'Writing configuration templates',
+        category: 'finalize',
+        needs_user_input: false
+      },
+      {
+        name: 'platform-sdks',
+        title: 'Installing messaging platform SDKs',
+        category: 'finalize',
+        needs_user_input: false
+      },
+      { name: 'bootstrap-marker', title: 'Marking install complete', category: 'finalize', needs_user_input: false }
+    ]
+    const scripts = path.join(repo, 'scripts')
+    fs.mkdirSync(scripts, { recursive: true })
+    const script = path.join(scripts, SCRIPT_NAME)
+    fs.writeFileSync(
+      script,
+      fakeInstallerScript({
+        stageName: 'script-budget-regression',
+        manifestStages: stages,
+        stageOk: false
+      }),
+      { mode: 0o755 }
+    )
+
+    const nativeCalls = []
+    const events = []
+    const result = await runBootstrap({
+      installStamp: { commit: 'a'.repeat(40), branch: 'main' },
+      activeRoot: path.join(home, 'hermes-agent'),
+      sourceRepoRoot: repo,
+      hermesHome: home,
+      logRoot: path.join(home, 'logs'),
+      resourcesPath: 'C:\\Hermes\\resources',
+      platform: 'win32',
+      onEvent: ev => events.push(ev),
+      writeMarker: payload => ({ ...payload, schemaVersion: 1 }),
+      _recordInstallMetadata: () => true,
+      _probeNativeBootstrapCapabilities: () => ({
+        available: true,
+        canRunFullBootstrap: false,
+        supportedStages: stages.map(stage => stage.name)
+      }),
+      _probeNativeBootstrapManifest: () => ({
+        available: true,
+        protocolVersion: 1,
+        stages
+      }),
+      _runNativeBootstrapStage: async ({ stage }) => {
+        nativeCalls.push(stage.name)
+        return {
+          type: 'stage',
+          name: stage.name,
+          state: 'succeeded',
+          durationMs: 1,
+          runner: 'native',
+          json: { ok: true, stage: stage.name }
+        }
+      }
+    })
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(nativeCalls, stages.map(stage => stage.name))
+    assert.ok(!events.some(ev => /script fallback should not run/.test(ev.error || ev.line || '')))
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+    fs.rmSync(repo, { recursive: true, force: true })
+  }
+})
+
 test('runBootstrap keeps script execution for stages absent from the native bridge manifest', async () => {
   const home = mkTmpHome()
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-bootstrap-repo-'))
