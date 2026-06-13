@@ -270,6 +270,14 @@ const WINDOWS_PATH_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDes
     needs_user_input: false,
 };
 
+const WINDOWS_CONFIG_TEMPLATES_BOOTSTRAP_STAGE: BootstrapStageDescriptor =
+    BootstrapStageDescriptor {
+        name: "config-templates",
+        title: "Write configuration templates",
+        category: "finalize",
+        needs_user_input: false,
+    };
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("{err}");
@@ -746,6 +754,7 @@ fn run_native_bootstrap_stage(
                 .map_err(|err| ("stage-failed", err.to_string()))
         }
         "path" => run_native_path_stage(home, options),
+        "config-templates" => run_native_config_templates_stage(home, options),
         other => Err((
             "unknown-stage",
             format!("unknown native bootstrap stage: {other}"),
@@ -777,6 +786,7 @@ fn native_bootstrap_stages() -> Vec<BootstrapStageDescriptor> {
     let mut stages = BASE_NATIVE_BOOTSTRAP_STAGES.to_vec();
     if cfg!(target_os = "windows") {
         stages.push(WINDOWS_PATH_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_CONFIG_TEMPLATES_BOOTSTRAP_STAGE);
     }
     stages
 }
@@ -811,6 +821,24 @@ fn run_native_path_stage(
         .map_err(|err| ("stage-failed", err.to_string()))?;
     }
     Ok(false)
+}
+
+fn run_native_config_templates_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<bool, (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native config-template stage is only complete on Windows".to_string(),
+        ));
+    }
+    let install_root = options
+        .install_root
+        .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    hermes_manager::commands::write_config_templates(home, &install_root)
+        .map(|()| false)
+        .map_err(|err| ("stage-failed", err.to_string()))
 }
 
 #[cfg(test)]

@@ -260,6 +260,10 @@ fn cli_smoke_reports_native_bootstrap_manifest() {
     assert!(stages
         .iter()
         .any(|stage| stage["name"].as_str() == Some("path")));
+    #[cfg(target_os = "windows")]
+    assert!(stages
+        .iter()
+        .any(|stage| stage["name"].as_str() == Some("config-templates")));
 }
 
 #[test]
@@ -358,4 +362,62 @@ fn cli_smoke_dry_runs_native_path_bootstrap_stage() {
     assert_eq!(report["stage"], "path");
     assert_eq!(report["ok"], true);
     assert_eq!(report["skipped"], false);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_runs_native_config_templates_bootstrap_stage() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let install_root = hermes_manager::paths::agent_root(&hermes_home);
+    fs::create_dir_all(install_root.join("skills").join("example"))
+        .expect("skills should be created");
+    fs::write(install_root.join(".env.example"), "OPENAI_API_KEY=\n")
+        .expect("env template should be written");
+    fs::write(
+        install_root.join("cli-config.yaml.example"),
+        "model: test\n",
+    )
+    .expect("config template should be written");
+    fs::write(
+        install_root.join("skills").join("example").join("SKILL.md"),
+        "# Example\n",
+    )
+    .expect("skill should be written");
+    let hermes_home_text = hermes_home.display().to_string();
+    let install_root_text = install_root.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "config-templates",
+        "--install-root",
+        &install_root_text,
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("bootstrap config output should be json");
+
+    assert_eq!(report["stage"], "config-templates");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], false);
+    assert!(hermes_home.join("cron").is_dir());
+    assert!(hermes_home.join("sessions").is_dir());
+    assert_eq!(
+        fs::read_to_string(hermes_home.join(".env")).expect("env should exist"),
+        "OPENAI_API_KEY=\n"
+    );
+    assert_eq!(
+        fs::read_to_string(hermes_home.join("config.yaml")).expect("config should exist"),
+        "model: test\n"
+    );
+    assert!(fs::read_to_string(hermes_home.join("SOUL.md"))
+        .expect("SOUL.md should exist")
+        .contains("Hermes Agent Persona"));
+    assert!(hermes_home
+        .join("skills")
+        .join("example")
+        .join("SKILL.md")
+        .is_file());
 }

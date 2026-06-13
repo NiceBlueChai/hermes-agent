@@ -3,12 +3,42 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::installed_manifest::{InstalledKind, InstalledManifest};
 use crate::ownership::ensure_safe_to_delete;
 use crate::paths;
 use crate::{ManagerError, Result};
+
+const CONFIG_TEMPLATE_DIRS: [&str; 9] = [
+    "cron",
+    "sessions",
+    "logs",
+    "pairing",
+    "hooks",
+    "image_cache",
+    "audio_cache",
+    "memories",
+    "skills",
+];
+
+const DEFAULT_SOUL_MD: &str = r#"# Hermes Agent Persona
+
+<!--
+This file defines the agent's personality and tone.
+The agent will embody whatever you write here.
+Edit this to customize how Hermes communicates with you.
+
+Examples:
+  - "You are a warm, playful assistant who uses kaomoji occasionally."
+  - "You are a concise technical expert. No fluff, just facts."
+  - "You speak like a friendly coworker who happens to know everything."
+
+This file is loaded fresh each message -- no restart needed.
+Delete the contents (or this file) to use the default personality.
+-->
+"#;
 
 /// Print status information for diagnostics.
 pub fn doctor(hermes_home: &Path) -> Vec<String> {
@@ -69,6 +99,28 @@ pub fn write_bootstrap_marker(
     fs::write(&marker_path, format!("{text}\n"))
         .map_err(|err| ManagerError::io(&marker_path, err))?;
     Ok(Some(marker_path))
+}
+
+/// Create user configuration files and seed bundled skills without overwriting user edits.
+pub fn write_config_templates(hermes_home: &Path, install_root: &Path) -> Result<()> {
+    for dir in CONFIG_TEMPLATE_DIRS {
+        let path = hermes_home.join(dir);
+        fs::create_dir_all(&path).map_err(|err| ManagerError::io(&path, err))?;
+    }
+
+    copy_template_or_touch(
+        &install_root.join(".env.example"),
+        &hermes_home.join(".env"),
+        true,
+    )?;
+    copy_template_or_touch(
+        &install_root.join("cli-config.yaml.example"),
+        &hermes_home.join("config.yaml"),
+        false,
+    )?;
+    write_default_soul_if_missing(&hermes_home.join("SOUL.md"))?;
+    sync_or_copy_bundled_skills(hermes_home, install_root)?;
+    Ok(())
 }
 
 /// Remove managed runtime paths while preserving user data.
@@ -719,6 +771,111 @@ fn normalize_path_lexically(path: &Path) -> PathBuf {
         }
     }
     normalized
+}
+
+fn copy_template_or_touch(
+    template: &Path,
+    destination: &Path,
+    touch_when_missing: bool,
+) -> Result<()> {
+    if destination.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|err| ManagerError::io(parent, err))?;
+    }
+    if template.is_file() {
+        fs::copy(template, destination).map_err(|err| ManagerError::io(destination, err))?;
+    } else if touch_when_missing {
+        fs::write(destination, "").map_err(|err| ManagerError::io(destination, err))?;
+    }
+    Ok(())
+}
+
+fn write_default_soul_if_missing(destination: &Path) -> Result<()> {
+    if destination.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|err| ManagerError::io(parent, err))?;
+    }
+    fs::write(destination, DEFAULT_SOUL_MD).map_err(|err| ManagerError::io(destination, err))
+}
+
+fn sync_or_copy_bundled_skills(hermes_home: &Path, install_root: &Path) -> Result<()> {
+    if run_skills_sync(install_root) {
+        return Ok(());
+    }
+    let bundled_skills = install_root.join("skills");
+    let user_skills = hermes_home.join("skills");
+    if !bundled_skills.is_dir() || !user_skills_is_empty_except_manifest(&user_skills)? {
+        return Ok(());
+    }
+    copy_dir_contents(&bundled_skills, &user_skills)
+}
+
+fn run_skills_sync(install_root: &Path) -> bool {
+    let python = install_root
+        .join("venv")
+        .join(if cfg!(target_os = "windows") {
+            "Scripts"
+        } else {
+            "bin"
+        })
+        .join(if cfg!(target_os = "windows") {
+            "python.exe"
+        } else {
+            "python"
+        });
+    let script = install_root.join("tools").join("skills_sync.py");
+    if !python.is_file() || !script.is_file() {
+        return false;
+    }
+    let mut command = Command::new(python);
+    command.arg(script).current_dir(install_root);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    command
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn user_skills_is_empty_except_manifest(user_skills: &Path) -> Result<bool> {
+    let entries = match fs::read_dir(user_skills) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(true),
+        Err(err) => return Err(ManagerError::io(user_skills, err)),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|err| ManagerError::io(user_skills, err))?;
+        if entry.file_name() != ".bundled_manifest" {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn copy_dir_contents(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination).map_err(|err| ManagerError::io(destination, err))?;
+    for entry in fs::read_dir(source).map_err(|err| ManagerError::io(source, err))? {
+        let entry = entry.map_err(|err| ManagerError::io(source, err))?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let metadata = entry
+            .metadata()
+            .map_err(|err| ManagerError::io(&source_path, err))?;
+        if metadata.is_dir() {
+            copy_dir_contents(&source_path, &destination_path)?;
+        } else if metadata.is_file() {
+            fs::copy(&source_path, &destination_path)
+                .map_err(|err| ManagerError::io(&destination_path, err))?;
+        }
+    }
+    Ok(())
 }
 
 fn current_utc_timestamp() -> String {
