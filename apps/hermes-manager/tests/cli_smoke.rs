@@ -57,6 +57,50 @@ fn write_zip_fixture(path: &Path, entries: &[(&str, &[u8])]) {
 }
 
 #[cfg(target_os = "windows")]
+fn write_bootstrap_tools_manifest(dir: &Path, archives: &[PathBuf]) {
+    let records = archives
+        .iter()
+        .map(|archive| {
+            let name = archive
+                .file_name()
+                .and_then(|value| value.to_str())
+                .expect("archive should have utf-8 file name");
+            let bytes = fs::read(archive).expect("archive should be readable");
+            format!(
+                concat!(
+                    "{{",
+                    "\"platform\":\"windows\",",
+                    "\"arch\":\"{}\",",
+                    "\"name\":\"{}\",",
+                    "\"url\":\"https://example.invalid/{}\",",
+                    "\"sizeBytes\":{},",
+                    "\"sha256\":\"{}\"",
+                    "}}"
+                ),
+                windows_cache_arch(),
+                name,
+                name,
+                bytes.len(),
+                sha256_hex(&bytes)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    fs::write(
+        dir.join("bootstrap-tools-manifest.json"),
+        format!("{{\"schemaVersion\":1,\"archives\":[{records}]}}\n"),
+    )
+    .expect("bootstrap tools manifest should be written");
+}
+
+#[cfg(target_os = "windows")]
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+
+    format!("{:x}", sha2::Sha256::digest(bytes))
+}
+
+#[cfg(target_os = "windows")]
 fn windows_cache_arch() -> &'static str {
     if cfg!(target_arch = "x86_64") {
         "x64"
@@ -822,16 +866,22 @@ fn cli_smoke_restores_bundled_desktop_caches_before_native_desktop_stage() {
     fs::create_dir_all(&bootstrap_tools).expect("bootstrap tools dir should be created");
     fs::write(desktop_dir.join("package.json"), "{\"name\":\"desktop\"}\n")
         .expect("desktop package should be written");
+    let npm_cache_archive = bootstrap_tools.join(format!("npm-cache-windows-{arch}.zip"));
+    let electron_cache_archive = bootstrap_tools.join(format!("electron-cache-windows-{arch}.zip"));
     write_zip_fixture(
-        &bootstrap_tools.join(format!("npm-cache-windows-{arch}.zip")),
+        &npm_cache_archive,
         &[("npm-cache/_cacache/index-v5/aa/bb", b"cached package")],
     );
     write_zip_fixture(
-        &bootstrap_tools.join(format!("electron-cache-windows-{arch}.zip")),
+        &electron_cache_archive,
         &[(
             "electron-cache/electron-v40.9.3-win32-x64.zip",
             b"electron zip",
         )],
+    );
+    write_bootstrap_tools_manifest(
+        &bootstrap_tools,
+        &[npm_cache_archive.clone(), electron_cache_archive.clone()],
     );
     fs::write(
         npm_dir.join("npm.cmd"),
@@ -915,10 +965,9 @@ fn cli_smoke_rejects_unsafe_bundled_desktop_cache_zip_entries() {
         .expect("desktop package should be written");
     fs::write(npm_dir.join("npm.cmd"), "@echo off\r\nexit /b 0\r\n")
         .expect("npm shim should be written");
-    write_zip_fixture(
-        &bootstrap_tools.join(format!("npm-cache-windows-{arch}.zip")),
-        &[("../escape.txt", b"escape")],
-    );
+    let npm_cache_archive = bootstrap_tools.join(format!("npm-cache-windows-{arch}.zip"));
+    write_zip_fixture(&npm_cache_archive, &[("../escape.txt", b"escape")]);
+    write_bootstrap_tools_manifest(&bootstrap_tools, &[npm_cache_archive]);
     let hermes_home_text = hermes_home.display().to_string();
     let install_root_text = install_root.display().to_string();
     let bootstrap_tools_text = bootstrap_tools.display().to_string();
@@ -946,6 +995,79 @@ fn cli_smoke_rejects_unsafe_bundled_desktop_cache_zip_entries() {
     assert_eq!(report["ok"], false);
     assert_eq!(report["failureCategory"], "fallback-to-script");
     assert!(!temp.path().join("escape.txt").exists());
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_rejects_bundled_desktop_cache_checksum_mismatch() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let install_root = temp.path().join("repo");
+    let npm_dir = hermes_home.join("node");
+    let desktop_dir = install_root.join("apps").join("desktop");
+    let bootstrap_tools = temp.path().join("resources").join("bootstrap-tools");
+    let arch = windows_cache_arch();
+    fs::create_dir_all(&npm_dir).expect("npm dir should be created");
+    fs::create_dir_all(&desktop_dir).expect("desktop dir should be created");
+    fs::create_dir_all(&bootstrap_tools).expect("bootstrap tools dir should be created");
+    fs::write(desktop_dir.join("package.json"), "{\"name\":\"desktop\"}\n")
+        .expect("desktop package should be written");
+    fs::write(npm_dir.join("npm.cmd"), "@echo off\r\nexit /b 0\r\n")
+        .expect("npm shim should be written");
+    let npm_cache_archive = bootstrap_tools.join(format!("npm-cache-windows-{arch}.zip"));
+    write_zip_fixture(
+        &npm_cache_archive,
+        &[("npm-cache/_cacache/index-v5/aa/bb", b"cached package")],
+    );
+    fs::write(
+        bootstrap_tools.join("bootstrap-tools-manifest.json"),
+        format!(
+            concat!(
+                "{{\"schemaVersion\":1,\"archives\":[{{",
+                "\"platform\":\"windows\",",
+                "\"arch\":\"{}\",",
+                "\"name\":\"{}\",",
+                "\"url\":\"https://example.invalid/cache.zip\",",
+                "\"sizeBytes\":1,",
+                "\"sha256\":\"{}\"",
+                "}}]}}\n"
+            ),
+            arch,
+            npm_cache_archive
+                .file_name()
+                .and_then(|value| value.to_str())
+                .expect("archive should have file name"),
+            "0".repeat(64)
+        ),
+    )
+    .expect("manifest should be written");
+    let hermes_home_text = hermes_home.display().to_string();
+    let install_root_text = install_root.display().to_string();
+    let bootstrap_tools_text = bootstrap_tools.display().to_string();
+    let npm_path = npm_dir.display().to_string();
+
+    let output = run_manager_output(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "desktop",
+        "--install-root",
+        &install_root_text,
+        "--bootstrap-tools-dir",
+        &bootstrap_tools_text,
+        "--current-path",
+        &npm_path,
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("desktop stage output should be json");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(report["stage"], "desktop");
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["failureCategory"], "fallback-to-script");
+    assert!(!hermes_home.join("npm-cache").join("_cacache").exists());
 }
 
 #[cfg(target_os = "windows")]

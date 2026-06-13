@@ -6,7 +6,7 @@ use std::time::Instant;
 use std::{env, fs};
 
 use clap::{Parser, Subcommand};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Manage Hermes runtime installation resources.
 #[derive(Debug, Parser)]
@@ -254,6 +254,19 @@ struct BootstrapStageReport {
     duration_ms: u128,
     #[serde(rename = "failureCategory", skip_serializing_if = "Option::is_none")]
     failure_category: Option<&'static str>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BootstrapToolsManifest {
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    archives: Vec<BootstrapToolsManifestArchive>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BootstrapToolsManifestArchive {
+    name: String,
+    sha256: String,
 }
 
 const BASE_NATIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
@@ -1691,9 +1704,71 @@ fn restore_bundled_windows_cache_archive(
     if !archive.is_file() {
         return Ok(None);
     }
+    verify_bootstrap_tools_archive(bootstrap_tools_dir, &archive_name, &archive)?;
     let install_dir = home.join(cache_name);
     extract_windows_cache_zip(&archive, &install_dir, cache_name)?;
     Ok(Some(archive))
+}
+
+fn verify_bootstrap_tools_archive(
+    bootstrap_tools_dir: &std::path::Path,
+    archive_name: &str,
+    archive_path: &std::path::Path,
+) -> std::result::Result<(), (&'static str, String)> {
+    let manifest_path = bootstrap_tools_dir.join("bootstrap-tools-manifest.json");
+    let manifest_text = fs::read_to_string(&manifest_path)
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    let manifest: BootstrapToolsManifest = serde_json::from_str(&manifest_text)
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if manifest.schema_version != 1 {
+        return Err((
+            "fallback-to-script",
+            format!(
+                "unsupported bootstrap tools manifest schema: {}",
+                manifest.schema_version
+            ),
+        ));
+    }
+    let Some(record) = manifest
+        .archives
+        .iter()
+        .find(|record| record.name == archive_name)
+    else {
+        return Err((
+            "fallback-to-script",
+            format!("bootstrap tools manifest does not own {archive_name}"),
+        ));
+    };
+    if record.sha256.len() != 64 || !record.sha256.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err((
+            "fallback-to-script",
+            format!("bootstrap tools manifest has invalid sha256 for {archive_name}"),
+        ));
+    }
+    let actual = sha256_file(archive_path).map_err(|err| ("fallback-to-script", err))?;
+    if !actual.eq_ignore_ascii_case(&record.sha256) {
+        return Err((
+            "fallback-to-script",
+            format!("bootstrap tools checksum mismatch for {archive_name}"),
+        ));
+    }
+    Ok(())
+}
+
+fn sha256_file(path: &std::path::Path) -> std::result::Result<String, String> {
+    use sha2::Digest;
+
+    let mut file = fs::File::open(path).map_err(|err| err.to_string())?;
+    let mut hasher = sha2::Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = std::io::Read::read(&mut file, &mut buffer).map_err(|err| err.to_string())?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn extract_windows_cache_zip(
