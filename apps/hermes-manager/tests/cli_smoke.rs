@@ -39,6 +39,19 @@ fn run_manager_output(args: &[&str]) -> std::process::Output {
         .expect("manager command should run")
 }
 
+#[cfg(target_os = "windows")]
+fn assert_command_success(mut command: Command, label: &str) -> std::process::Output {
+    let output = command.output().expect("command should run");
+    assert!(
+        output.status.success(),
+        "{label} failed\nstatus: {:?}\nstdout: {}\nstderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
 fn create_runtime_dirs(hermes_home: &Path) -> Vec<PathBuf> {
     let paths = hermes_manager::paths::managed_runtime_roots(hermes_home);
     for path in &paths {
@@ -299,6 +312,10 @@ fn cli_smoke_reports_native_bootstrap_manifest() {
     assert!(stages
         .iter()
         .any(|stage| stage["name"].as_str() == Some("python")));
+    #[cfg(target_os = "windows")]
+    assert!(stages
+        .iter()
+        .any(|stage| stage["name"].as_str() == Some("repository")));
     #[cfg(target_os = "windows")]
     assert!(stages.iter().any(|stage| {
         stage["name"].as_str() == Some("configure") && stage["needs_user_input"] == true
@@ -900,6 +917,97 @@ fn cli_smoke_falls_back_for_native_python_stage_when_python_is_missing() {
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(report["stage"], "python");
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["failureCategory"], "fallback-to-script");
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_skips_native_repository_stage_when_checkout_matches_commit() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let install_root = temp.path().join("repo");
+    fs::create_dir_all(&install_root).expect("repo dir should be created");
+    let mut init = Command::new("git");
+    init.args(["init"]).current_dir(&install_root);
+    assert_command_success(init, "git init");
+    let mut config = Command::new("git");
+    config
+        .args(["config", "core.autocrlf", "false"])
+        .current_dir(&install_root);
+    assert_command_success(config, "git config");
+    fs::write(install_root.join("README.md"), "test\n").expect("readme should be written");
+    let mut add = Command::new("git");
+    add.args(["add", "README.md"]).current_dir(&install_root);
+    assert_command_success(add, "git add");
+    let mut commit_cmd = Command::new("git");
+    commit_cmd
+        .args([
+            "-c",
+            "user.name=Hermes Test",
+            "-c",
+            "user.email=hermes@example.invalid",
+            "commit",
+            "-m",
+            "test",
+        ])
+        .current_dir(&install_root);
+    assert_command_success(commit_cmd, "git commit");
+    let mut rev_cmd = Command::new("git");
+    rev_cmd
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&install_root);
+    let rev = assert_command_success(rev_cmd, "git rev-parse");
+    let commit = String::from_utf8(rev.stdout).expect("commit should be utf-8");
+    let commit = commit.trim();
+    let hermes_home_text = hermes_home.display().to_string();
+    let install_root_text = install_root.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "repository",
+        "--install-root",
+        &install_root_text,
+        "--commit",
+        commit,
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("repository skip output should be json");
+
+    assert_eq!(report["stage"], "repository");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], true);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_falls_back_for_native_repository_stage_when_checkout_is_missing() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let install_root = temp.path().join("missing-repo");
+    let hermes_home_text = hermes_home.display().to_string();
+    let install_root_text = install_root.display().to_string();
+
+    let output = run_manager_output(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "repository",
+        "--install-root",
+        &install_root_text,
+        "--commit",
+        "abcdef1234567890",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("repository fallback output should be json");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(report["stage"], "repository");
     assert_eq!(report["ok"], false);
     assert_eq!(report["failureCategory"], "fallback-to-script");
 }

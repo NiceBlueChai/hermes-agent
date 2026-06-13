@@ -330,6 +330,13 @@ const WINDOWS_PYTHON_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageD
     needs_user_input: false,
 };
 
+const WINDOWS_REPOSITORY_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "repository",
+    title: "Clone Hermes repository",
+    category: "install",
+    needs_user_input: false,
+};
+
 const WINDOWS_INTERACTIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
     BootstrapStageDescriptor {
         name: "configure",
@@ -824,6 +831,7 @@ fn run_native_bootstrap_stage(
         "uv" => run_native_uv_stage(home, options),
         "git" => run_native_git_stage(home, options),
         "python" => run_native_python_stage(options),
+        "repository" => run_native_repository_stage(home, options),
         "node" => run_native_node_stage(home, options),
         "system-packages" => run_native_system_packages_stage(options),
         "config-templates" => {
@@ -865,6 +873,7 @@ fn native_bootstrap_stages() -> Vec<BootstrapStageDescriptor> {
         stages.push(WINDOWS_UV_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_GIT_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_PYTHON_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_REPOSITORY_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_NODE_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_SYSTEM_PACKAGES_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_NODE_DEPS_BOOTSTRAP_STAGE);
@@ -1018,6 +1027,52 @@ fn run_native_python_stage(
     Err((
         "fallback-to-script",
         format!("{version} missing or unsupported; script uses uv to install Python 3.11"),
+    ))
+}
+
+fn run_native_repository_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native repository probe is only complete on Windows".to_string(),
+        ));
+    }
+    let Some(expected_commit) = options.commit else {
+        return Err((
+            "fallback-to-script",
+            "repository stage needs a pinned commit; script handles branch and tag installs"
+                .to_string(),
+        ));
+    };
+    let install_root = options
+        .install_root
+        .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    if !install_root.join(".git").exists() {
+        return Err((
+            "fallback-to-script",
+            "repository checkout missing; script clones or downloads source".to_string(),
+        ));
+    }
+    let output = ProcessCommand::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&install_root)
+        .output()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    let current_commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if output.status.success() && current_commit.eq_ignore_ascii_case(expected_commit) {
+        return Ok((
+            true,
+            Some(format!(
+                "repository already at pinned commit {current_commit}"
+            )),
+        ));
+    }
+    Err((
+        "fallback-to-script",
+        "repository checkout missing or not at pinned commit; script updates source".to_string(),
     ))
 }
 
