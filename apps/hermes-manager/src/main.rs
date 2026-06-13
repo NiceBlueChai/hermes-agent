@@ -316,6 +316,13 @@ const WINDOWS_UV_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescr
     needs_user_input: false,
 };
 
+const WINDOWS_GIT_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "git",
+    title: "Install Git",
+    category: "prereqs",
+    needs_user_input: false,
+};
+
 const WINDOWS_INTERACTIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
     BootstrapStageDescriptor {
         name: "configure",
@@ -808,6 +815,7 @@ fn run_native_bootstrap_stage(
         }
         "path" => run_native_path_stage(home, options).map(|skipped| (skipped, None)),
         "uv" => run_native_uv_stage(home, options),
+        "git" => run_native_git_stage(home, options),
         "node" => run_native_node_stage(home, options),
         "system-packages" => run_native_system_packages_stage(options),
         "config-templates" => {
@@ -847,6 +855,7 @@ fn native_bootstrap_stages() -> Vec<BootstrapStageDescriptor> {
     let mut stages = BASE_NATIVE_BOOTSTRAP_STAGES.to_vec();
     if cfg!(target_os = "windows") {
         stages.push(WINDOWS_UV_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_GIT_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_NODE_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_SYSTEM_PACKAGES_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_NODE_DEPS_BOOTSTRAP_STAGE);
@@ -924,6 +933,49 @@ fn run_native_uv_stage(
     Err((
         "fallback-to-script",
         "uv exists but did not run successfully; script reinstalls managed uv".to_string(),
+    ))
+}
+
+fn run_native_git_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native Git probe is only complete on Windows".to_string(),
+        ));
+    }
+    let path_text = windows_stage_path(options.current_path)?;
+    let git = windows_path_command(&path_text, "git").or_else(|| {
+        [
+            home.join("git").join("cmd").join("git.exe"),
+            home.join("git").join("bin").join("git.exe"),
+            home.join("git").join("mingw64").join("bin").join("git.exe"),
+        ]
+        .into_iter()
+        .find(|path| path.is_file())
+    });
+    let Some(git) = git else {
+        return Err((
+            "fallback-to-script",
+            "Git missing; script installs managed PortableGit".to_string(),
+        ));
+    };
+    let output = ProcessCommand::new(&git)
+        .arg("--version")
+        .output()
+        .map_err(|err| ("stage-failed", err.to_string()))?;
+    if output.status.success() {
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Ok((
+            true,
+            Some(format!("{version} already available; git stage skipped")),
+        ));
+    }
+    Err((
+        "fallback-to-script",
+        "Git exists but did not run successfully; script installs managed PortableGit".to_string(),
     ))
 }
 
