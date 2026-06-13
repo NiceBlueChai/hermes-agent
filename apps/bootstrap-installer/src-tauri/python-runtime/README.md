@@ -13,6 +13,12 @@ Release workflow input format:
 NAME=HTTPS_URL=SHA256
 ```
 
+Build a local archive before uploading it:
+
+```powershell
+python scripts/build_python_runtime_archive.py --platform windows --arch x64 --force
+```
+
 Example:
 
 ```text
