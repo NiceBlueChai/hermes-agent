@@ -176,7 +176,7 @@ fn validate_tauri_bundle_resources_config_for_self_check(config_json: &str) -> V
     else {
         return vec!["installer Tauri bundle is missing resources".to_string()];
     };
-    for required in ["bootstrap-tools/", "wheelhouse/"] {
+    for required in ["bootstrap-tools/", "wheelhouse/", "python-runtime/"] {
         let found = resources
             .iter()
             .any(|resource| resource.as_str() == Some(required));
@@ -1173,7 +1173,7 @@ mod tests {
         self_check_bootstrap_tools_platform,
         self_check_wheelhouse_arch, self_check_wheelhouse_dir, self_check_wheelhouse_platform,
         validate_python_runtime_for_self_check, validate_tauri_bundle_resources_config_for_self_check,
-        wheel_name_is_plain_file, AppMode,
+        wheel_name_is_plain_file, AppMode, TAURI_CONFIG_JSON,
     };
     use std::path::PathBuf;
 
@@ -1288,6 +1288,13 @@ mod tests {
         assert!(errors
             .iter()
             .any(|err| err.contains("wheelhouse/")));
+    }
+
+    #[test]
+    fn self_check_current_tauri_config_declares_release_resources() {
+        let errors = validate_tauri_bundle_resources_config_for_self_check(TAURI_CONFIG_JSON);
+
+        assert_eq!(errors, Vec::<String>::new());
     }
 
     #[test]

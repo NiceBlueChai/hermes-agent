@@ -228,11 +228,22 @@ python -m unittest tests.scripts.test_prepare_bootstrap_tools
 
 **Implementation slices:**
 
-1. Document and test the Python runtime manifest schema.
+1. Document and test the Python runtime manifest schema. Done in branch.
 2. Prepare one Windows x64 runtime bundle first because it addresses the user's most likely installer pain.
-3. Add Rust runtime selection and extraction with tests.
+3. Add Rust runtime selection and extraction with tests. Done in branch.
 4. Extend Linux/macOS after Windows passes packaged smoke.
 5. Add release-size notes before enabling the runtime bundle by default.
+
+**Current branch status:**
+
+- `scripts/prepare_python_runtime.py` can create and validate an audited runtime manifest from local or
+  `NAME=HTTPS_URL=SHA256` inputs.
+- Windows, Linux, and macOS installer workflows accept optional audited Python runtime archives and validate them before
+  upload.
+- The Tauri bundle declares `python-runtime/` as a resource directory, and self-check fails if that resource contract is
+  removed.
+- The Rust Python stage prefers a manifest-verified bundled runtime archive, validates extraction through
+  `uv python find 3.11`, and falls back to `uv python install 3.11` without deleting the legacy path.
 
 **Verification command:**
 

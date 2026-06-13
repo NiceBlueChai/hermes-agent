@@ -45,7 +45,8 @@
     ],
     "resources": [
       "bootstrap-tools/",
-      "wheelhouse/"
+      "wheelhouse/",
+      "python-runtime/"
     ],
     "icon": [
       "icons/32x32.png",
