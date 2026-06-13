@@ -94,6 +94,40 @@ class PrepareSourceArchiveTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid sha256"):
             module.parse_audited_archive_arg("source.zip=https://example.invalid/source.zip=bad")
 
+    def test_validate_payload_rejects_archive_above_size_gate(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "source-archive"
+            output_dir.mkdir()
+            archive = output_dir / "hermes-agent-abcdef123.zip"
+            archive.write_bytes(b"x" * 4096)
+            module.write_manifest(
+                output_dir=output_dir,
+                owner="NousResearch",
+                repo="hermes-agent",
+                archive_ref="abcdef123",
+                commit="abcdef123",
+                branch="main",
+                files=[
+                    module.PreparedSourceArchive(
+                        name=archive.name,
+                        url="https://example.invalid/hermes-agent-abcdef123.zip",
+                        path=archive,
+                        size_bytes=archive.stat().st_size,
+                        sha256=module.sha256_file(archive),
+                    )
+                ],
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "exceeds max source archive bytes"):
+                module.validate_payload(
+                    output_dir,
+                    "NousResearch",
+                    "hermes-agent",
+                    "abcdef123",
+                    max_archive_bytes=1024,
+                )
+
     def test_installer_workflows_accept_optional_audited_source_archive(self):
         repo_root = Path(__file__).resolve().parents[2]
         windows_workflow = (
@@ -107,6 +141,7 @@ class PrepareSourceArchiveTests(unittest.TestCase):
         self.assertIn("HERMES_SOURCE_ARCHIVE: ${{ inputs['source-archive'] }}", windows_workflow)
         self.assertIn("scripts/prepare_source_archive.py", windows_workflow)
         self.assertIn("--audited-archive \"$env:HERMES_SOURCE_ARCHIVE\"", windows_workflow)
+        self.assertIn("--max-archive-bytes 268435456", windows_workflow)
         self.assertIn("apps/bootstrap-installer/src-tauri/source-archive/*", windows_workflow)
 
         self.assertIn("linux-source-archive:", unix_workflow)
@@ -115,6 +150,7 @@ class PrepareSourceArchiveTests(unittest.TestCase):
         self.assertIn("HERMES_MACOS_SOURCE_ARCHIVE: ${{ inputs['macos-source-archive'] }}", unix_workflow)
         self.assertIn("--audited-archive \"${HERMES_SOURCE_ARCHIVE}\"", unix_workflow)
         self.assertIn("scripts/prepare_source_archive.py", unix_workflow)
+        self.assertIn("--max-archive-bytes 268435456", unix_workflow)
         self.assertIn("apps/bootstrap-installer/src-tauri/source-archive/*", unix_workflow)
 
 

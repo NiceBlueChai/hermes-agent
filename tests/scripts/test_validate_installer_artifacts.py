@@ -122,6 +122,95 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
                     ],
                 )
 
+    def test_validate_artifacts_rejects_file_above_size_gate(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            exe = root / "target" / "release" / "Hermes-Setup.exe"
+            exe.parent.mkdir(parents=True)
+            exe.write_bytes(b"123456")
+
+            with self.assertRaisesRegex(RuntimeError, "exceeds max artifact bytes"):
+                module.validate_artifacts(
+                    root,
+                    ["target/release/Hermes-Setup.exe"],
+                    max_artifact_bytes=5,
+                )
+
+    def test_validate_artifacts_rejects_directory_above_size_gate(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_bundle = root / "target" / "release" / "bundle" / "macos" / "Hermes.app"
+            app_binary = app_bundle / "Contents" / "MacOS" / "Hermes"
+            resource = app_bundle / "Contents" / "Resources" / "payload.bin"
+            app_binary.parent.mkdir(parents=True)
+            resource.parent.mkdir(parents=True)
+            app_binary.write_bytes(b"123")
+            resource.write_bytes(b"456")
+
+            with self.assertRaisesRegex(RuntimeError, "exceeds max artifact bytes"):
+                module.validate_artifacts(
+                    root,
+                    ["target/release/bundle/macos/*.app"],
+                    max_artifact_bytes=5,
+                )
+
+    def test_validate_artifacts_rejects_total_above_size_gate(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "target" / "one.bin"
+            second = root / "target" / "two.bin"
+            first.parent.mkdir(parents=True)
+            first.write_bytes(b"123")
+            second.write_bytes(b"456")
+
+            with self.assertRaisesRegex(RuntimeError, "exceeds max total artifact bytes"):
+                module.validate_artifacts(
+                    root,
+                    ["target/*.bin"],
+                    max_total_artifact_bytes=5,
+                )
+
+    def test_validate_artifacts_size_gate_includes_payload_directories(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tools = root / "bootstrap-tools"
+            archive = tools / "uv-x86_64-pc-windows-msvc.zip"
+            manifest = tools / "bootstrap-tools-manifest.json"
+            tools.mkdir(parents=True)
+            archive.write_bytes(b"x" * 4096)
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "archives": [
+                            {
+                                "arch": "x64",
+                                "platform": "windows",
+                                "name": archive.name,
+                                "url": "https://example.invalid/uv.zip",
+                                "sizeBytes": 4096,
+                                "sha256": module.sha256_file(archive),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "exceeds max artifact bytes"):
+                module.validate_artifacts(
+                    root,
+                    ["bootstrap-tools/bootstrap-tools-manifest.json"],
+                    bootstrap_tools_dir=tools,
+                    max_artifact_bytes=1024,
+                )
+
     def test_validate_artifacts_rejects_empty_directory_artifact(self):
         module = _load_script_module()
         with tempfile.TemporaryDirectory() as tmp:
@@ -587,6 +676,23 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
                     python_runtime_platform="windows",
                     python_runtime_arch="x64",
                 )
+
+    def test_installer_workflows_enforce_artifact_size_gates(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("--max-artifact-bytes 2147483648", windows_workflow)
+        self.assertIn("--max-total-artifact-bytes 3221225472", windows_workflow)
+        self.assertIn("--max-artifact-bytes 536870912", windows_workflow)
+
+        self.assertIn("--max-artifact-bytes 2147483648", unix_workflow)
+        self.assertIn("--max-total-artifact-bytes 3221225472", unix_workflow)
+        self.assertIn("--max-artifact-bytes 536870912", unix_workflow)
 
 
 if __name__ == "__main__":

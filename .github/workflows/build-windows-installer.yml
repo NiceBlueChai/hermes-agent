@@ -166,6 +166,7 @@ jobs:
           python scripts/prepare_source_archive.py
           --validate-only
           --archive-ref "${{ github.sha }}"
+          --max-archive-bytes 268435456
 
       - name: Build installer
         env:
@@ -253,6 +254,8 @@ jobs:
           --wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse
           --wheelhouse-platform windows
           --wheelhouse-arch x64
+          --max-artifact-bytes 2147483648
+          --max-total-artifact-bytes 3221225472
 
       - name: Validate Python runtime artifacts
         if: ${{ inputs['python-runtime-archive'] != '' }}
@@ -262,6 +265,8 @@ jobs:
           --python-runtime-dir apps/bootstrap-installer/src-tauri/python-runtime
           --python-runtime-platform windows
           --python-runtime-arch x64
+          --max-artifact-bytes 536870912
+          --max-total-artifact-bytes 536870912
 
       - name: Validate Hermes source archive artifacts
         if: ${{ inputs['source-archive'] != '' }}
@@ -269,6 +274,7 @@ jobs:
           python scripts/prepare_source_archive.py
           --validate-only
           --archive-ref "${{ github.sha }}"
+          --max-archive-bytes 268435456
 
       - name: Upload NSIS installer
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1

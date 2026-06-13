@@ -306,11 +306,16 @@ cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml update 
 
 **Required gates:**
 
-- Managed roots include only installer-owned runtime, cache, tools, and staged updater paths.
-- Lite uninstall preserves user config, `.env`, sessions, skills, memories, and logs.
-- Full uninstall requires explicit confirmation and still rejects paths outside Hermes home.
+- Managed roots include only installer-owned runtime, cache, tools, and staged updater paths. **Verified by
+  `apps/hermes-manager` path and ownership tests.**
+- Lite uninstall preserves user config, `.env`, sessions, skills, memories, and logs. **Verified by manager unit and
+  CLI smoke tests.**
+- Full uninstall requires explicit confirmation and still rejects paths outside Hermes home. **Left in Python
+  uninstall path; Rust manager covers lite/gui cleanup only.**
 - Repair-clean can remove corrupted managed Node/Python/uv/Git/cache roots and allow next launch to restore them.
-- Desktop uninstall prefers `hermes-manager` for lite mode and falls back to Python uninstall on failure.
+  **Verified by `repair-clean` unit and CLI smoke tests.**
+- Desktop uninstall prefers `hermes-manager` for lite mode and falls back to Python uninstall on failure. **Verified
+  by desktop uninstall tests.**
 
 **Verification command:**
 
@@ -346,9 +351,10 @@ node --test apps/desktop/electron/desktop-uninstall.test.cjs
 **Required gate before adding a decision-gated bundle:**
 
 - manifest schema support;
-- validator support;
+- validator support; **Done for release artifacts, bundled payload directories, Python runtime, and source archive.**
 - runtime trust-boundary support;
-- release-size and security-update note;
+- release-size and security-update note; **Partially enforced with CI byte budgets for installer artifacts,
+  bundled payload directories, Python runtime archives, and source archives.**
 - fallback behavior if the bundled archive is stale, missing, or fails checksum.
 
 ## Phase 7: Desktop Bootstrap Native Bridge

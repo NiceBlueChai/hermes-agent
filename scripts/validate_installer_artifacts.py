@@ -73,27 +73,36 @@ def validate_artifacts(
     python_runtime_dir: Path | None = None,
     python_runtime_platform: str | None = None,
     python_runtime_arch: str | None = None,
+    max_artifact_bytes: int | None = None,
+    max_total_artifact_bytes: int | None = None,
 ) -> list[Path]:
     """Return matched artifact paths after enforcing non-empty required globs."""
 
     checked: list[Path] = []
+    budget_paths: list[Path] = []
     for pattern in patterns:
         matches = sorted(root.glob(pattern))
         if not matches:
             raise RuntimeError(f"missing installer artifact for pattern: {pattern}")
         for path in matches:
             validate_artifact_path(path)
+            if max_artifact_bytes is not None:
+                validate_artifact_size_gate(path, max_artifact_bytes)
             checked.append(path)
+            budget_paths.append(path)
 
     manifest_paths = [path for path in checked if path.name == MANIFEST_NAME]
     if bootstrap_tools_dir is not None:
         validate_bootstrap_tools_payload(bootstrap_tools_dir, bootstrap_tools_platform, bootstrap_tools_arch)
+        budget_paths.append(bootstrap_tools_dir)
     elif manifest_paths:
         validate_bootstrap_tools_payload(manifest_paths[0].parent, bootstrap_tools_platform, bootstrap_tools_arch)
+        budget_paths.append(manifest_paths[0].parent)
     wheelhouse_manifest_paths = [path for path in checked if path.name == WHEELHOUSE_MANIFEST_NAME]
     wheelhouse_repo_root = root if wheelhouse_source_inputs_exist(root) else None
     if wheelhouse_dir is not None:
         validate_wheelhouse_payload(wheelhouse_dir, wheelhouse_platform, wheelhouse_arch, wheelhouse_repo_root)
+        budget_paths.append(wheelhouse_dir)
     elif wheelhouse_manifest_paths:
         validate_wheelhouse_payload(
             wheelhouse_manifest_paths[0].parent,
@@ -101,6 +110,7 @@ def validate_artifacts(
             wheelhouse_arch,
             wheelhouse_repo_root,
         )
+        budget_paths.append(wheelhouse_manifest_paths[0].parent)
     python_runtime_manifest_paths = [
         path for path in checked if path.name == PYTHON_RUNTIME_MANIFEST_NAME
     ]
@@ -110,12 +120,24 @@ def validate_artifacts(
             python_runtime_platform,
             python_runtime_arch,
         )
+        budget_paths.append(python_runtime_dir)
     elif python_runtime_manifest_paths:
         validate_python_runtime_payload(
             python_runtime_manifest_paths[0].parent,
             python_runtime_platform,
             python_runtime_arch,
         )
+        budget_paths.append(python_runtime_manifest_paths[0].parent)
+    if max_artifact_bytes is not None:
+        for path in budget_paths:
+            validate_artifact_size_gate(path, max_artifact_bytes)
+    if max_total_artifact_bytes is not None:
+        total_bytes = sum(artifact_size_bytes(path) for path in budget_paths)
+        if total_bytes > max_total_artifact_bytes:
+            raise RuntimeError(
+                f"installer artifacts total size {total_bytes} exceeds max total artifact bytes "
+                f"{max_total_artifact_bytes}"
+            )
     return checked
 
 
@@ -136,6 +158,28 @@ def validate_artifact_path(path: Path) -> None:
         if path.suffix == ".app":
             validate_macos_app_artifact(path)
         return
+    raise RuntimeError(f"installer artifact is not a file or directory: {path}")
+
+
+def validate_artifact_size_gate(path: Path, max_bytes: int) -> None:
+    """Validate that one artifact stays within the configured byte budget."""
+
+    if max_bytes <= 0:
+        raise RuntimeError(f"max artifact bytes must be positive: {max_bytes}")
+    size_bytes = artifact_size_bytes(path)
+    if size_bytes > max_bytes:
+        raise RuntimeError(
+            f"installer artifact size {size_bytes} exceeds max artifact bytes {max_bytes}: {path}"
+        )
+
+
+def artifact_size_bytes(path: Path) -> int:
+    """Return the recursive file size for one artifact path."""
+
+    if path.is_file():
+        return path.stat().st_size
+    if path.is_dir():
+        return sum(child.stat().st_size for child in path.rglob("*") if child.is_file())
     raise RuntimeError(f"installer artifact is not a file or directory: {path}")
 
 
@@ -220,6 +264,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Optional release architecture that the Python runtime manifest must target.",
     )
+    parser.add_argument(
+        "--max-artifact-bytes",
+        type=int,
+        default=None,
+        help="Optional per-artifact recursive size budget in bytes.",
+    )
+    parser.add_argument(
+        "--max-total-artifact-bytes",
+        type=int,
+        default=None,
+        help="Optional total recursive size budget across matched artifacts in bytes.",
+    )
     return parser.parse_args(argv)
 
 
@@ -240,6 +296,8 @@ def main(argv: list[str] | None = None) -> int:
             args.python_runtime_dir,
             args.python_runtime_platform,
             args.python_runtime_arch,
+            args.max_artifact_bytes,
+            args.max_total_artifact_bytes,
         )
     except Exception as exc:
         print(f"[installer-artifacts] error: {exc}", file=sys.stderr)

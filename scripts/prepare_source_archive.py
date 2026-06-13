@@ -181,10 +181,17 @@ def validate_payload(
     expected_owner: str,
     expected_repo: str,
     expected_archive_ref: str,
+    max_archive_bytes: int | None = None,
 ) -> int:
     """Validate that the source archive directory contains only manifest-owned payloads."""
 
-    count = validate_manifest(output_dir, expected_owner, expected_repo, expected_archive_ref)
+    count = validate_manifest(
+        output_dir,
+        expected_owner,
+        expected_repo,
+        expected_archive_ref,
+        max_archive_bytes,
+    )
     payload = json.loads((output_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
     expected = {entry["name"] for entry in payload["files"]}
     expected.update(ALLOWED_METADATA)
@@ -202,9 +209,12 @@ def validate_manifest(
     expected_owner: str,
     expected_repo: str,
     expected_archive_ref: str,
+    max_archive_bytes: int | None = None,
 ) -> int:
     """Validate that the source archive manifest matches files in the output directory."""
 
+    if max_archive_bytes is not None and max_archive_bytes <= 0:
+        raise RuntimeError(f"max source archive bytes must be positive: {max_archive_bytes}")
     manifest_path = output_dir / MANIFEST_NAME
     if not manifest_path.is_file():
         raise RuntimeError(f"missing source archive manifest: {manifest_path}")
@@ -245,11 +255,17 @@ def validate_manifest(
         path = output_dir / name
         if not path.is_file():
             raise RuntimeError(f"source archive file is missing: {name}")
-        if path.stat().st_size != expected_size:
+        actual_size = path.stat().st_size
+        if actual_size != expected_size:
             raise RuntimeError(f"source archive file size mismatch: {name}")
         actual_sha256 = sha256_file(path)
         if actual_sha256.lower() != expected_sha256.lower():
             raise RuntimeError(f"source archive file checksum mismatch: {name}")
+        if max_archive_bytes is not None and actual_size > max_archive_bytes:
+            raise RuntimeError(
+                f"source archive file {name} size {actual_size} exceeds max source archive bytes "
+                f"{max_archive_bytes}"
+            )
     return len(files)
 
 
@@ -267,6 +283,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument("--max-archive-bytes", type=int, default=None)
     return parser.parse_args(argv)
 
 
@@ -276,7 +293,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
         if args.validate_only:
-            count = validate_payload(args.output_dir, args.owner, args.repo, args.archive_ref)
+            count = validate_payload(
+                args.output_dir,
+                args.owner,
+                args.repo,
+                args.archive_ref,
+                args.max_archive_bytes,
+            )
             print(f"[source-archive] validated {count} file(s) in {args.output_dir}")
             return 0
         if args.audited_archive is None:
