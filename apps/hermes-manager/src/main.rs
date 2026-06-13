@@ -323,6 +323,13 @@ const WINDOWS_GIT_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDesc
     needs_user_input: false,
 };
 
+const WINDOWS_PYTHON_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "python",
+    title: "Verify Python 3.11",
+    category: "prereqs",
+    needs_user_input: false,
+};
+
 const WINDOWS_INTERACTIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
     BootstrapStageDescriptor {
         name: "configure",
@@ -816,6 +823,7 @@ fn run_native_bootstrap_stage(
         "path" => run_native_path_stage(home, options).map(|skipped| (skipped, None)),
         "uv" => run_native_uv_stage(home, options),
         "git" => run_native_git_stage(home, options),
+        "python" => run_native_python_stage(options),
         "node" => run_native_node_stage(home, options),
         "system-packages" => run_native_system_packages_stage(options),
         "config-templates" => {
@@ -856,6 +864,7 @@ fn native_bootstrap_stages() -> Vec<BootstrapStageDescriptor> {
     if cfg!(target_os = "windows") {
         stages.push(WINDOWS_UV_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_GIT_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_PYTHON_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_NODE_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_SYSTEM_PACKAGES_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_NODE_DEPS_BOOTSTRAP_STAGE);
@@ -979,6 +988,39 @@ fn run_native_git_stage(
     ))
 }
 
+fn run_native_python_stage(
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native Python probe is only complete on Windows".to_string(),
+        ));
+    }
+    let path_text = windows_stage_path(options.current_path)?;
+    let Some(python) = windows_path_command(&path_text, "python") else {
+        return Err((
+            "fallback-to-script",
+            "Python missing; script uses uv to find or install Python 3.11".to_string(),
+        ));
+    };
+    let output = ProcessCommand::new(&python)
+        .arg("--version")
+        .output()
+        .map_err(|err| ("stage-failed", err.to_string()))?;
+    let version = command_version_text(&output);
+    if output.status.success() && python_version_is_supported(&version) {
+        return Ok((
+            true,
+            Some(format!("{version} already available; python stage skipped")),
+        ));
+    }
+    Err((
+        "fallback-to-script",
+        format!("{version} missing or unsupported; script uses uv to install Python 3.11"),
+    ))
+}
+
 fn run_native_node_deps_stage(
     options: NativeBootstrapStageOptions<'_>,
 ) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
@@ -1024,7 +1066,7 @@ fn run_native_node_stage(
         .arg("--version")
         .output()
         .map_err(|err| ("stage-failed", err.to_string()))?;
-    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let version = command_version_text(&output);
     if output.status.success() && node_version_is_supported(&version) {
         return Ok((
             true,
@@ -1208,6 +1250,25 @@ fn node_version_is_supported(version: &str) -> bool {
         (Some(20), Some(minor)) => minor >= 19,
         _ => false,
     }
+}
+
+fn python_version_is_supported(version: &str) -> bool {
+    let version = version
+        .trim()
+        .strip_prefix("Python ")
+        .unwrap_or(version.trim());
+    let mut parts = version.split('.');
+    let major = parts.next().and_then(|part| part.parse::<u32>().ok());
+    let minor = parts.next().and_then(|part| part.parse::<u32>().ok());
+    matches!((major, minor), (Some(3), Some(11)))
+}
+
+fn command_version_text(output: &std::process::Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+    String::from_utf8_lossy(&output.stderr).trim().to_string()
 }
 
 fn run_native_interactive_skip_stage(

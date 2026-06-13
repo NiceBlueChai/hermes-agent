@@ -296,6 +296,10 @@ fn cli_smoke_reports_native_bootstrap_manifest() {
         .iter()
         .any(|stage| stage["name"].as_str() == Some("git")));
     #[cfg(target_os = "windows")]
+    assert!(stages
+        .iter()
+        .any(|stage| stage["name"].as_str() == Some("python")));
+    #[cfg(target_os = "windows")]
     assert!(stages.iter().any(|stage| {
         stage["name"].as_str() == Some("configure") && stage["needs_user_input"] == true
     }));
@@ -840,6 +844,62 @@ fn cli_smoke_falls_back_for_native_git_stage_when_git_is_missing() {
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(report["stage"], "git");
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["failureCategory"], "fallback-to-script");
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_skips_native_python_stage_when_python_311_is_available() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let python_dir = temp.path().join("python");
+    fs::create_dir_all(&python_dir).expect("python dir should be created");
+    fs::write(python_dir.join("python.cmd"), "@echo Python 3.11.9\r\n")
+        .expect("python shim should be written");
+    let hermes_home_text = hermes_home.display().to_string();
+    let python_path = python_dir.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "python",
+        "--current-path",
+        &python_path,
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("python stage skip output should be json");
+
+    assert_eq!(report["stage"], "python");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], true);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_falls_back_for_native_python_stage_when_python_is_missing() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    fs::create_dir_all(&hermes_home).expect("Hermes home should be created");
+    let hermes_home_text = hermes_home.display().to_string();
+
+    let output = run_manager_output(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "python",
+        "--current-path",
+        "",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("python fallback output should be json");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(report["stage"], "python");
     assert_eq!(report["ok"], false);
     assert_eq!(report["failureCategory"], "fallback-to-script");
 }
