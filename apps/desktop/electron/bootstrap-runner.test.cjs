@@ -9,6 +9,7 @@ const {
   probeNativeBootstrapCapabilities,
   probeNativeBootstrapManifest,
   recordInstallMetadata,
+  runNativeBootstrapStage,
   resolveHermesManagerPath,
   resolveInstallScript,
   installedAgentInstallScript,
@@ -255,6 +256,35 @@ test('probeNativeBootstrapManifest parses manager bridge stages', () => {
   assert.deepEqual(probe.stages.map(stage => stage.name), ['install-metadata'])
 })
 
+test('runNativeBootstrapStage passes install pins to manager stage command', async () => {
+  const calls = []
+  const ev = await runNativeBootstrapStage({
+    stage: { name: 'bootstrap-marker' },
+    hermesHome: 'C:\\Users\\x\\.hermes',
+    resourcesPath: 'C:\\Hermes\\resources',
+    platform: 'win32',
+    installStamp: { commit: 'abcdef1234567890', branch: 'main' },
+    exists: file => file.endsWith('hermes-manager.exe'),
+    _execFileSync: (command, args, options) => {
+      calls.push({ command, args, options })
+      return Buffer.from(JSON.stringify({ ok: true, stage: 'bootstrap-marker', skipped: false }))
+    }
+  })
+
+  assert.equal(ev.state, 'succeeded')
+  assert.deepEqual(calls[0].args, [
+    '--hermes-home',
+    'C:\\Users\\x\\.hermes',
+    '--json',
+    'bootstrap-stage',
+    'bootstrap-marker',
+    '--commit',
+    'abcdef1234567890',
+    '--branch',
+    'main'
+  ])
+})
+
 test('runBootstrap records install metadata through the native manager hook after success', async () => {
   const home = mkTmpHome()
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-bootstrap-repo-'))
@@ -280,18 +310,82 @@ test('runBootstrap records install metadata through the native manager hook afte
     assert.equal(result.ok, true)
     assert.equal(calls.length, 1)
     assert.equal(calls[0].hermesHome, home)
-    assert.ok(events.some(ev => ev.type === 'complete'), 'bootstrap should complete')
+  assert.ok(events.some(ev => ev.type === 'complete'), 'bootstrap should complete')
   } finally {
     fs.rmSync(home, { recursive: true, force: true })
     fs.rmSync(repo, { recursive: true, force: true })
   }
 })
 
-function fakeInstallerScript() {
+test('runBootstrap dispatches manifest-matched native stages through the manager bridge', async () => {
+  const home = mkTmpHome()
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-bootstrap-repo-'))
+  try {
+    const scripts = path.join(repo, 'scripts')
+    fs.mkdirSync(scripts, { recursive: true })
+    const script = path.join(scripts, SCRIPT_NAME)
+    fs.writeFileSync(
+      script,
+      fakeInstallerScript({ stageName: 'install-metadata', stageOk: false }),
+      { mode: 0o755 }
+    )
+
+    const nativeCalls = []
+    const events = []
+    const result = await runBootstrap({
+      installStamp: { commit: 'a'.repeat(40), branch: 'main' },
+      activeRoot: path.join(home, 'hermes-agent'),
+      sourceRepoRoot: repo,
+      hermesHome: home,
+      logRoot: path.join(home, 'logs'),
+      resourcesPath: '/opt/Hermes/resources',
+      platform: 'linux',
+      onEvent: ev => events.push(ev),
+      writeMarker: payload => ({ ...payload, schemaVersion: 1 }),
+      _recordInstallMetadata: () => true,
+      _probeNativeBootstrapCapabilities: () => ({
+        available: true,
+        canRunFullBootstrap: false,
+        supportedStages: ['install-metadata']
+      }),
+      _probeNativeBootstrapManifest: () => ({
+        available: true,
+        protocolVersion: 1,
+        stages: [{ name: 'install-metadata', title: 'Record install metadata' }]
+      }),
+      _runNativeBootstrapStage: async ({ stage }) => {
+        nativeCalls.push(stage.name)
+        return {
+          type: 'stage',
+          name: stage.name,
+          state: 'succeeded',
+          durationMs: 1,
+          json: { ok: true, stage: stage.name }
+        }
+      }
+    })
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(nativeCalls, ['install-metadata'])
+    assert.ok(
+      events.some(ev => ev.type === 'stage' && ev.name === 'install-metadata' && ev.state === 'succeeded'),
+      'native stage success should be emitted'
+    )
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+    fs.rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+function fakeInstallerScript(options = {}) {
+  const stageName = options.stageName || 'metadata'
+  const stageOk = options.stageOk !== false
   const manifestJson =
-    '{"stages":[{"name":"metadata","title":"Metadata",' +
+    `{"stages":[{"name":"${stageName}","title":"Metadata",` +
     '"category":"install","needs_user_input":false}],"protocol_version":1}'
-  const stageJson = '{"ok":true,"stage":"metadata"}'
+  const stageJson = stageOk
+    ? `{"ok":true,"stage":"${stageName}"}`
+    : `{"ok":false,"stage":"${stageName}","reason":"script fallback should not run"}`
   if (process.platform === 'win32') {
     return [
       'param(',
@@ -308,7 +402,7 @@ function fakeInstallerScript() {
       '}',
       'if ($Stage) {',
       `  Write-Output '${stageJson}'`,
-      '  exit 0',
+      stageOk ? '  exit 0' : '  exit 1',
       '}',
       'exit 1',
       ''
@@ -322,7 +416,7 @@ function fakeInstallerScript() {
     'fi',
     'if [ "$1" = "--stage" ]; then',
     `  printf '%s\\n' '${stageJson}'`,
-    '  exit 0',
+    stageOk ? '  exit 0' : '  exit 1',
     'fi',
     'exit 1',
     ''

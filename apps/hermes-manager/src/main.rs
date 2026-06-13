@@ -70,6 +70,12 @@ enum Command {
     BootstrapStage {
         /// Stage name from `bootstrap-manifest`.
         stage: String,
+        /// Pinned source commit for marker-producing stages.
+        #[arg(long)]
+        commit: Option<String>,
+        /// Pinned source branch for marker-producing stages.
+        #[arg(long)]
+        branch: Option<String>,
     },
     /// Plan PATH changes needed to expose the Hermes command.
     PlanPath {
@@ -233,12 +239,20 @@ struct BootstrapStageReport {
     failure_category: Option<&'static str>,
 }
 
-const NATIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 1] = [BootstrapStageDescriptor {
-    name: "install-metadata",
-    title: "Record install metadata",
-    category: "finalize",
-    needs_user_input: false,
-}];
+const NATIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
+    BootstrapStageDescriptor {
+        name: "install-metadata",
+        title: "Record install metadata",
+        category: "finalize",
+        needs_user_input: false,
+    },
+    BootstrapStageDescriptor {
+        name: "bootstrap-marker",
+        title: "Mark install complete",
+        category: "finalize",
+        needs_user_input: false,
+    },
+];
 
 fn main() {
     if let Err(err) = run() {
@@ -407,8 +421,13 @@ fn run() -> hermes_manager::Result<()> {
                 }
             }
         }
-        Command::BootstrapStage { stage } => {
-            let report = run_native_bootstrap_stage(&home, &stage);
+        Command::BootstrapStage {
+            stage,
+            commit,
+            branch,
+        } => {
+            let report =
+                run_native_bootstrap_stage(&home, &stage, commit.as_deref(), branch.as_deref());
             let ok = report.ok;
             let failure_category = report.failure_category;
             if cli.json {
@@ -675,22 +694,33 @@ fn native_bootstrap_stage_names() -> Vec<&'static str> {
         .collect()
 }
 
-fn run_native_bootstrap_stage(home: &std::path::Path, stage: &str) -> BootstrapStageReport {
+fn run_native_bootstrap_stage(
+    home: &std::path::Path,
+    stage: &str,
+    commit: Option<&str>,
+    branch: Option<&str>,
+) -> BootstrapStageReport {
     let started_at = Instant::now();
     let result = match stage {
         "install-metadata" => hermes_manager::commands::install_metadata(home)
+            .map(|()| false)
             .map_err(|err| ("stage-failed", err.to_string())),
+        "bootstrap-marker" => {
+            hermes_manager::commands::write_bootstrap_marker(home, commit, branch)
+                .map(|path| path.is_none())
+                .map_err(|err| ("stage-failed", err.to_string()))
+        }
         other => Err((
             "unknown-stage",
             format!("unknown native bootstrap stage: {other}"),
         )),
     };
     match result {
-        Ok(()) => BootstrapStageReport {
+        Ok(skipped) => BootstrapStageReport {
             ok: true,
             command: "bootstrap-stage",
             stage: stage.to_string(),
-            skipped: false,
+            skipped,
             reason: None,
             duration_ms: started_at.elapsed().as_millis(),
             failure_category: None,

@@ -3,6 +3,7 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::installed_manifest::{InstalledKind, InstalledManifest};
 use crate::ownership::ensure_safe_to_delete;
@@ -42,6 +43,32 @@ pub fn install_metadata(hermes_home: &Path) -> Result<()> {
         }
     }
     manifest.write_atomic(&manifest_path)
+}
+
+/// Write the desktop/bootstrap completion marker inside the managed checkout.
+pub fn write_bootstrap_marker(
+    hermes_home: &Path,
+    pinned_commit: Option<&str>,
+    pinned_branch: Option<&str>,
+) -> Result<Option<PathBuf>> {
+    let agent_root = paths::agent_root(hermes_home);
+    if !agent_root.exists() {
+        return Ok(None);
+    }
+
+    let marker_path = agent_root.join(".hermes-bootstrap-complete");
+    ensure_safe_to_delete(hermes_home, &marker_path)?;
+    let marker = serde_json::json!({
+        "schemaVersion": 1,
+        "pinnedCommit": pinned_commit,
+        "pinnedBranch": pinned_branch,
+        "completedAt": current_utc_timestamp(),
+    });
+    let text = serde_json::to_string_pretty(&marker)
+        .map_err(|err| ManagerError::InvalidManifest(err.to_string()))?;
+    fs::write(&marker_path, format!("{text}\n"))
+        .map_err(|err| ManagerError::io(&marker_path, err))?;
+    Ok(Some(marker_path))
 }
 
 /// Remove managed runtime paths while preserving user data.
@@ -692,6 +719,45 @@ fn normalize_path_lexically(path: &Path) -> PathBuf {
         }
     }
     normalized
+}
+
+fn current_utc_timestamp() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    unix_seconds_to_utc_timestamp(seconds)
+}
+
+fn unix_seconds_to_utc_timestamp(seconds: u64) -> String {
+    let days = (seconds / 86_400) as i64;
+    let seconds_of_day = seconds % 86_400;
+    let hour = seconds_of_day / 3_600;
+    let minute = (seconds_of_day % 3_600) / 60;
+    let second = seconds_of_day % 60;
+    let (year, month, day) = civil_from_unix_days(days);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.000Z")
+}
+
+fn civil_from_unix_days(days: i64) -> (i64, i64, i64) {
+    let shifted_days = days + 719_468;
+    let era = if shifted_days >= 0 {
+        shifted_days
+    } else {
+        shifted_days - 146_096
+    } / 146_097;
+    let day_of_era = shifted_days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_parameter = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_parameter + 2) / 5 + 1;
+    let month = month_parameter + if month_parameter < 10 { 3 } else { -9 };
+    if month <= 2 {
+        year += 1;
+    }
+    (year, month, day)
 }
 
 #[cfg(test)]

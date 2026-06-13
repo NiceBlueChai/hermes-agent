@@ -251,9 +251,11 @@ fn cli_smoke_reports_native_bootstrap_manifest() {
     assert_eq!(report["command"], "bootstrap-manifest");
     assert_eq!(report["protocol_version"], 1);
     let stages = report["stages"].as_array().expect("stages should be array");
-    assert_eq!(stages.len(), 1);
     assert_eq!(stages[0]["name"], "install-metadata");
     assert_eq!(stages[0]["needs_user_input"], false);
+    assert!(stages
+        .iter()
+        .any(|stage| stage["name"].as_str() == Some("bootstrap-marker")));
 }
 
 #[test]
@@ -282,4 +284,43 @@ fn cli_smoke_runs_native_install_metadata_bootstrap_stage() {
         .join("manager")
         .join("installed-files.json")
         .is_file());
+}
+
+#[test]
+fn cli_smoke_runs_native_bootstrap_marker_stage() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let agent_root = hermes_manager::paths::agent_root(&hermes_home);
+    fs::create_dir_all(&agent_root).expect("agent root should be created");
+    let hermes_home_text = hermes_home.display().to_string();
+    let commit = "abcdef1234567890";
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "bootstrap-marker",
+        "--commit",
+        commit,
+        "--branch",
+        "main",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("bootstrap marker output should be json");
+    let marker_path = agent_root.join(".hermes-bootstrap-complete");
+    let marker: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&marker_path).expect("marker should exist"))
+            .expect("marker should be json");
+
+    assert_eq!(report["stage"], "bootstrap-marker");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], false);
+    assert_eq!(marker["schemaVersion"], 1);
+    assert_eq!(marker["pinnedCommit"], commit);
+    assert_eq!(marker["pinnedBranch"], "main");
+    assert!(marker["completedAt"]
+        .as_str()
+        .unwrap_or_default()
+        .ends_with('Z'));
 }

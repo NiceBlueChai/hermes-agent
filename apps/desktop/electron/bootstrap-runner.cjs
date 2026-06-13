@@ -612,7 +612,10 @@ async function runBootstrap(opts) {
     writeMarker, // callback to write the bootstrap-complete marker; main.cjs provides
     resourcesPath,
     platform = process.platform,
-    _recordInstallMetadata = recordInstallMetadata
+    _recordInstallMetadata = recordInstallMetadata,
+    _probeNativeBootstrapCapabilities = probeNativeBootstrapCapabilities,
+    _probeNativeBootstrapManifest = probeNativeBootstrapManifest,
+    _runNativeBootstrapStage = runNativeBootstrapStage
   } = opts
 
   // Bail before spawning anything if the user already cancelled — otherwise an
@@ -657,7 +660,9 @@ async function runBootstrap(opts) {
   })
 
   try {
-    const nativeProbe = probeNativeBootstrapCapabilities({ hermesHome, resourcesPath, platform })
+    const nativeProbe = _probeNativeBootstrapCapabilities({ hermesHome, resourcesPath, platform })
+    let nativeManifest = { available: false, protocolVersion: null, stages: [] }
+    let nativeStageNames = new Set()
     if (nativeProbe.available) {
       emit({
         type: 'log',
@@ -666,8 +671,14 @@ async function runBootstrap(opts) {
           `canRunFullBootstrap=${nativeProbe.canRunFullBootstrap}; ` +
           `stages=${nativeProbe.supportedStages.join(',') || '<none>'}`
       })
-      const nativeManifest = probeNativeBootstrapManifest({ hermesHome, resourcesPath, platform })
+      nativeManifest = _probeNativeBootstrapManifest({ hermesHome, resourcesPath, platform })
       if (nativeManifest.available) {
+        const supportedStages = new Set(nativeProbe.supportedStages || [])
+        nativeStageNames = new Set(
+          nativeManifest.stages
+            .map(stage => stage.name)
+            .filter(name => supportedStages.has(name))
+        )
         emit({
           type: 'log',
           line:
@@ -708,16 +719,30 @@ async function runBootstrap(opts) {
         emit({ type: 'failed', error: 'bootstrap cancelled by user' })
         return { ok: false, cancelled: true }
       }
-      const ev = await runStage({
-        scriptPath: scriptInfo.path,
-        installerKind,
-        stage,
-        emit,
-        hermesHome,
-        activeRoot,
-        abortSignal,
-        installStamp
-      })
+      let ev
+      if (nativeStageNames.has(stage.name)) {
+        emit({ type: 'stage', name: stage.name, state: 'running', runner: 'native' })
+        ev = await _runNativeBootstrapStage({
+          stage,
+          hermesHome,
+          resourcesPath,
+          platform,
+          abortSignal,
+          installStamp
+        })
+        emit(ev)
+      } else {
+        ev = await runStage({
+          scriptPath: scriptInfo.path,
+          installerKind,
+          stage,
+          emit,
+          hermesHome,
+          activeRoot,
+          abortSignal,
+          installStamp
+        })
+      }
       if (ev.state === 'failed') {
         emit({ type: 'failed', stage: stage.name, error: ev.error || 'stage failed' })
         return { ok: false, failedStage: stage.name, error: ev.error }
@@ -790,6 +815,87 @@ function recordInstallMetadata({
     throw new Error('native install-metadata bootstrap stage did not report success')
   }
   return true
+}
+
+async function runNativeBootstrapStage({
+  stage,
+  hermesHome,
+  resourcesPath,
+  platform = process.platform,
+  abortSignal,
+  installStamp,
+  exists = fs.existsSync,
+  _execFileSync = execFileSync
+}) {
+  const startedAt = Date.now()
+  if (abortSignal && abortSignal.aborted) {
+    return { type: 'stage', name: stage.name, state: 'failed', durationMs: 0, error: 'cancelled by user' }
+  }
+
+  const managerPath = resolveHermesManagerPath(resourcesPath, platform, exists)
+  if (!managerPath) {
+    return {
+      type: 'stage',
+      name: stage.name,
+      state: 'failed',
+      durationMs: Date.now() - startedAt,
+      error: 'native bootstrap bridge is unavailable'
+    }
+  }
+
+  try {
+    const args = ['--hermes-home', hermesHome, '--json', 'bootstrap-stage', stage.name]
+    if (installStamp && installStamp.commit) {
+      args.push('--commit', installStamp.commit)
+    }
+    if (installStamp && installStamp.branch) {
+      args.push('--branch', installStamp.branch)
+    }
+    const stdout = _execFileSync(
+      managerPath,
+      args,
+      hiddenWindowsChildOptions({
+        cwd: hermesHome,
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+    )
+    const json = parseStageResult(Buffer.isBuffer(stdout) ? stdout.toString('utf8') : String(stdout))
+    const durationMs = Date.now() - startedAt
+    if (!json) {
+      return {
+        type: 'stage',
+        name: stage.name,
+        state: 'failed',
+        durationMs,
+        error: `hermes-manager bootstrap-stage ${stage.name} produced no JSON result frame`,
+        json: null
+      }
+    }
+    if (json.ok && json.skipped) {
+      return { type: 'stage', name: stage.name, state: 'skipped', durationMs, runner: 'native', json }
+    }
+    if (json.ok) {
+      return { type: 'stage', name: stage.name, state: 'succeeded', durationMs, runner: 'native', json }
+    }
+    return {
+      type: 'stage',
+      name: stage.name,
+      state: 'failed',
+      durationMs,
+      runner: 'native',
+      json,
+      error: json.reason || 'native bootstrap stage failed'
+    }
+  } catch (err) {
+    return {
+      type: 'stage',
+      name: stage.name,
+      state: 'failed',
+      durationMs: Date.now() - startedAt,
+      runner: 'native',
+      error: err && err.message ? err.message : String(err)
+    }
+  }
 }
 
 function probeNativeBootstrapCapabilities({
@@ -876,6 +982,7 @@ module.exports = {
   parseStageResult,
   probeNativeBootstrapCapabilities,
   probeNativeBootstrapManifest,
+  runNativeBootstrapStage,
   recordInstallMetadata,
   resolveHermesManagerPath,
   resolveLocalInstallScript,
