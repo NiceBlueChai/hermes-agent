@@ -377,6 +377,58 @@ test('runBootstrap dispatches manifest-matched native stages through the manager
   }
 })
 
+test('runBootstrap dispatches native path stage when the bridge advertises it', async () => {
+  const home = mkTmpHome()
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-bootstrap-repo-'))
+  try {
+    const scripts = path.join(repo, 'scripts')
+    fs.mkdirSync(scripts, { recursive: true })
+    const script = path.join(scripts, SCRIPT_NAME)
+    fs.writeFileSync(script, fakeInstallerScript({ stageName: 'path', stageOk: false }), { mode: 0o755 })
+
+    const nativeCalls = []
+    const result = await runBootstrap({
+      installStamp: { commit: 'a'.repeat(40), branch: 'main' },
+      activeRoot: path.join(home, 'hermes-agent'),
+      sourceRepoRoot: repo,
+      hermesHome: home,
+      logRoot: path.join(home, 'logs'),
+      resourcesPath: 'C:\\Hermes\\resources',
+      platform: 'win32',
+      onEvent: () => {},
+      writeMarker: payload => ({ ...payload, schemaVersion: 1 }),
+      _recordInstallMetadata: () => true,
+      _probeNativeBootstrapCapabilities: () => ({
+        available: true,
+        canRunFullBootstrap: false,
+        supportedStages: ['path']
+      }),
+      _probeNativeBootstrapManifest: () => ({
+        available: true,
+        protocolVersion: 1,
+        stages: [{ name: 'path', title: 'Add Hermes to PATH' }]
+      }),
+      _runNativeBootstrapStage: async ({ stage, installStamp }) => {
+        nativeCalls.push({ name: stage.name, installStamp })
+        return {
+          type: 'stage',
+          name: stage.name,
+          state: 'succeeded',
+          durationMs: 1,
+          json: { ok: true, stage: stage.name }
+        }
+      }
+    })
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(nativeCalls.map(call => call.name), ['path'])
+    assert.equal(nativeCalls[0].installStamp.commit, 'a'.repeat(40))
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+    fs.rmSync(repo, { recursive: true, force: true })
+  }
+})
+
 test('runBootstrap falls back to script when native stage asks for fallback', async () => {
   const home = mkTmpHome()
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-bootstrap-repo-'))

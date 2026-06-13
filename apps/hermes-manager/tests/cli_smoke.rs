@@ -256,6 +256,10 @@ fn cli_smoke_reports_native_bootstrap_manifest() {
     assert!(stages
         .iter()
         .any(|stage| stage["name"].as_str() == Some("bootstrap-marker")));
+    #[cfg(target_os = "windows")]
+    assert!(stages
+        .iter()
+        .any(|stage| stage["name"].as_str() == Some("path")));
 }
 
 #[test]
@@ -323,4 +327,35 @@ fn cli_smoke_runs_native_bootstrap_marker_stage() {
         .as_str()
         .unwrap_or_default()
         .ends_with('Z'));
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_dry_runs_native_path_bootstrap_stage() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let install_root = hermes_manager::paths::agent_root(&hermes_home);
+    fs::create_dir_all(install_root.join("venv").join("Scripts"))
+        .expect("install root should be created");
+    let hermes_home_text = hermes_home.display().to_string();
+    let install_root_text = install_root.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "path",
+        "--install-root",
+        &install_root_text,
+        "--current-path",
+        "C:\\Windows\\System32",
+        "--dry-run",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("bootstrap path output should be json");
+
+    assert_eq!(report["stage"], "path");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], false);
 }

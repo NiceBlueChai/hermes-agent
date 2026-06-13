@@ -70,6 +70,15 @@ enum Command {
     BootstrapStage {
         /// Stage name from `bootstrap-manifest`.
         stage: String,
+        /// Override install root for path-related stages.
+        #[arg(long)]
+        install_root: Option<PathBuf>,
+        /// Current PATH value for planning or tests.
+        #[arg(long)]
+        current_path: Option<String>,
+        /// Plan the stage without writing OS/user state.
+        #[arg(long)]
+        dry_run: bool,
         /// Pinned source commit for marker-producing stages.
         #[arg(long)]
         commit: Option<String>,
@@ -239,7 +248,7 @@ struct BootstrapStageReport {
     failure_category: Option<&'static str>,
 }
 
-const NATIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
+const BASE_NATIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
     BootstrapStageDescriptor {
         name: "install-metadata",
         title: "Record install metadata",
@@ -253,6 +262,13 @@ const NATIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
         needs_user_input: false,
     },
 ];
+
+const WINDOWS_PATH_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "path",
+    title: "Add Hermes to PATH",
+    category: "finalize",
+    needs_user_input: false,
+};
 
 fn main() {
     if let Err(err) = run() {
@@ -409,7 +425,7 @@ fn run() -> hermes_manager::Result<()> {
                 command: "bootstrap-manifest",
                 schema_version: 1,
                 protocol_version: 1,
-                stages: NATIVE_BOOTSTRAP_STAGES.to_vec(),
+                stages: native_bootstrap_stages(),
             };
             if cli.json {
                 print_json(&report)?;
@@ -423,11 +439,23 @@ fn run() -> hermes_manager::Result<()> {
         }
         Command::BootstrapStage {
             stage,
+            install_root,
+            current_path,
+            dry_run,
             commit,
             branch,
         } => {
-            let report =
-                run_native_bootstrap_stage(&home, &stage, commit.as_deref(), branch.as_deref());
+            let report = run_native_bootstrap_stage(
+                &home,
+                &stage,
+                NativeBootstrapStageOptions {
+                    install_root,
+                    current_path,
+                    dry_run,
+                    commit: commit.as_deref(),
+                    branch: branch.as_deref(),
+                },
+            );
             let ok = report.ok;
             let failure_category = report.failure_category;
             if cli.json {
@@ -688,17 +716,24 @@ fn print_json<T: Serialize>(report: &T) -> hermes_manager::Result<()> {
 }
 
 fn native_bootstrap_stage_names() -> Vec<&'static str> {
-    NATIVE_BOOTSTRAP_STAGES
-        .iter()
+    native_bootstrap_stages()
+        .into_iter()
         .map(|stage| stage.name)
         .collect()
+}
+
+struct NativeBootstrapStageOptions<'a> {
+    install_root: Option<PathBuf>,
+    current_path: Option<String>,
+    dry_run: bool,
+    commit: Option<&'a str>,
+    branch: Option<&'a str>,
 }
 
 fn run_native_bootstrap_stage(
     home: &std::path::Path,
     stage: &str,
-    commit: Option<&str>,
-    branch: Option<&str>,
+    options: NativeBootstrapStageOptions<'_>,
 ) -> BootstrapStageReport {
     let started_at = Instant::now();
     let result = match stage {
@@ -706,10 +741,11 @@ fn run_native_bootstrap_stage(
             .map(|()| false)
             .map_err(|err| ("stage-failed", err.to_string())),
         "bootstrap-marker" => {
-            hermes_manager::commands::write_bootstrap_marker(home, commit, branch)
+            hermes_manager::commands::write_bootstrap_marker(home, options.commit, options.branch)
                 .map(|path| path.is_none())
                 .map_err(|err| ("stage-failed", err.to_string()))
         }
+        "path" => run_native_path_stage(home, options),
         other => Err((
             "unknown-stage",
             format!("unknown native bootstrap stage: {other}"),
@@ -735,6 +771,46 @@ fn run_native_bootstrap_stage(
             failure_category: Some(failure_category),
         },
     }
+}
+
+fn native_bootstrap_stages() -> Vec<BootstrapStageDescriptor> {
+    let mut stages = BASE_NATIVE_BOOTSTRAP_STAGES.to_vec();
+    if cfg!(target_os = "windows") {
+        stages.push(WINDOWS_PATH_BOOTSTRAP_STAGE);
+    }
+    stages
+}
+
+fn run_native_path_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<bool, (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native path stage is only complete on Windows".to_string(),
+        ));
+    }
+
+    let install_root = options
+        .install_root
+        .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    let current_path = match options.current_path {
+        Some(value) => Some(value),
+        None => hermes_manager::platform::read_windows_user_path()
+            .map_err(|err| ("stage-failed", err.to_string()))?,
+    };
+    let plan = hermes_manager::platform::plan_path_update(&install_root, current_path, true);
+    if !options.dry_run {
+        hermes_manager::platform::write_windows_user_path_update(&plan)
+            .map_err(|err| ("stage-failed", err.to_string()))?;
+        hermes_manager::platform::write_windows_user_env_var(
+            "HERMES_HOME",
+            &home.display().to_string(),
+        )
+        .map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    Ok(false)
 }
 
 #[cfg(test)]
