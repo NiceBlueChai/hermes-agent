@@ -395,6 +395,15 @@ pub fn read_windows_user_path() -> Result<Option<String>> {
     }
 }
 
+/// Read the machine-wide Windows PATH registry value.
+#[cfg(target_os = "windows")]
+pub fn read_windows_machine_path() -> Result<Option<String>> {
+    match read_windows_machine_env_var("Path")? {
+        Some(value) => Ok(Some(value)),
+        None => read_windows_machine_env_var("PATH"),
+    }
+}
+
 /// Read a current-user Windows environment variable.
 #[cfg(target_os = "windows")]
 pub fn read_windows_user_env_var(name: &str) -> Result<Option<String>> {
@@ -414,15 +423,48 @@ pub fn read_windows_user_env_var(name: &str) -> Result<Option<String>> {
     }
 }
 
+/// Read a machine-wide Windows environment variable.
+#[cfg(target_os = "windows")]
+pub fn read_windows_machine_env_var(name: &str) -> Result<Option<String>> {
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    use winreg::RegKey;
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let environment = match hklm
+        .open_subkey("SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment")
+    {
+        Ok(key) => key,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(ManagerError::io("HKLM\\Environment", err)),
+    };
+    match environment.get_value::<String, _>(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(ManagerError::io(format!("HKLM\\Environment\\{name}"), err)),
+    }
+}
+
 /// Return no registry PATH off Windows.
 #[cfg(not(target_os = "windows"))]
 pub fn read_windows_user_path() -> Result<Option<String>> {
     Ok(None)
 }
 
+/// Return no machine registry PATH off Windows.
+#[cfg(not(target_os = "windows"))]
+pub fn read_windows_machine_path() -> Result<Option<String>> {
+    Ok(None)
+}
+
 /// Return no registry environment variable off Windows.
 #[cfg(not(target_os = "windows"))]
 pub fn read_windows_user_env_var(_name: &str) -> Result<Option<String>> {
+    Ok(None)
+}
+
+/// Return no machine registry environment variable off Windows.
+#[cfg(not(target_os = "windows"))]
+pub fn read_windows_machine_env_var(_name: &str) -> Result<Option<String>> {
     Ok(None)
 }
 

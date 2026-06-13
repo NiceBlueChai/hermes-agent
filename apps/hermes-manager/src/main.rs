@@ -1,8 +1,8 @@
 //! Command-line entrypoint for the Hermes install manager.
 
-use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
+use std::{env, fs};
 
 use clap::{Parser, Subcommand};
 use serde::Serialize;
@@ -283,6 +283,13 @@ const WINDOWS_PLATFORM_SDKS_BOOTSTRAP_STAGE: BootstrapStageDescriptor = Bootstra
     name: "platform-sdks",
     title: "Install messaging platform SDKs",
     category: "finalize",
+    needs_user_input: false,
+};
+
+const WINDOWS_NODE_DEPS_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "node-deps",
+    title: "Install Node.js dependencies",
+    category: "install",
     needs_user_input: false,
 };
 
@@ -780,6 +787,7 @@ fn run_native_bootstrap_stage(
         "config-templates" => {
             run_native_config_templates_stage(home, options).map(|skipped| (skipped, None))
         }
+        "node-deps" => run_native_node_deps_stage(options),
         "platform-sdks" => run_native_platform_sdks_stage(home, options),
         "configure" | "gateway" => run_native_interactive_skip_stage(stage),
         other => Err((
@@ -812,6 +820,7 @@ fn run_native_bootstrap_stage(
 fn native_bootstrap_stages() -> Vec<BootstrapStageDescriptor> {
     let mut stages = BASE_NATIVE_BOOTSTRAP_STAGES.to_vec();
     if cfg!(target_os = "windows") {
+        stages.push(WINDOWS_NODE_DEPS_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_PATH_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_CONFIG_TEMPLATES_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_PLATFORM_SDKS_BOOTSTRAP_STAGE);
@@ -850,6 +859,28 @@ fn run_native_path_stage(
         .map_err(|err| ("stage-failed", err.to_string()))?;
     }
     Ok(false)
+}
+
+fn run_native_node_deps_stage(
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native node dependency probe is only complete on Windows".to_string(),
+        ));
+    }
+    let path_text = windows_stage_path(options.current_path)?;
+    if !windows_path_contains_command(&path_text, "npm") {
+        return Ok((
+            true,
+            Some("npm not available; Node.js dependencies skipped".to_string()),
+        ));
+    }
+    Err((
+        "fallback-to-script",
+        "npm is available; script installs Node.js dependencies".to_string(),
+    ))
 }
 
 fn run_native_config_templates_stage(
@@ -934,6 +965,56 @@ fn has_configured_platform_sdk_token(env_text: &str) -> bool {
                 .unwrap_or(false)
         })
     })
+}
+
+fn windows_stage_path(
+    override_path: Option<String>,
+) -> std::result::Result<String, (&'static str, String)> {
+    if let Some(path) = override_path {
+        return Ok(path);
+    }
+    let mut parts = Vec::new();
+    if let Ok(path) = env::var("PATH") {
+        parts.push(path);
+    }
+    if let Some(path) = hermes_manager::platform::read_windows_user_path()
+        .map_err(|err| ("stage-failed", err.to_string()))?
+    {
+        parts.push(path);
+    }
+    if let Some(path) = hermes_manager::platform::read_windows_machine_path()
+        .map_err(|err| ("stage-failed", err.to_string()))?
+    {
+        parts.push(path);
+    }
+    Ok(parts.join(";"))
+}
+
+fn windows_path_contains_command(path_text: &str, command_name: &str) -> bool {
+    let path_ext = env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+    let extensions: Vec<String> = path_ext
+        .split(';')
+        .filter(|ext| !ext.trim().is_empty())
+        .map(|ext| ext.trim().to_string())
+        .collect();
+    for raw_dir in path_text.split(';') {
+        let dir = raw_dir.trim().trim_matches('"');
+        if dir.is_empty() {
+            continue;
+        }
+        if std::path::Path::new(dir).join(command_name).is_file() {
+            return true;
+        }
+        for ext in &extensions {
+            if std::path::Path::new(dir)
+                .join(format!("{command_name}{ext}"))
+                .is_file()
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn run_native_interactive_skip_stage(

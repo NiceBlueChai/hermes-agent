@@ -276,6 +276,10 @@ fn cli_smoke_reports_native_bootstrap_manifest() {
         .iter()
         .any(|stage| stage["name"].as_str() == Some("platform-sdks")));
     #[cfg(target_os = "windows")]
+    assert!(stages
+        .iter()
+        .any(|stage| stage["name"].as_str() == Some("node-deps")));
+    #[cfg(target_os = "windows")]
     assert!(stages.iter().any(|stage| {
         stage["name"].as_str() == Some("configure") && stage["needs_user_input"] == true
     }));
@@ -539,6 +543,61 @@ fn cli_smoke_falls_back_for_native_platform_sdks_when_tokens_are_configured() {
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(report["stage"], "platform-sdks");
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["failureCategory"], "fallback-to-script");
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_skips_native_node_deps_when_npm_is_unavailable() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    fs::create_dir_all(&hermes_home).expect("Hermes home should be created");
+    let hermes_home_text = hermes_home.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "node-deps",
+        "--current-path",
+        "",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("node deps skip output should be json");
+
+    assert_eq!(report["stage"], "node-deps");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], true);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_falls_back_for_native_node_deps_when_npm_is_available() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let npm_dir = temp.path().join("node");
+    fs::create_dir_all(&npm_dir).expect("npm dir should be created");
+    fs::write(npm_dir.join("npm.cmd"), "@echo off\n").expect("npm shim should be written");
+    let hermes_home_text = hermes_home.display().to_string();
+    let npm_path = npm_dir.display().to_string();
+
+    let output = run_manager_output(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "node-deps",
+        "--current-path",
+        &npm_path,
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("node deps fallback output should be json");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(report["stage"], "node-deps");
     assert_eq!(report["ok"], false);
     assert_eq!(report["failureCategory"], "fallback-to-script");
 }
