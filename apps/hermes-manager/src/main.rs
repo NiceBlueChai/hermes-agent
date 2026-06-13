@@ -1,6 +1,7 @@
 //! Command-line entrypoint for the Hermes install manager.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 use std::time::Instant;
 use std::{env, fs};
 
@@ -300,6 +301,13 @@ const WINDOWS_SYSTEM_PACKAGES_BOOTSTRAP_STAGE: BootstrapStageDescriptor =
         category: "prereqs",
         needs_user_input: false,
     };
+
+const WINDOWS_NODE_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "node",
+    title: "Detect Node.js",
+    category: "prereqs",
+    needs_user_input: false,
+};
 
 const WINDOWS_INTERACTIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
     BootstrapStageDescriptor {
@@ -792,6 +800,7 @@ fn run_native_bootstrap_stage(
                 .map_err(|err| ("stage-failed", err.to_string()))
         }
         "path" => run_native_path_stage(home, options).map(|skipped| (skipped, None)),
+        "node" => run_native_node_stage(home, options),
         "system-packages" => run_native_system_packages_stage(options),
         "config-templates" => {
             run_native_config_templates_stage(home, options).map(|skipped| (skipped, None))
@@ -829,6 +838,7 @@ fn run_native_bootstrap_stage(
 fn native_bootstrap_stages() -> Vec<BootstrapStageDescriptor> {
     let mut stages = BASE_NATIVE_BOOTSTRAP_STAGES.to_vec();
     if cfg!(target_os = "windows") {
+        stages.push(WINDOWS_NODE_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_SYSTEM_PACKAGES_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_NODE_DEPS_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_PATH_BOOTSTRAP_STAGE);
@@ -881,7 +891,7 @@ fn run_native_node_deps_stage(
         ));
     }
     let path_text = windows_stage_path(options.current_path)?;
-    if !windows_path_contains_command(&path_text, "npm") {
+    if windows_path_command(&path_text, "npm").is_none() {
         return Ok((
             true,
             Some("npm not available; Node.js dependencies skipped".to_string()),
@@ -890,6 +900,44 @@ fn run_native_node_deps_stage(
     Err((
         "fallback-to-script",
         "npm is available; script installs Node.js dependencies".to_string(),
+    ))
+}
+
+fn run_native_node_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native Node.js probe is only complete on Windows".to_string(),
+        ));
+    }
+    let path_text = windows_stage_path(options.current_path)?;
+    let node = windows_path_command(&path_text, "node")
+        .or_else(|| Some(home.join("node").join("node.exe")).filter(|path| path.is_file()));
+    let Some(node) = node else {
+        return Err((
+            "fallback-to-script",
+            "Node.js missing; script installs managed Node.js".to_string(),
+        ));
+    };
+    let output = ProcessCommand::new(&node)
+        .arg("--version")
+        .output()
+        .map_err(|err| ("stage-failed", err.to_string()))?;
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if output.status.success() && node_version_is_supported(&version) {
+        return Ok((
+            true,
+            Some(format!(
+                "Node.js {version} already available; node stage skipped"
+            )),
+        ));
+    }
+    Err((
+        "fallback-to-script",
+        format!("Node.js {version} missing or unsupported; script installs managed Node.js"),
     ))
 }
 
@@ -903,8 +951,8 @@ fn run_native_system_packages_stage(
         ));
     }
     let path_text = windows_stage_path(options.current_path)?;
-    let has_ripgrep = windows_path_contains_command(&path_text, "rg");
-    let has_ffmpeg = windows_path_contains_command(&path_text, "ffmpeg");
+    let has_ripgrep = windows_path_command(&path_text, "rg").is_some();
+    let has_ffmpeg = windows_path_command(&path_text, "ffmpeg").is_some();
     if has_ripgrep && has_ffmpeg {
         return Ok((
             true,
@@ -1024,7 +1072,7 @@ fn windows_stage_path(
     Ok(parts.join(";"))
 }
 
-fn windows_path_contains_command(path_text: &str, command_name: &str) -> bool {
+fn windows_path_command(path_text: &str, command_name: &str) -> Option<PathBuf> {
     let path_ext = env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
     let extensions: Vec<String> = path_ext
         .split(';')
@@ -1036,19 +1084,32 @@ fn windows_path_contains_command(path_text: &str, command_name: &str) -> bool {
         if dir.is_empty() {
             continue;
         }
-        if std::path::Path::new(dir).join(command_name).is_file() {
-            return true;
+        let direct = Path::new(dir).join(command_name);
+        if direct.is_file() {
+            return Some(direct);
         }
         for ext in &extensions {
-            if std::path::Path::new(dir)
-                .join(format!("{command_name}{ext}"))
-                .is_file()
-            {
-                return true;
+            let candidate = Path::new(dir).join(format!("{command_name}{ext}"));
+            if candidate.is_file() {
+                return Some(candidate);
             }
         }
     }
-    false
+    None
+}
+
+fn node_version_is_supported(version: &str) -> bool {
+    let version = version.trim().trim_start_matches('v');
+    let mut parts = version.split('.');
+    let major = parts.next().and_then(|part| part.parse::<u32>().ok());
+    let minor = parts.next().and_then(|part| part.parse::<u32>().ok());
+    match (major, minor) {
+        (Some(major), Some(_)) if major > 22 => true,
+        (Some(22), Some(minor)) => minor >= 12,
+        (Some(21), _) => false,
+        (Some(20), Some(minor)) => minor >= 19,
+        _ => false,
+    }
 }
 
 fn run_native_interactive_skip_stage(
