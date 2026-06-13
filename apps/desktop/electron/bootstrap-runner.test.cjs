@@ -283,6 +283,8 @@ test('runNativeBootstrapStage passes install pins to manager stage command', asy
     'C:\\Users\\x\\.hermes\\hermes-agent',
     '--wheelhouse-dir',
     'C:\\Hermes\\resources\\wheelhouse',
+    '--bootstrap-tools-dir',
+    'C:\\Hermes\\resources\\bootstrap-tools',
     '--commit',
     'abcdef1234567890',
     '--branch',

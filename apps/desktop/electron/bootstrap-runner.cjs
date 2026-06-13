@@ -871,6 +871,7 @@ async function runNativeBootstrapStage({
     if (resourcesPath) {
       const platformPath = platform === 'win32' ? path.win32 : path.posix
       args.push('--wheelhouse-dir', platformPath.join(resourcesPath, 'wheelhouse'))
+      args.push('--bootstrap-tools-dir', platformPath.join(resourcesPath, 'bootstrap-tools'))
     }
     if (installStamp && installStamp.commit) {
       args.push('--commit', installStamp.commit)

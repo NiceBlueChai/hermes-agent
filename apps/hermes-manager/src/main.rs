@@ -81,6 +81,9 @@ enum Command {
         /// Optional bundled Python wheelhouse directory.
         #[arg(long)]
         wheelhouse_dir: Option<PathBuf>,
+        /// Optional bundled bootstrap-tools directory.
+        #[arg(long)]
+        bootstrap_tools_dir: Option<PathBuf>,
         /// Plan the stage without writing OS/user state.
         #[arg(long)]
         dry_run: bool,
@@ -548,6 +551,7 @@ fn run() -> hermes_manager::Result<()> {
             install_root,
             current_path,
             wheelhouse_dir,
+            bootstrap_tools_dir,
             dry_run,
             commit,
             branch,
@@ -559,6 +563,7 @@ fn run() -> hermes_manager::Result<()> {
                     install_root,
                     current_path,
                     wheelhouse_dir,
+                    bootstrap_tools_dir,
                     dry_run,
                     commit: commit.as_deref(),
                     branch: branch.as_deref(),
@@ -834,6 +839,7 @@ struct NativeBootstrapStageOptions<'a> {
     install_root: Option<PathBuf>,
     current_path: Option<String>,
     wheelhouse_dir: Option<PathBuf>,
+    bootstrap_tools_dir: Option<PathBuf>,
     dry_run: bool,
     commit: Option<&'a str>,
     branch: Option<&'a str>,
@@ -1345,6 +1351,16 @@ fn run_native_desktop_stage(
     let electron_cache = home.join("electron-cache");
     fs::create_dir_all(&npm_cache).map_err(|err| ("stage-failed", err.to_string()))?;
     fs::create_dir_all(&electron_cache).map_err(|err| ("stage-failed", err.to_string()))?;
+    restore_bundled_windows_cache_archive(
+        home,
+        options.bootstrap_tools_dir.as_deref(),
+        "npm-cache",
+    )?;
+    restore_bundled_windows_cache_archive(
+        home,
+        options.bootstrap_tools_dir.as_deref(),
+        "electron-cache",
+    )?;
 
     let ci_status = run_windows_npm_command(
         &npm,
@@ -1657,6 +1673,106 @@ fn windows_npm_command(home: &std::path::Path, path_text: &str) -> Option<PathBu
     .into_iter()
     .find(|path| path.is_file())
     .or_else(|| windows_path_command(path_text, "npm"))
+}
+
+fn restore_bundled_windows_cache_archive(
+    home: &std::path::Path,
+    bootstrap_tools_dir: Option<&std::path::Path>,
+    cache_name: &str,
+) -> std::result::Result<Option<PathBuf>, (&'static str, String)> {
+    let Some(bootstrap_tools_dir) = bootstrap_tools_dir else {
+        return Ok(None);
+    };
+    let Some(arch) = windows_cache_arch() else {
+        return Ok(None);
+    };
+    let archive_name = format!("{cache_name}-windows-{arch}.zip");
+    let archive = bootstrap_tools_dir.join(&archive_name);
+    if !archive.is_file() {
+        return Ok(None);
+    }
+    let install_dir = home.join(cache_name);
+    extract_windows_cache_zip(&archive, &install_dir, cache_name)?;
+    Ok(Some(archive))
+}
+
+fn extract_windows_cache_zip(
+    archive: &std::path::Path,
+    install_dir: &std::path::Path,
+    cache_root_name: &str,
+) -> std::result::Result<(), (&'static str, String)> {
+    let parent = install_dir.parent().ok_or_else(|| {
+        (
+            "stage-failed",
+            format!(
+                "cache install path has no parent: {}",
+                install_dir.display()
+            ),
+        )
+    })?;
+    let tmp_dir = parent.join(format!("{cache_root_name}-extracting"));
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    fs::create_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+
+    let file = fs::File::open(archive).map_err(|err| ("fallback-to-script", err.to_string()))?;
+    let mut zip =
+        zip::ZipArchive::new(file).map_err(|err| ("fallback-to-script", err.to_string()))?;
+    for index in 0..zip.len() {
+        let mut entry = zip
+            .by_index(index)
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+        let Some(enclosed_name) = entry.enclosed_name() else {
+            let _ = fs::remove_dir_all(&tmp_dir);
+            return Err((
+                "fallback-to-script",
+                format!("unsafe ZIP entry in {}", archive.display()),
+            ));
+        };
+        if enclosed_name.as_os_str().is_empty() {
+            let _ = fs::remove_dir_all(&tmp_dir);
+            return Err((
+                "fallback-to-script",
+                format!("blank ZIP entry in {}", archive.display()),
+            ));
+        }
+        let output = tmp_dir.join(enclosed_name);
+        if entry.is_dir() {
+            fs::create_dir_all(&output).map_err(|err| ("stage-failed", err.to_string()))?;
+            continue;
+        }
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent).map_err(|err| ("stage-failed", err.to_string()))?;
+        }
+        let mut out = fs::File::create(&output).map_err(|err| ("stage-failed", err.to_string()))?;
+        std::io::copy(&mut entry, &mut out)
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    }
+
+    let extracted_root = tmp_dir.join(cache_root_name);
+    let source_dir = if extracted_root.is_dir() {
+        extracted_root
+    } else {
+        tmp_dir.clone()
+    };
+    if install_dir.exists() {
+        fs::remove_dir_all(install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    fs::rename(&source_dir, install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    Ok(())
+}
+
+fn windows_cache_arch() -> Option<&'static str> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some("x64"),
+        "aarch64" => Some("arm64"),
+        "x86" => Some("x86"),
+        _ => None,
+    }
 }
 
 fn run_windows_npm_command<I, S>(

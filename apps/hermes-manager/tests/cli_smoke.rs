@@ -1,6 +1,7 @@
 //! Smoke tests for the hermes-manager command-line binary.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -37,6 +38,33 @@ fn run_manager_output(args: &[&str]) -> std::process::Output {
         .args(args)
         .output()
         .expect("manager command should run")
+}
+
+#[cfg(target_os = "windows")]
+fn write_zip_fixture(path: &Path, entries: &[(&str, &[u8])]) {
+    let file = fs::File::create(path).expect("zip fixture should be created");
+    let mut archive = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default();
+    for (name, data) in entries {
+        archive
+            .start_file(name, options)
+            .expect("zip entry should start");
+        archive
+            .write_all(data)
+            .expect("zip entry should be written");
+    }
+    archive.finish().expect("zip fixture should be finalized");
+}
+
+#[cfg(target_os = "windows")]
+fn windows_cache_arch() -> &'static str {
+    if cfg!(target_arch = "x86_64") {
+        "x64"
+    } else if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "x86"
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -777,6 +805,97 @@ fn cli_smoke_runs_native_desktop_stage_with_managed_npm() {
         .join("win-unpacked")
         .join("Hermes.exe")
         .is_file());
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_restores_bundled_desktop_caches_before_native_desktop_stage() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let install_root = temp.path().join("repo");
+    let npm_dir = hermes_home.join("node");
+    let desktop_dir = install_root.join("apps").join("desktop");
+    let bootstrap_tools = temp.path().join("resources").join("bootstrap-tools");
+    let arch = windows_cache_arch();
+    fs::create_dir_all(&npm_dir).expect("npm dir should be created");
+    fs::create_dir_all(&desktop_dir).expect("desktop dir should be created");
+    fs::create_dir_all(&bootstrap_tools).expect("bootstrap tools dir should be created");
+    fs::write(desktop_dir.join("package.json"), "{\"name\":\"desktop\"}\n")
+        .expect("desktop package should be written");
+    write_zip_fixture(
+        &bootstrap_tools.join(format!("npm-cache-windows-{arch}.zip")),
+        &[("npm-cache/_cacache/index-v5/aa/bb", b"cached package")],
+    );
+    write_zip_fixture(
+        &bootstrap_tools.join(format!("electron-cache-windows-{arch}.zip")),
+        &[(
+            "electron-cache/electron-v40.9.3-win32-x64.zip",
+            b"electron zip",
+        )],
+    );
+    fs::write(
+        npm_dir.join("npm.cmd"),
+        concat!(
+            "@echo off\r\n",
+            "echo %npm_config_cache%>>\"%HERMES_NPM_ENV_LOG%\"\r\n",
+            "echo %ELECTRON_CACHE%>>\"%HERMES_NPM_ENV_LOG%\"\r\n",
+            "if \"%1\"==\"run\" if \"%2\"==\"pack\" (\r\n",
+            "  mkdir \"%CD%\\release\\win-unpacked\" >nul 2>nul\r\n",
+            "  echo exe>\"%CD%\\release\\win-unpacked\\Hermes.exe\"\r\n",
+            ")\r\n",
+            "exit /b 0\r\n",
+        ),
+    )
+    .expect("npm shim should be written");
+    let npm_env_log = temp.path().join("npm-env.log");
+    let hermes_home_text = hermes_home.display().to_string();
+    let install_root_text = install_root.display().to_string();
+    let bootstrap_tools_text = bootstrap_tools.display().to_string();
+    let npm_path = npm_dir.display().to_string();
+    let npm_env_log_text = npm_env_log.display().to_string();
+
+    let out = Command::new(manager_binary())
+        .env("HERMES_NPM_ENV_LOG", &npm_env_log_text)
+        .args([
+            "--hermes-home",
+            &hermes_home_text,
+            "--json",
+            "bootstrap-stage",
+            "desktop",
+            "--install-root",
+            &install_root_text,
+            "--bootstrap-tools-dir",
+            &bootstrap_tools_text,
+            "--current-path",
+            &npm_path,
+        ])
+        .output()
+        .expect("manager command should run");
+    assert!(
+        out.status.success(),
+        "desktop cache stage failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("desktop stage output should be json");
+    let npm_env = fs::read_to_string(npm_env_log).expect("npm env log should exist");
+
+    assert_eq!(report["stage"], "desktop");
+    assert_eq!(report["ok"], true);
+    assert!(hermes_home
+        .join("npm-cache")
+        .join("_cacache")
+        .join("index-v5")
+        .join("aa")
+        .join("bb")
+        .is_file());
+    assert!(hermes_home
+        .join("electron-cache")
+        .join("electron-v40.9.3-win32-x64.zip")
+        .is_file());
+    assert!(npm_env.contains(&hermes_home.join("npm-cache").display().to_string()));
+    assert!(npm_env.contains(&hermes_home.join("electron-cache").display().to_string()));
 }
 
 #[cfg(target_os = "windows")]
