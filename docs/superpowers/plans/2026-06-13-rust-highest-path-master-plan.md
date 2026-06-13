@@ -261,14 +261,22 @@ cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml self_ch
 - Modify: `apps/bootstrap-installer/src-tauri/src/repo_archive.rs`
 - Modify: `apps/bootstrap-installer/src-tauri/src/update.rs`
 - Modify: `apps/bootstrap-installer/src-tauri/src/orchestrator.rs`
+- Modify: `apps/bootstrap-installer/src-tauri/src/bootstrap.rs`
+- Modify: `.github/workflows/build-windows-installer.yml`
+- Modify: `.github/workflows/build-unix-installers.yml`
+- Add: `scripts/build_source_archive.py`
+- Add: `scripts/prepare_source_archive.py`
 - Modify: `scripts/install.ps1`
 - Modify: `scripts/install.sh`
 - Test: `apps/bootstrap-installer/src-tauri/src/repo_archive.rs`
 - Test: `apps/bootstrap-installer/src-tauri/src/update.rs`
+- Test: `tests/scripts/test_build_source_archive.py`
+- Test: `tests/scripts/test_prepare_source_archive.py`
 
 **Required gates:**
 
-- Fresh packaged installs prefer native source archive or bundled source snapshot.
+- Fresh packaged installs prefer native source archive or bundled source snapshot. **Done for manifest-verified Tauri
+  `source-archive/` resources; falls back to GitHub archive download.**
 - Archive-created updates refresh source through Rust and call `hermes update --finalize-only`.
 - Git preparation is not entered before dependency finalization for archive-created installs.
 - Script Git clone/update remains available for direct installs and recovery.

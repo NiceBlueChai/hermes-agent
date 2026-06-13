@@ -176,7 +176,12 @@ fn validate_tauri_bundle_resources_config_for_self_check(config_json: &str) -> V
     else {
         return vec!["installer Tauri bundle is missing resources".to_string()];
     };
-    for required in ["bootstrap-tools/", "wheelhouse/", "python-runtime/"] {
+    for required in [
+        "bootstrap-tools/",
+        "wheelhouse/",
+        "python-runtime/",
+        "source-archive/",
+    ] {
         let found = resources
             .iter()
             .any(|resource| resource.as_str() == Some(required));

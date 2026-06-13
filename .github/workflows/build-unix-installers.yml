@@ -21,6 +21,14 @@ on:
                 description: Optional macOS Python runtime archive, in NAME=HTTPS_URL=SHA256 form.
                 required: false
                 type: string
+            linux-source-archive:
+                description: Optional Linux source archive, in NAME=HTTPS_URL=SHA256 form.
+                required: false
+                type: string
+            macos-source-archive:
+                description: Optional macOS source archive, in NAME=HTTPS_URL=SHA256 form.
+                required: false
+                type: string
 
 permissions:
     contents: read
@@ -196,6 +204,41 @@ jobs:
                   --platform ${{ matrix.platform }}
                   --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
 
+            - name: Bundle Hermes source archive
+              if: >-
+                  ${{
+                      (matrix.platform == 'linux' && inputs['linux-source-archive'] != '') ||
+                      (matrix.platform == 'macos' && inputs['macos-source-archive'] != '')
+                  }}
+              env:
+                  HERMES_LINUX_SOURCE_ARCHIVE: ${{ inputs['linux-source-archive'] }}
+                  HERMES_MACOS_SOURCE_ARCHIVE: ${{ inputs['macos-source-archive'] }}
+              run: |
+                  set -euo pipefail
+                  HERMES_SOURCE_ARCHIVE=""
+                  if [ "${{ matrix.platform }}" = "linux" ]; then
+                      HERMES_SOURCE_ARCHIVE="${HERMES_LINUX_SOURCE_ARCHIVE}"
+                  else
+                      HERMES_SOURCE_ARCHIVE="${HERMES_MACOS_SOURCE_ARCHIVE}"
+                  fi
+                  python scripts/prepare_source_archive.py \
+                      --archive-ref "${{ github.sha }}" \
+                      --commit "${{ github.sha }}" \
+                      --branch "${{ github.ref_name }}" \
+                      --force \
+                      --audited-archive "${HERMES_SOURCE_ARCHIVE}"
+
+            - name: Validate Hermes source archive
+              if: >-
+                  ${{
+                      (matrix.platform == 'linux' && inputs['linux-source-archive'] != '') ||
+                      (matrix.platform == 'macos' && inputs['macos-source-archive'] != '')
+                  }}
+              run: >
+                  python scripts/prepare_source_archive.py
+                  --validate-only
+                  --archive-ref "${{ github.sha }}"
+
             - name: Build installer
               env:
                   HERMES_BUILD_PIN_COMMIT: ${{ github.sha }}
@@ -334,6 +377,17 @@ jobs:
                   --python-runtime-platform ${{ matrix.platform }}
                   --python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
 
+            - name: Validate Hermes source archive artifacts
+              if: >-
+                  ${{
+                      (matrix.platform == 'linux' && inputs['linux-source-archive'] != '') ||
+                      (matrix.platform == 'macos' && inputs['macos-source-archive'] != '')
+                  }}
+              run: >
+                  python scripts/prepare_source_archive.py
+                  --validate-only
+                  --archive-ref "${{ github.sha }}"
+
             - name: Upload installer artifacts
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
               with:
@@ -374,4 +428,16 @@ jobs:
               with:
                   name: ${{ matrix.artifact-name }}-python-runtime
                   path: apps/bootstrap-installer/src-tauri/python-runtime/*
+                  if-no-files-found: error
+
+            - name: Upload Hermes source archive
+              if: >-
+                  ${{
+                      (matrix.platform == 'linux' && inputs['linux-source-archive'] != '') ||
+                      (matrix.platform == 'macos' && inputs['macos-source-archive'] != '')
+                  }}
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+              with:
+                  name: ${{ matrix.artifact-name }}-source-archive
+                  path: apps/bootstrap-installer/src-tauri/source-archive/*
                   if-no-files-found: error

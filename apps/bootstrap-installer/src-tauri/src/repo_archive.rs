@@ -5,6 +5,7 @@
 //! the managed checkout directory without overwriting user data.
 
 use anyhow::{anyhow, Context, Result};
+use serde::Deserialize;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -12,6 +13,31 @@ use zip::write::SimpleFileOptions;
 
 /// Source marker written into archive-created checkouts.
 pub const SOURCE_MARKER_NAME: &str = ".hermes-source.json";
+const SOURCE_ARCHIVE_MANIFEST: &str = "source-archive-manifest.json";
+const SOURCE_ARCHIVE_MANIFEST_SCHEMA_VERSION: u32 = 1;
+
+/// Where a repository archive came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepoArchiveSourceKind {
+    Bundled,
+    Download,
+}
+
+impl RepoArchiveSourceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bundled => "bundled",
+            Self::Download => "download",
+        }
+    }
+}
+
+/// Repository archive selected for a fresh archive install.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedRepoArchive {
+    pub path: PathBuf,
+    pub source: RepoArchiveSourceKind,
+}
 
 /// GitHub repository archive selector.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +67,91 @@ impl RepoArchiveSpec {
         }
         Err(anyhow!("repo archive requires a commit or branch ref"))
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct SourceArchiveManifest {
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    owner: String,
+    repo: String,
+    #[serde(rename = "archiveRef")]
+    archive_ref: String,
+    commit: Option<String>,
+    branch: Option<String>,
+    files: Vec<SourceArchiveManifestFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SourceArchiveManifestFile {
+    name: String,
+    url: String,
+    #[serde(rename = "sizeBytes")]
+    size_bytes: u64,
+    sha256: String,
+}
+
+/// Resolve a manifest-owned bundled source archive for `spec`.
+pub fn bundled_archive_for_spec(
+    bundled_source_dir: Option<&Path>,
+    spec: &RepoArchiveSpec,
+) -> Option<ResolvedRepoArchive> {
+    let bundled_source_dir = bundled_source_dir?;
+    let manifest_path = bundled_source_dir.join(SOURCE_ARCHIVE_MANIFEST);
+    let manifest = std::fs::read_to_string(&manifest_path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<SourceArchiveManifest>(&text).ok())?;
+    if manifest.schema_version != SOURCE_ARCHIVE_MANIFEST_SCHEMA_VERSION {
+        return None;
+    }
+    if manifest.owner != spec.owner || manifest.repo != spec.repo {
+        return None;
+    }
+    if manifest.archive_ref != spec.archive_ref().ok()? {
+        return None;
+    }
+    if spec.commit.is_some() && manifest.commit != spec.commit {
+        return None;
+    }
+    if spec.commit.is_none() && manifest.branch != spec.branch {
+        return None;
+    }
+
+    manifest.files.into_iter().find_map(|file| {
+        if !source_archive_name_is_plain_zip(&file.name) {
+            return None;
+        }
+        if !file.url.starts_with("https://") {
+            return None;
+        }
+        if file.sha256.len() != 64 || !file.sha256.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            return None;
+        }
+        let path = bundled_source_dir.join(&file.name);
+        let Ok(bytes) = std::fs::read(&path) else {
+            return None;
+        };
+        if file.size_bytes != bytes.len() as u64 {
+            return None;
+        }
+        if !crate::artifact::sha256_hex(&bytes).eq_ignore_ascii_case(&file.sha256) {
+            return None;
+        }
+        Some(ResolvedRepoArchive {
+            path,
+            source: RepoArchiveSourceKind::Bundled,
+        })
+    })
+}
+
+fn source_archive_name_is_plain_zip(name: &str) -> bool {
+    !name.trim().is_empty()
+        && name == name.trim()
+        && name != "."
+        && name != ".."
+        && !name.contains('/')
+        && !name.contains('\\')
+        && name.ends_with(".zip")
 }
 
 /// Run a local no-network archive/update/repair/uninstall lifecycle smoke.
@@ -199,6 +310,25 @@ pub async fn download_and_extract_fresh(
     .context("downloading repository archive")?;
     extract_repo_archive_to_install_root(&archive_path, install_root)?;
     Ok(archive_path)
+}
+
+/// Extract a repository archive into a fresh install root, preferring a bundled archive.
+pub async fn extract_fresh_preferring_bundled(
+    spec: &RepoArchiveSpec,
+    cache_dir: &Path,
+    install_root: &Path,
+    bundled_source_dir: Option<&Path>,
+) -> Result<ResolvedRepoArchive> {
+    if let Some(resolved) = bundled_archive_for_spec(bundled_source_dir, spec) {
+        extract_repo_archive_to_install_root(&resolved.path, install_root)?;
+        return Ok(resolved);
+    }
+
+    let archive_path = download_and_extract_fresh(spec, cache_dir, install_root).await?;
+    Ok(ResolvedRepoArchive {
+        path: archive_path,
+        source: RepoArchiveSourceKind::Download,
+    })
 }
 
 /// Write the install source marker for an archive-created checkout.
@@ -464,6 +594,166 @@ mod tests {
             archive_cache_path(&cache_dir, &spec).unwrap(),
             cache_dir.join("hermes-agent-feature_native_repo.zip")
         );
+    }
+
+    #[test]
+    fn bundled_archive_for_spec_accepts_manifest_verified_archive() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-repo-archive-bundled-{}",
+            std::process::id()
+        ));
+        let bundled = root.join("source-archive");
+        let archive_name = "hermes-agent-abcdef123.zip";
+        let archive = bundled.join(archive_name);
+        let spec = RepoArchiveSpec {
+            owner: "NousResearch".into(),
+            repo: "hermes-agent".into(),
+            commit: Some("abcdef123".into()),
+            branch: Some("main".into()),
+        };
+        std::fs::create_dir_all(&bundled).unwrap();
+        write_test_zip(&archive, &[("hermes-agent-abcdef123/README.md", b"ok")]);
+        let bytes = std::fs::read(&archive).unwrap();
+        std::fs::write(
+            bundled.join("source-archive-manifest.json"),
+            format!(
+                r#"{{
+                    "schemaVersion": 1,
+                    "owner": "NousResearch",
+                    "repo": "hermes-agent",
+                    "archiveRef": "abcdef123",
+                    "commit": "abcdef123",
+                    "branch": "main",
+                    "files": [
+                        {{
+                            "name": "{}",
+                            "url": "https://example.invalid/{}",
+                            "sizeBytes": {},
+                            "sha256": "{}"
+                        }}
+                    ]
+                }}"#,
+                archive_name,
+                archive_name,
+                bytes.len(),
+                crate::artifact::sha256_hex(&bytes)
+            ),
+        )
+        .unwrap();
+
+        let resolved = bundled_archive_for_spec(Some(&bundled), &spec).unwrap();
+
+        assert_eq!(resolved.path, archive);
+        assert_eq!(resolved.source, RepoArchiveSourceKind::Bundled);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn bundled_archive_for_spec_rejects_mismatched_manifest() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-repo-archive-bundled-mismatch-{}",
+            std::process::id()
+        ));
+        let bundled = root.join("source-archive");
+        let archive_name = "hermes-agent-abcdef123.zip";
+        let archive = bundled.join(archive_name);
+        let spec = RepoArchiveSpec {
+            owner: "NousResearch".into(),
+            repo: "hermes-agent".into(),
+            commit: Some("abcdef123".into()),
+            branch: Some("main".into()),
+        };
+        std::fs::create_dir_all(&bundled).unwrap();
+        write_test_zip(&archive, &[("hermes-agent-abcdef123/README.md", b"ok")]);
+        std::fs::write(
+            bundled.join("source-archive-manifest.json"),
+            r#"{
+                "schemaVersion": 1,
+                "owner": "NousResearch",
+                "repo": "hermes-agent",
+                "archiveRef": "main",
+                "branch": "main",
+                "files": [
+                    {
+                        "name": "hermes-agent-abcdef123.zip",
+                        "url": "https://example.invalid/hermes-agent-abcdef123.zip",
+                        "sizeBytes": 1,
+                        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        assert!(bundled_archive_for_spec(Some(&bundled), &spec).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn extract_fresh_preferring_bundled_uses_manifest_verified_archive() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-repo-archive-bundled-extract-{}",
+            std::process::id()
+        ));
+        let bundled = root.join("source-archive");
+        let install_root = root.join("install");
+        let archive_name = "hermes-agent-abcdef123.zip";
+        let archive = bundled.join(archive_name);
+        let spec = RepoArchiveSpec {
+            owner: "NousResearch".into(),
+            repo: "hermes-agent".into(),
+            commit: Some("abcdef123".into()),
+            branch: Some("main".into()),
+        };
+        std::fs::create_dir_all(&bundled).unwrap();
+        write_test_zip(
+            &archive,
+            &[("hermes-agent-abcdef123/README.md", b"bundled source")],
+        );
+        let bytes = std::fs::read(&archive).unwrap();
+        std::fs::write(
+            bundled.join("source-archive-manifest.json"),
+            format!(
+                r#"{{
+                    "schemaVersion": 1,
+                    "owner": "NousResearch",
+                    "repo": "hermes-agent",
+                    "archiveRef": "abcdef123",
+                    "commit": "abcdef123",
+                    "branch": "main",
+                    "files": [
+                        {{
+                            "name": "{}",
+                            "url": "https://example.invalid/{}",
+                            "sizeBytes": {},
+                            "sha256": "{}"
+                        }}
+                    ]
+                }}"#,
+                archive_name,
+                archive_name,
+                bytes.len(),
+                crate::artifact::sha256_hex(&bytes)
+            ),
+        )
+        .unwrap();
+
+        let resolved = extract_fresh_preferring_bundled(
+            &spec,
+            &root.join("cache"),
+            &install_root,
+            Some(&bundled),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resolved.source, RepoArchiveSourceKind::Bundled);
+        assert_eq!(resolved.path, archive);
+        assert_eq!(
+            std::fs::read_to_string(install_root.join("README.md")).unwrap(),
+            "bundled source"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

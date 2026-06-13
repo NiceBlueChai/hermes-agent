@@ -493,6 +493,7 @@ async fn run_bootstrap(
     let bundled_tools_dir = bootstrap_tools_resource_dir(&app);
     let bundled_wheelhouse_dir = wheelhouse_resource_dir(&app);
     let bundled_python_runtime_dir = python_runtime_resource_dir(&app);
+    let bundled_source_archive_dir = source_archive_resource_dir(&app);
     if let Some(path) = &bundled_tools_dir {
         emit_log(&format!("[bootstrap] bundled tool archives at {}", path.display()));
     }
@@ -501,6 +502,9 @@ async fn run_bootstrap(
     }
     if let Some(path) = &bundled_python_runtime_dir {
         emit_log(&format!("[bootstrap] bundled Python runtime at {}", path.display()));
+    }
+    if let Some(path) = &bundled_source_archive_dir {
+        emit_log(&format!("[bootstrap] bundled source archive at {}", path.display()));
     }
     emit_log(&crate::orchestrator::summarize_plan(
         &install_state,
@@ -808,6 +812,7 @@ async fn run_bootstrap(
                         &install_root,
                         pin.commit.as_deref(),
                         pin.branch.as_deref(),
+                        bundled_source_archive_dir.as_deref(),
                     )
                     .await,
                 )
@@ -1415,6 +1420,13 @@ fn wheelhouse_resource_dir(app: &AppHandle) -> Option<PathBuf> {
 fn python_runtime_resource_dir(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .resolve("python-runtime", BaseDirectory::Resource)
+        .ok()
+        .filter(|path| path.is_dir())
+}
+
+fn source_archive_resource_dir(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .resolve("source-archive", BaseDirectory::Resource)
         .ok()
         .filter(|path| path.is_dir())
 }

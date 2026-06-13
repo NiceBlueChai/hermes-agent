@@ -1,0 +1,4 @@
+# Keep the release resource directory present while excluding generated archives.
+*
+!.gitignore
+!README.md

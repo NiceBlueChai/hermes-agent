@@ -4346,6 +4346,7 @@ pub async fn install_repository_archive_fresh(
     install_root: &Path,
     commit: Option<&str>,
     branch: Option<&str>,
+    bundled_source_dir: Option<&Path>,
 ) -> Result<serde_json::Value> {
     if install_root.exists() {
         return Err(anyhow!(
@@ -4355,20 +4356,25 @@ pub async fn install_repository_archive_fresh(
     }
 
     let spec = repository_archive_spec(commit, branch);
-    let archive_path =
-        crate::repo_archive::download_and_extract_fresh(&spec, &crate::paths::bootstrap_cache_dir(), install_root)
-            .await?;
+    let archive = crate::repo_archive::extract_fresh_preferring_bundled(
+        &spec,
+        &crate::paths::bootstrap_cache_dir(),
+        install_root,
+        bundled_source_dir,
+    )
+    .await?;
     let git_initialized = initialize_archive_git_repo(install_root);
     let source_marker = crate::repo_archive::write_archive_source_marker(
         install_root,
         &spec,
-        &archive_path,
+        &archive.path,
         git_initialized,
     )?;
 
     Ok(serde_json::json!({
         "installRoot": install_root,
-        "archive": archive_path,
+        "archive": archive.path,
+        "archiveSource": archive.source.as_str(),
         "gitInitialized": git_initialized,
         "source": source_marker,
     }))
