@@ -354,6 +354,13 @@ const WINDOWS_DEPENDENCIES_BOOTSTRAP_STAGE: BootstrapStageDescriptor = Bootstrap
     needs_user_input: false,
 };
 
+const WINDOWS_DESKTOP_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "desktop",
+    title: "Build desktop app",
+    category: "install",
+    needs_user_input: false,
+};
+
 const WINDOWS_INTERACTIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
     BootstrapStageDescriptor {
         name: "configure",
@@ -860,6 +867,7 @@ fn run_native_bootstrap_stage(
             run_native_config_templates_stage(home, options).map(|skipped| (skipped, None))
         }
         "node-deps" => run_native_node_deps_stage(options),
+        "desktop" => run_native_desktop_stage(home, options),
         "platform-sdks" => run_native_platform_sdks_stage(home, options),
         "configure" | "gateway" => run_native_interactive_skip_stage(stage),
         other => Err((
@@ -901,6 +909,7 @@ fn native_bootstrap_stages() -> Vec<BootstrapStageDescriptor> {
         stages.push(WINDOWS_NODE_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_SYSTEM_PACKAGES_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_NODE_DEPS_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_DESKTOP_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_PATH_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_CONFIG_TEMPLATES_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_PLATFORM_SDKS_BOOTSTRAP_STAGE);
@@ -1287,6 +1296,111 @@ fn run_native_node_deps_stage(
     ))
 }
 
+fn run_native_desktop_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native desktop stage is only complete on Windows".to_string(),
+        ));
+    }
+    let install_root = options
+        .install_root
+        .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    if !install_root.is_dir() {
+        return Err((
+            "fallback-to-script",
+            "install root missing; script prepares the repository before desktop build".to_string(),
+        ));
+    }
+    let desktop_dir = install_root.join("apps").join("desktop");
+    if !desktop_dir.join("package.json").is_file() {
+        return Err((
+            "fallback-to-script",
+            "apps/desktop package missing; script decides whether to skip desktop build"
+                .to_string(),
+        ));
+    }
+    let path_text = windows_stage_path(options.current_path)?;
+    let Some(npm) = windows_npm_command(home, &path_text) else {
+        return Err((
+            "fallback-to-script",
+            "npm missing; script verifies Node.js before desktop build".to_string(),
+        ));
+    };
+    if options.dry_run {
+        return Ok((
+            false,
+            Some(format!(
+                "desktop stage would run {} in {}",
+                npm.display(),
+                install_root.display()
+            )),
+        ));
+    }
+
+    let npm_cache = home.join("npm-cache");
+    let electron_cache = home.join("electron-cache");
+    fs::create_dir_all(&npm_cache).map_err(|err| ("stage-failed", err.to_string()))?;
+    fs::create_dir_all(&electron_cache).map_err(|err| ("stage-failed", err.to_string()))?;
+
+    let ci_status = run_windows_npm_command(
+        &npm,
+        ["ci", "--prefer-offline", "--no-audit", "--fund=false"],
+        &install_root,
+        &npm_cache,
+        &electron_cache,
+    )?;
+    if !ci_status.success() {
+        let install_status = run_windows_npm_command(
+            &npm,
+            ["install", "--prefer-offline", "--no-audit", "--fund=false"],
+            &install_root,
+            &npm_cache,
+            &electron_cache,
+        )?;
+        if !install_status.success() {
+            return Err((
+                "fallback-to-script",
+                format!(
+                    "desktop workspace npm install failed with exit {:?}; script preserves full npm diagnostics",
+                    install_status.code()
+                ),
+            ));
+        }
+    }
+
+    let pack_status = run_windows_npm_command(
+        &npm,
+        ["run", "pack"],
+        &desktop_dir,
+        &npm_cache,
+        &electron_cache,
+    )?;
+    if !pack_status.success() {
+        return Err((
+            "fallback-to-script",
+            format!(
+                "desktop pack failed with exit {:?}; script retries Electron cache recovery",
+                pack_status.code()
+            ),
+        ));
+    }
+    let Some(desktop_exe) = windows_desktop_exe(&desktop_dir) else {
+        return Err((
+            "fallback-to-script",
+            "desktop build completed but no Hermes.exe was found; script verifies build output"
+                .to_string(),
+        ));
+    };
+    Ok((
+        false,
+        Some(format!("desktop app built at {}", desktop_exe.display())),
+    ))
+}
+
 fn run_native_node_stage(
     home: &std::path::Path,
     options: NativeBootstrapStageOptions<'_>,
@@ -1532,6 +1646,57 @@ fn windows_uv_command(home: &std::path::Path, path_text: &str) -> Option<PathBuf
     .into_iter()
     .find(|path| path.is_file())
     .or_else(|| windows_path_command(path_text, "uv"))
+}
+
+fn windows_npm_command(home: &std::path::Path, path_text: &str) -> Option<PathBuf> {
+    [
+        home.join("node").join("npm.cmd"),
+        home.join("node").join("npm.exe"),
+        home.join("node").join("npm.bat"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .or_else(|| windows_path_command(path_text, "npm"))
+}
+
+fn run_windows_npm_command<I, S>(
+    npm: &std::path::Path,
+    args: I,
+    cwd: &std::path::Path,
+    npm_cache: &std::path::Path,
+    electron_cache: &std::path::Path,
+) -> std::result::Result<std::process::ExitStatus, (&'static str, String)>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    ProcessCommand::new(npm)
+        .args(args)
+        .current_dir(cwd)
+        .env("npm_config_cache", npm_cache)
+        .env("electron_config_cache", electron_cache)
+        .env("ELECTRON_CACHE", electron_cache)
+        .env("ELECTRON_BUILDER_CACHE", electron_cache)
+        .env("CSC_IDENTITY_AUTO_DISCOVERY", "false")
+        .env("WIN_CSC_LINK", "")
+        .env("WIN_CSC_KEY_PASSWORD", "")
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))
+}
+
+fn windows_desktop_exe(desktop_dir: &std::path::Path) -> Option<PathBuf> {
+    [
+        desktop_dir
+            .join("release")
+            .join("win-unpacked")
+            .join("Hermes.exe"),
+        desktop_dir
+            .join("release")
+            .join("win-arm64-unpacked")
+            .join("Hermes.exe"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
 }
 
 fn windows_path_command(path_text: &str, command_name: &str) -> Option<PathBuf> {

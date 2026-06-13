@@ -325,6 +325,10 @@ fn cli_smoke_reports_native_bootstrap_manifest() {
         .iter()
         .any(|stage| stage["name"].as_str() == Some("dependencies")));
     #[cfg(target_os = "windows")]
+    assert!(stages
+        .iter()
+        .any(|stage| stage["name"].as_str() == Some("desktop")));
+    #[cfg(target_os = "windows")]
     assert!(stages.iter().any(|stage| {
         stage["name"].as_str() == Some("configure") && stage["needs_user_input"] == true
     }));
@@ -703,6 +707,76 @@ fn cli_smoke_runs_native_dependencies_stage_with_managed_uv() {
     assert!(fs::read_to_string(uv_log)
         .expect("uv log should exist")
         .contains("sync --extra all --locked"));
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_runs_native_desktop_stage_with_managed_npm() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let install_root = temp.path().join("repo");
+    let npm_dir = hermes_home.join("node");
+    let desktop_dir = install_root.join("apps").join("desktop");
+    fs::create_dir_all(&npm_dir).expect("npm dir should be created");
+    fs::create_dir_all(&desktop_dir).expect("desktop dir should be created");
+    fs::write(desktop_dir.join("package.json"), "{\"name\":\"desktop\"}\n")
+        .expect("desktop package should be written");
+    fs::write(
+        npm_dir.join("npm.cmd"),
+        concat!(
+            "@echo off\r\n",
+            "echo %*>>\"%HERMES_NPM_LOG%\"\r\n",
+            "if \"%1\"==\"run\" if \"%2\"==\"pack\" (\r\n",
+            "  mkdir \"%CD%\\release\\win-unpacked\" >nul 2>nul\r\n",
+            "  echo exe>\"%CD%\\release\\win-unpacked\\Hermes.exe\"\r\n",
+            ")\r\n",
+            "exit /b 0\r\n",
+        ),
+    )
+    .expect("npm shim should be written");
+    let npm_log = temp.path().join("npm.log");
+    let hermes_home_text = hermes_home.display().to_string();
+    let install_root_text = install_root.display().to_string();
+    let npm_path = npm_dir.display().to_string();
+    let npm_log_text = npm_log.display().to_string();
+
+    let out = Command::new(manager_binary())
+        .env("HERMES_NPM_LOG", &npm_log_text)
+        .args([
+            "--hermes-home",
+            &hermes_home_text,
+            "--json",
+            "bootstrap-stage",
+            "desktop",
+            "--install-root",
+            &install_root_text,
+            "--current-path",
+            &npm_path,
+        ])
+        .output()
+        .expect("manager command should run");
+    assert!(
+        out.status.success(),
+        "desktop stage failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("desktop stage output should be json");
+    let log = fs::read_to_string(npm_log).expect("npm log should exist");
+
+    assert_eq!(report["stage"], "desktop");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], false);
+    assert!(log.contains("ci"));
+    assert!(log.contains("--prefer-offline"));
+    assert!(log.contains("--no-audit"));
+    assert!(log.contains("run pack"));
+    assert!(desktop_dir
+        .join("release")
+        .join("win-unpacked")
+        .join("Hermes.exe")
+        .is_file());
 }
 
 #[cfg(target_os = "windows")]
