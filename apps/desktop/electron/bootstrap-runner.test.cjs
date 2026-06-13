@@ -7,6 +7,7 @@ const path = require('node:path')
 const {
   runBootstrap,
   probeNativeBootstrapCapabilities,
+  probeNativeBootstrapManifest,
   recordInstallMetadata,
   resolveHermesManagerPath,
   resolveInstallScript,
@@ -214,6 +215,44 @@ test('probeNativeBootstrapCapabilities parses manager bootstrap bridge support',
     canRunFullBootstrap: false,
     supportedStages: ['install-metadata']
   })
+})
+
+test('probeNativeBootstrapManifest parses manager bridge stages', () => {
+  const probe = probeNativeBootstrapManifest({
+    hermesHome: '/home/x/.hermes',
+    resourcesPath: '/opt/Hermes/resources',
+    platform: 'linux',
+    exists: file => file.endsWith('/hermes-manager'),
+    _execFileSync: (command, args, options) => {
+      assert.equal(command, '/opt/Hermes/resources/hermes-manager/hermes-manager')
+      assert.deepEqual(args, [
+        '--hermes-home',
+        '/home/x/.hermes',
+        '--json',
+        'bootstrap-manifest'
+      ])
+      assert.equal(options.cwd, '/home/x/.hermes')
+      return Buffer.from(
+        JSON.stringify({
+          ok: true,
+          command: 'bootstrap-manifest',
+          protocol_version: 1,
+          stages: [
+            {
+              name: 'install-metadata',
+              title: 'Record install metadata',
+              category: 'finalize',
+              needs_user_input: false
+            }
+          ]
+        })
+      )
+    }
+  })
+
+  assert.equal(probe.available, true)
+  assert.equal(probe.protocolVersion, 1)
+  assert.deepEqual(probe.stages.map(stage => stage.name), ['install-metadata'])
 })
 
 test('runBootstrap records install metadata through the native manager hook after success', async () => {

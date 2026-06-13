@@ -666,6 +666,16 @@ async function runBootstrap(opts) {
           `canRunFullBootstrap=${nativeProbe.canRunFullBootstrap}; ` +
           `stages=${nativeProbe.supportedStages.join(',') || '<none>'}`
       })
+      const nativeManifest = probeNativeBootstrapManifest({ hermesHome, resourcesPath, platform })
+      if (nativeManifest.available) {
+        emit({
+          type: 'log',
+          line:
+            '[bootstrap] native bootstrap manifest available; ' +
+            `protocol=${nativeManifest.protocolVersion}; ` +
+            `stages=${nativeManifest.stages.map(stage => stage.name).join(',') || '<none>'}`
+        })
+      }
     }
 
     // HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback
@@ -821,11 +831,51 @@ function probeNativeBootstrapCapabilities({
   return { available: false, canRunFullBootstrap: false, supportedStages: [] }
 }
 
+function probeNativeBootstrapManifest({
+  hermesHome,
+  resourcesPath,
+  platform = process.platform,
+  exists = fs.existsSync,
+  _execFileSync = execFileSync
+}) {
+  const managerPath = resolveHermesManagerPath(resourcesPath, platform, exists)
+  if (!managerPath) {
+    return { available: false, protocolVersion: null, stages: [] }
+  }
+  try {
+    const stdout = _execFileSync(
+      managerPath,
+      ['--hermes-home', hermesHome, '--json', 'bootstrap-manifest'],
+      hiddenWindowsChildOptions({
+        cwd: hermesHome,
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+    )
+    const parsed = JSON.parse(Buffer.isBuffer(stdout) ? stdout.toString('utf8') : String(stdout))
+    if (
+      parsed &&
+      parsed.ok === true &&
+      parsed.command === 'bootstrap-manifest' &&
+      Array.isArray(parsed.stages)
+    ) {
+      return {
+        available: true,
+        protocolVersion: parsed.protocol_version || parsed.protocolVersion || null,
+        stages: parsed.stages.filter(stage => stage && typeof stage.name === 'string')
+      }
+    }
+  } catch {
+    void 0
+  }
+  return { available: false, protocolVersion: null, stages: [] }
+}
+
 module.exports = {
   runBootstrap,
   // Exposed for testability
   parseStageResult,
   probeNativeBootstrapCapabilities,
+  probeNativeBootstrapManifest,
   recordInstallMetadata,
   resolveHermesManagerPath,
   resolveLocalInstallScript,
