@@ -1310,6 +1310,32 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             workflow.index("- name: Smoke built installer binary"),
         )
 
+    def test_windows_installer_workflow_validates_signed_outputs_before_upload(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+
+        signing = workflow.index("- name: Sign Hermes-Setup.exe with Azure Artifact Signing")
+        signature_validation = workflow.index("- name: Verify signed installer artifacts")
+        raw_smoke = workflow.index("- name: Smoke built installer binary")
+        lifecycle_smoke = workflow.index("- name: Smoke built installer lifecycle")
+        artifact_validation = workflow.index("- name: Validate installer artifacts")
+        runtime_validation = workflow.index("- name: Validate Python runtime artifacts")
+        first_upload = workflow.index("- name: Upload NSIS installer")
+
+        self.assertLess(signing, signature_validation)
+        self.assertLess(signature_validation, raw_smoke)
+        self.assertLess(raw_smoke, lifecycle_smoke)
+        self.assertLess(lifecycle_smoke, artifact_validation)
+        self.assertLess(artifact_validation, first_upload)
+        self.assertLess(runtime_validation, first_upload)
+        self.assertIn("Hermes-Setup.exe --self-check", workflow)
+        self.assertIn("Hermes-Setup.exe --self-check-lifecycle", workflow)
+        self.assertIn('"apps/bootstrap-installer/src-tauri/target/release/bundle/nsis/*.exe"', workflow)
+        self.assertIn("--bootstrap-tools-dir apps/bootstrap-installer/src-tauri/bootstrap-tools", workflow)
+        self.assertIn("--wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse", workflow)
+
     def test_tauri_bundle_declares_self_contained_resources(self):
         repo_root = Path(__file__).resolve().parents[2]
         config_path = repo_root / "apps" / "bootstrap-installer" / "src-tauri" / "tauri.conf.json"
