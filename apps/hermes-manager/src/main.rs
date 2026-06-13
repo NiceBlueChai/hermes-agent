@@ -293,6 +293,14 @@ const WINDOWS_NODE_DEPS_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapSta
     needs_user_input: false,
 };
 
+const WINDOWS_SYSTEM_PACKAGES_BOOTSTRAP_STAGE: BootstrapStageDescriptor =
+    BootstrapStageDescriptor {
+        name: "system-packages",
+        title: "Install ripgrep and ffmpeg",
+        category: "prereqs",
+        needs_user_input: false,
+    };
+
 const WINDOWS_INTERACTIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
     BootstrapStageDescriptor {
         name: "configure",
@@ -784,6 +792,7 @@ fn run_native_bootstrap_stage(
                 .map_err(|err| ("stage-failed", err.to_string()))
         }
         "path" => run_native_path_stage(home, options).map(|skipped| (skipped, None)),
+        "system-packages" => run_native_system_packages_stage(options),
         "config-templates" => {
             run_native_config_templates_stage(home, options).map(|skipped| (skipped, None))
         }
@@ -820,6 +829,7 @@ fn run_native_bootstrap_stage(
 fn native_bootstrap_stages() -> Vec<BootstrapStageDescriptor> {
     let mut stages = BASE_NATIVE_BOOTSTRAP_STAGES.to_vec();
     if cfg!(target_os = "windows") {
+        stages.push(WINDOWS_SYSTEM_PACKAGES_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_NODE_DEPS_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_PATH_BOOTSTRAP_STAGE);
         stages.push(WINDOWS_CONFIG_TEMPLATES_BOOTSTRAP_STAGE);
@@ -880,6 +890,30 @@ fn run_native_node_deps_stage(
     Err((
         "fallback-to-script",
         "npm is available; script installs Node.js dependencies".to_string(),
+    ))
+}
+
+fn run_native_system_packages_stage(
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native system package probe is only complete on Windows".to_string(),
+        ));
+    }
+    let path_text = windows_stage_path(options.current_path)?;
+    let has_ripgrep = windows_path_contains_command(&path_text, "rg");
+    let has_ffmpeg = windows_path_contains_command(&path_text, "ffmpeg");
+    if has_ripgrep && has_ffmpeg {
+        return Ok((
+            true,
+            Some("ripgrep and ffmpeg already available; system package stage skipped".to_string()),
+        ));
+    }
+    Err((
+        "fallback-to-script",
+        "ripgrep or ffmpeg missing; script installs system packages".to_string(),
     ))
 }
 

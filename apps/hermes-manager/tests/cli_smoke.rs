@@ -280,6 +280,10 @@ fn cli_smoke_reports_native_bootstrap_manifest() {
         .iter()
         .any(|stage| stage["name"].as_str() == Some("node-deps")));
     #[cfg(target_os = "windows")]
+    assert!(stages
+        .iter()
+        .any(|stage| stage["name"].as_str() == Some("system-packages")));
+    #[cfg(target_os = "windows")]
     assert!(stages.iter().any(|stage| {
         stage["name"].as_str() == Some("configure") && stage["needs_user_input"] == true
     }));
@@ -598,6 +602,62 @@ fn cli_smoke_falls_back_for_native_node_deps_when_npm_is_available() {
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(report["stage"], "node-deps");
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["failureCategory"], "fallback-to-script");
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_skips_native_system_packages_when_tools_are_available() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let tool_dir = temp.path().join("tools");
+    fs::create_dir_all(&tool_dir).expect("tool dir should be created");
+    fs::write(tool_dir.join("rg.exe"), "").expect("rg should be written");
+    fs::write(tool_dir.join("ffmpeg.exe"), "").expect("ffmpeg should be written");
+    let hermes_home_text = hermes_home.display().to_string();
+    let tool_path = tool_dir.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "system-packages",
+        "--current-path",
+        &tool_path,
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("system package skip output should be json");
+
+    assert_eq!(report["stage"], "system-packages");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], true);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_falls_back_for_native_system_packages_when_tools_are_missing() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    fs::create_dir_all(&hermes_home).expect("Hermes home should be created");
+    let hermes_home_text = hermes_home.display().to_string();
+
+    let output = run_manager_output(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "system-packages",
+        "--current-path",
+        "",
+    ]);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("system package fallback output should be json");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(report["stage"], "system-packages");
     assert_eq!(report["ok"], false);
     assert_eq!(report["failureCategory"], "fallback-to-script");
 }
