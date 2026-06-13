@@ -38,7 +38,7 @@ const fs = require('node:fs')
 const fsp = require('node:fs/promises')
 const path = require('node:path')
 const https = require('node:https')
-const { spawn } = require('node:child_process')
+const { execFileSync, spawn } = require('node:child_process')
 
 const IS_WINDOWS = process.platform === 'win32'
 
@@ -609,7 +609,10 @@ async function runBootstrap(opts) {
     logRoot,
     onEvent,
     abortSignal,
-    writeMarker // callback to write the bootstrap-complete marker; main.cjs provides
+    writeMarker, // callback to write the bootstrap-complete marker; main.cjs provides
+    resourcesPath,
+    platform = process.platform,
+    _recordInstallMetadata = recordInstallMetadata
   } = opts
 
   // Bail before spawning anything if the user already cancelled — otherwise an
@@ -704,6 +707,21 @@ async function runBootstrap(opts) {
       pinnedBranch: installStamp ? installStamp.branch : null
     }
     const marker = typeof writeMarker === 'function' ? writeMarker(markerPayload) : markerPayload
+    try {
+      const recorded = _recordInstallMetadata({ hermesHome, resourcesPath, platform })
+      emit({
+        type: 'log',
+        line: recorded
+          ? '[bootstrap] native manager install metadata recorded'
+          : '[bootstrap] native manager install metadata skipped'
+      })
+    } catch (err) {
+      emit({
+        type: 'log',
+        line: `[bootstrap] native manager install metadata failed: ${err.message || String(err)}`,
+        stream: 'stderr'
+      })
+    }
     emit({ type: 'complete', marker })
     return { ok: true, marker }
   } catch (err) {
@@ -718,10 +736,37 @@ async function runBootstrap(opts) {
   }
 }
 
+function resolveHermesManagerPath(resourcesPath, platform = process.platform, exists = fs.existsSync) {
+  const root = String(resourcesPath || '')
+  if (!root) return null
+  const p = platform === 'win32' ? path.win32 : path.posix
+  const exe = platform === 'win32' ? 'hermes-manager.exe' : 'hermes-manager'
+  const candidate = p.join(root, 'hermes-manager', exe)
+  return exists(candidate) ? candidate : null
+}
+
+function recordInstallMetadata({
+  hermesHome,
+  resourcesPath,
+  platform = process.platform,
+  exists = fs.existsSync,
+  _execFileSync = execFileSync
+}) {
+  const managerPath = resolveHermesManagerPath(resourcesPath, platform, exists)
+  if (!managerPath) return false
+  _execFileSync(managerPath, ['--hermes-home', hermesHome, 'install-metadata'], hiddenWindowsChildOptions({
+    cwd: hermesHome,
+    stdio: 'ignore'
+  }))
+  return true
+}
+
 module.exports = {
   runBootstrap,
   // Exposed for testability
   parseStageResult,
+  recordInstallMetadata,
+  resolveHermesManagerPath,
   resolveLocalInstallScript,
   resolveInstallScript,
   installedAgentInstallScript,

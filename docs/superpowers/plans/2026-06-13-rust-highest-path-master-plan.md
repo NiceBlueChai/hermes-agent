@@ -374,7 +374,8 @@ duplicating inference across JavaScript and Rust.
 
 **Required gates:**
 
-- JavaScript resolves the packaged native bridge path and delegates environment preparation to it.
+- JavaScript resolves the packaged native bridge path and delegates environment preparation to it. **Started:
+  bootstrap runner now owns packaged `hermes-manager install-metadata` after successful first-launch install.**
 - JavaScript still owns UI progress, IPC, and desktop-specific presentation.
 - Native bridge returns structured stage events and failure categories.
 - Python/shell fallback remains available if native bridge is missing or exits with a known fallback code.

@@ -32,7 +32,6 @@ const { probeGatewayWebSocket } = require('./gateway-ws-probe.cjs')
 const { serializeJsonBody, setJsonRequestHeaders } = require('./oauth-net-request.cjs')
 const { fetchMarketplaceThemes, searchMarketplaceThemes } = require('./vscode-marketplace.cjs')
 const {
-  buildInstallMetadataCommand,
   buildManagerCommandForMode,
   buildPosixCleanupScript,
   buildWindowsCleanupScript,
@@ -1945,30 +1944,6 @@ function writeBootstrapMarker(payload) {
   return merged
 }
 
-function runManagerCommandBestEffort(managerCommand, label) {
-  if (!managerCommand) return false
-  try {
-    execFileSync(managerCommand.command, managerCommand.args, hiddenWindowsChildOptions({
-      cwd: HERMES_HOME,
-      stdio: 'ignore'
-    }))
-    rememberLog(`[manager] ${label}: ok`)
-    return true
-  } catch (error) {
-    rememberLog(`[manager] ${label}: skipped (${error.message})`)
-    return false
-  }
-}
-
-function recordInstallMetadataBestEffort() {
-  const managerPath = resolveHermesManagerPath(process.resourcesPath, process.platform)
-  const managerCommand = buildInstallMetadataCommand({
-    managerPath,
-    hermesHome: HERMES_HOME
-  })
-  return runManagerCommandBestEffort(managerCommand, 'install-metadata')
-}
-
 function resolveWebDist() {
   const override = process.env.HERMES_DESKTOP_WEB_DIST
   if (override && directoryExists(path.resolve(override))) return path.resolve(override)
@@ -2333,6 +2308,7 @@ async function ensureRuntime(backend) {
       sourceRepoRoot: SOURCE_REPO_ROOT,
       hermesHome: HERMES_HOME,
       logRoot: path.join(HERMES_HOME, 'logs'),
+      resourcesPath: process.resourcesPath,
       abortSignal: bootstrapAbortController.signal,
       onEvent: ev => {
         // Tee every bootstrap event to (a) the desktop log for forensics
@@ -2378,7 +2354,6 @@ async function ensureRuntime(backend) {
       throw bootstrapError
     }
 
-    recordInstallMetadataBestEffort()
     rememberLog('[bootstrap] bootstrap complete; marker written. Re-resolving backend.')
     // Re-resolve now that the install exists. The new resolution lands in
     // step 3 (bootstrap-complete marker) and we recurse to wire venvPython.

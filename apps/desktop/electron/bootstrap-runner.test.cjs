@@ -6,6 +6,8 @@ const path = require('node:path')
 
 const {
   runBootstrap,
+  recordInstallMetadata,
+  resolveHermesManagerPath,
   resolveInstallScript,
   installedAgentInstallScript,
   cachedScriptPath
@@ -136,3 +138,111 @@ test('resolveInstallScript rethrows when the 404 fallback is unavailable', async
     fs.rmSync(home, { recursive: true, force: true })
   }
 })
+
+test('resolveHermesManagerPath returns the packaged manager only when present', () => {
+  assert.equal(
+    resolveHermesManagerPath('C:\\Hermes\\resources', 'win32', file => {
+      return file === 'C:\\Hermes\\resources\\hermes-manager\\hermes-manager.exe'
+    }),
+    'C:\\Hermes\\resources\\hermes-manager\\hermes-manager.exe'
+  )
+  assert.equal(
+    resolveHermesManagerPath('/opt/Hermes/resources', 'linux', file => {
+      return file === '/opt/Hermes/resources/hermes-manager/hermes-manager'
+    }),
+    '/opt/Hermes/resources/hermes-manager/hermes-manager'
+  )
+  assert.equal(resolveHermesManagerPath('/missing/resources', 'linux', () => false), null)
+})
+
+test('recordInstallMetadata runs hermes-manager install-metadata with Hermes home', () => {
+  const calls = []
+  const ok = recordInstallMetadata({
+    hermesHome: 'C:\\Users\\x\\.hermes',
+    resourcesPath: 'C:\\Hermes\\resources',
+    platform: 'win32',
+    exists: file => file.endsWith('hermes-manager.exe'),
+    _execFileSync: (command, args, options) => {
+      calls.push({ command, args, options })
+    }
+  })
+
+  assert.equal(ok, true)
+  assert.equal(calls[0].command, 'C:\\Hermes\\resources\\hermes-manager\\hermes-manager.exe')
+  assert.deepEqual(calls[0].args, ['--hermes-home', 'C:\\Users\\x\\.hermes', 'install-metadata'])
+  assert.equal(calls[0].options.cwd, 'C:\\Users\\x\\.hermes')
+})
+
+test('runBootstrap records install metadata through the native manager hook after success', async () => {
+  const home = mkTmpHome()
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-bootstrap-repo-'))
+  try {
+    const scripts = path.join(repo, 'scripts')
+    fs.mkdirSync(scripts, { recursive: true })
+    const script = path.join(scripts, SCRIPT_NAME)
+    fs.writeFileSync(script, fakeInstallerScript(), { mode: 0o755 })
+
+    const calls = []
+    const events = []
+    const result = await runBootstrap({
+      installStamp: { commit: 'a'.repeat(40), branch: 'main' },
+      activeRoot: path.join(home, 'hermes-agent'),
+      sourceRepoRoot: repo,
+      hermesHome: home,
+      logRoot: path.join(home, 'logs'),
+      onEvent: ev => events.push(ev),
+      writeMarker: payload => ({ ...payload, schemaVersion: 1 }),
+      _recordInstallMetadata: args => calls.push(args)
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].hermesHome, home)
+    assert.ok(events.some(ev => ev.type === 'complete'), 'bootstrap should complete')
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+    fs.rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+function fakeInstallerScript() {
+  const manifestJson =
+    '{"stages":[{"name":"metadata","title":"Metadata",' +
+    '"category":"install","needs_user_input":false}],"protocol_version":1}'
+  const stageJson = '{"ok":true,"stage":"metadata"}'
+  if (process.platform === 'win32') {
+    return [
+      'param(',
+      '  [switch]$Manifest,',
+      '  [string]$Stage,',
+      '  [switch]$NonInteractive,',
+      '  [switch]$Json,',
+      '  [string]$Commit,',
+      '  [string]$Branch',
+      ')',
+      'if ($Manifest) {',
+      `  Write-Output '${manifestJson}'`,
+      '  exit 0',
+      '}',
+      'if ($Stage) {',
+      `  Write-Output '${stageJson}'`,
+      '  exit 0',
+      '}',
+      'exit 1',
+      ''
+    ].join('\r\n')
+  }
+  return [
+    '#!/usr/bin/env sh',
+    'if [ "$1" = "--manifest" ]; then',
+    `  printf '%s\\n' '${manifestJson}'`,
+    '  exit 0',
+    'fi',
+    'if [ "$1" = "--stage" ]; then',
+    `  printf '%s\\n' '${stageJson}'`,
+    '  exit 0',
+    'fi',
+    'exit 1',
+    ''
+  ].join('\n')
+}
