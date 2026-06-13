@@ -494,6 +494,71 @@ test('runBootstrap dispatches non-interactive stages through the native bridge',
   }
 })
 
+test('runBootstrap keeps script execution for stages absent from the native bridge manifest', async () => {
+  const home = mkTmpHome()
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-bootstrap-repo-'))
+  try {
+    const scripts = path.join(repo, 'scripts')
+    fs.mkdirSync(scripts, { recursive: true })
+    const script = path.join(scripts, SCRIPT_NAME)
+    fs.writeFileSync(
+      script,
+      fakeDynamicInstallerScript({
+        manifestStages: [
+          { name: 'venv', title: 'Creating virtual environment', needs_user_input: false },
+          { name: 'dependencies', title: 'Installing Python dependencies', needs_user_input: false }
+        ]
+      }),
+      { mode: 0o755 }
+    )
+
+    const events = []
+    const nativeCalls = []
+    const result = await runBootstrap({
+      installStamp: { commit: 'a'.repeat(40), branch: 'main' },
+      activeRoot: path.join(home, 'hermes-agent'),
+      sourceRepoRoot: repo,
+      hermesHome: home,
+      logRoot: path.join(home, 'logs'),
+      resourcesPath: 'C:\\Hermes\\resources',
+      platform: 'win32',
+      onEvent: ev => events.push(ev),
+      writeMarker: payload => ({ ...payload, schemaVersion: 1 }),
+      _recordInstallMetadata: () => true,
+      _probeNativeBootstrapCapabilities: () => ({
+        available: true,
+        canRunFullBootstrap: false,
+        supportedStages: ['python']
+      }),
+      _probeNativeBootstrapManifest: () => ({
+        available: true,
+        protocolVersion: 1,
+        stages: [{ name: 'python', title: 'Verify Python 3.11', needs_user_input: false }]
+      }),
+      _runNativeBootstrapStage: async ({ stage }) => {
+        nativeCalls.push(stage.name)
+        return {
+          type: 'stage',
+          name: stage.name,
+          state: 'succeeded',
+          durationMs: 1,
+          runner: 'native',
+          json: { ok: true, stage: stage.name }
+        }
+      }
+    })
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(nativeCalls, [])
+    assert.ok(events.some(ev => ev.type === 'stage' && ev.name === 'venv' && ev.state === 'succeeded'))
+    assert.ok(events.some(ev => ev.type === 'stage' && ev.name === 'dependencies' && ev.state === 'succeeded'))
+    assert.ok(!events.some(ev => ev.runner === 'native' && ['venv', 'dependencies'].includes(ev.name)))
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+    fs.rmSync(repo, { recursive: true, force: true })
+  }
+})
+
 test('runBootstrap falls back to script when native stage asks for fallback', async () => {
   const home = mkTmpHome()
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-bootstrap-repo-'))
@@ -550,6 +615,48 @@ test('runBootstrap falls back to script when native stage asks for fallback', as
     fs.rmSync(repo, { recursive: true, force: true })
   }
 })
+
+function fakeDynamicInstallerScript(options = {}) {
+  const manifestStages = options.manifestStages || [
+    { name: 'metadata', title: 'Metadata', category: 'install', needs_user_input: false }
+  ]
+  const manifestJson = JSON.stringify({ stages: manifestStages, protocol_version: 1 })
+  if (process.platform === 'win32') {
+    return [
+      'param(',
+      '  [switch]$Manifest,',
+      '  [string]$Stage,',
+      '  [switch]$NonInteractive,',
+      '  [switch]$Json,',
+      '  [string]$Commit,',
+      '  [string]$Branch',
+      ')',
+      'if ($Manifest) {',
+      `  Write-Output '${manifestJson}'`,
+      '  exit 0',
+      '}',
+      'if ($Stage) {',
+      '  Write-Output "{`"ok`":true,`"stage`":`"$Stage`"}"',
+      '  exit 0',
+      '}',
+      'exit 1',
+      ''
+    ].join('\r\n')
+  }
+  return [
+    '#!/usr/bin/env sh',
+    'if [ "$1" = "--manifest" ]; then',
+    `  printf '%s\\n' '${manifestJson}'`,
+    '  exit 0',
+    'fi',
+    'if [ "$1" = "--stage" ]; then',
+    '  printf \'{"ok":true,"stage":"%s"}\\n\' "$2"',
+    '  exit 0',
+    'fi',
+    'exit 1',
+    ''
+  ].join('\n')
+}
 
 function fakeInstallerScript(options = {}) {
   const stageName = options.stageName || 'metadata'
