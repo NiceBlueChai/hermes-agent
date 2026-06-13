@@ -19,6 +19,10 @@ Build a local archive before uploading it:
 python scripts/build_python_runtime_archive.py --platform windows --arch x64 --force
 ```
 
+The builder expects `--platform` and `--arch` to match the host that is running
+`uv python install`. Use `--allow-target-mismatch` only when a separate audited
+cross-target builder creates the runtime payload.
+
 Example:
 
 ```text

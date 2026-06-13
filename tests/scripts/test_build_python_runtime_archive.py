@@ -50,6 +50,7 @@ class BuildPythonRuntimeArchiveTests(unittest.TestCase):
                 python_version="3.11",
                 uv="uv",
                 force=False,
+                allow_target_mismatch=True,
                 runner=fake_runner,
             )
 
@@ -82,6 +83,7 @@ class BuildPythonRuntimeArchiveTests(unittest.TestCase):
                 python_version="3.11",
                 uv="uv",
                 force=False,
+                allow_target_mismatch=True,
                 runner=fake_runner,
             )
 
@@ -105,6 +107,25 @@ class BuildPythonRuntimeArchiveTests(unittest.TestCase):
                     work_dir=root / "work",
                     platform="windows",
                     arch="x64",
+                    python_version="3.11",
+                    uv="uv",
+                    force=False,
+                    allow_target_mismatch=True,
+                )
+
+    def test_build_uv_runtime_archive_rejects_host_target_mismatch_by_default(self):
+        module = _load_script_module()
+        target_platform = "windows" if module.current_host_platform() != "windows" else "linux"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            with self.assertRaisesRegex(RuntimeError, "does not match host"):
+                module.build_uv_runtime_archive(
+                    output_dir=root / "dist",
+                    work_dir=root / "work",
+                    platform=target_platform,
+                    arch=module.current_host_arch(),
                     python_version="3.11",
                     uv="uv",
                     force=False,

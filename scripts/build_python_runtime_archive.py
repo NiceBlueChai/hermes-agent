@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform as platform_module
 import shutil
 import subprocess
 import sys
@@ -50,6 +51,43 @@ def archive_name_for_target(platform: str, arch: str) -> str:
     raise ValueError(f"unsupported Python runtime platform: {platform}")
 
 
+def current_host_platform() -> str:
+    """Return the release platform label for the current host."""
+
+    if sys.platform.startswith("win"):
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform.startswith("linux"):
+        return "linux"
+    return sys.platform
+
+
+def current_host_arch() -> str:
+    """Return the release architecture label for the current host."""
+
+    machine = platform_module.machine().lower()
+    if machine in {"amd64", "x86_64"}:
+        return "x64"
+    if machine in {"arm64", "aarch64"}:
+        return "arm64"
+    if machine in {"x86", "i386", "i686"}:
+        return "x86"
+    return machine
+
+
+def validate_local_target_matches_host(platform: str, arch: str) -> None:
+    """Reject labels that would misrepresent a locally generated runtime archive."""
+
+    host_platform = current_host_platform()
+    host_arch = current_host_arch()
+    if platform != host_platform or arch != host_arch:
+        raise RuntimeError(
+            f"python runtime target {platform}/{arch} does not match host {host_platform}/{host_arch}; "
+            "use --allow-target-mismatch only with an audited cross-target builder"
+        )
+
+
 def build_uv_runtime_archive(
     output_dir: Path,
     work_dir: Path,
@@ -58,9 +96,13 @@ def build_uv_runtime_archive(
     python_version: str,
     uv: str,
     force: bool,
+    allow_target_mismatch: bool = False,
     runner=subprocess.run,
 ) -> BuiltRuntimeArchive:
     """Install Python with uv in a staging directory and archive the install tree."""
+
+    if not allow_target_mismatch:
+        validate_local_target_matches_host(platform, arch)
 
     archive_name = archive_name_for_target(platform, arch)
     archive_path = output_dir / archive_name
@@ -144,6 +186,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--python-version", default="3.11")
     parser.add_argument("--uv", default="uv")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--allow-target-mismatch",
+        action="store_true",
+        help="Allow a target label that does not match this host; only use with an audited cross-target builder.",
+    )
     return parser.parse_args(argv)
 
 
@@ -160,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
             python_version=args.python_version,
             uv=args.uv,
             force=args.force,
+            allow_target_mismatch=args.allow_target_mismatch,
         )
     except Exception as exc:
         print(f"[python-runtime-build] error: {exc}", file=sys.stderr)
