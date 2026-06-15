@@ -881,7 +881,7 @@ fn run_native_bootstrap_stage(
         "venv" => run_native_venv_stage(home, options),
         "dependencies" | "python-deps" => run_native_dependencies_stage(home, options),
         "node" => run_native_node_stage(home, options),
-        "system-packages" => run_native_system_packages_stage(options),
+        "system-packages" => run_native_system_packages_stage(home, options),
         "config-templates" => {
             run_native_config_templates_stage(home, options).map(|skipped| (skipped, None))
         }
@@ -1462,6 +1462,7 @@ fn run_native_node_stage(
 }
 
 fn run_native_system_packages_stage(
+    home: &std::path::Path,
     options: NativeBootstrapStageOptions<'_>,
 ) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
     if !cfg!(target_os = "windows") {
@@ -1471,17 +1472,26 @@ fn run_native_system_packages_stage(
         ));
     }
     let path_text = windows_stage_path(options.current_path)?;
-    let has_ripgrep = windows_path_command(&path_text, "rg").is_some();
-    let has_ffmpeg = windows_path_command(&path_text, "ffmpeg").is_some();
+    let has_ripgrep = windows_tool_command(home, &path_text, "rg").is_some();
+    let has_ffmpeg = windows_tool_command(home, &path_text, "ffmpeg").is_some();
     if has_ripgrep && has_ffmpeg {
         return Ok((
             true,
             Some("ripgrep and ffmpeg already available; system package stage skipped".to_string()),
         ));
     }
+    install_bundled_windows_system_packages(home, options.bootstrap_tools_dir.as_deref())?;
+    if windows_tool_command(home, "", "rg").is_some()
+        && windows_tool_command(home, "", "ffmpeg").is_some()
+    {
+        return Ok((
+            false,
+            Some("installed bundled ripgrep and ffmpeg".to_string()),
+        ));
+    }
     Err((
         "fallback-to-script",
-        "ripgrep or ffmpeg missing; script installs system packages".to_string(),
+        "bundled system package install completed but rg or ffmpeg was not found".to_string(),
     ))
 }
 
@@ -1836,6 +1846,99 @@ fn windows_uv_archive_name() -> Option<&'static str> {
     }
 }
 
+fn install_bundled_windows_system_packages(
+    home: &std::path::Path,
+    bootstrap_tools_dir: Option<&std::path::Path>,
+) -> std::result::Result<(), (&'static str, String)> {
+    let Some(bootstrap_tools_dir) = bootstrap_tools_dir else {
+        return Err((
+            "fallback-to-script",
+            "system packages missing and no bundled bootstrap-tools directory was provided"
+                .to_string(),
+        ));
+    };
+    let Some(ripgrep_archive_name) = windows_ripgrep_archive_name() else {
+        return Err((
+            "fallback-to-script",
+            "unsupported Windows architecture for bundled ripgrep".to_string(),
+        ));
+    };
+    let Some(ffmpeg_archive_name) = windows_ffmpeg_archive_name() else {
+        return Err((
+            "fallback-to-script",
+            "unsupported Windows architecture for bundled ffmpeg".to_string(),
+        ));
+    };
+    install_bundled_windows_tool_archive(
+        bootstrap_tools_dir,
+        ripgrep_archive_name,
+        &home.join("bin"),
+        "rg.exe",
+    )?;
+    install_bundled_windows_tool_archive(
+        bootstrap_tools_dir,
+        ffmpeg_archive_name,
+        &home.join("bin"),
+        "ffmpeg.exe",
+    )
+}
+
+fn install_bundled_windows_tool_archive(
+    bootstrap_tools_dir: &std::path::Path,
+    archive_name: &str,
+    install_dir: &std::path::Path,
+    executable_name: &str,
+) -> std::result::Result<(), (&'static str, String)> {
+    let archive = bootstrap_tools_dir.join(archive_name);
+    if !archive.is_file() {
+        return Err((
+            "fallback-to-script",
+            format!("bundled tool archive missing: {}", archive.display()),
+        ));
+    }
+    verify_bootstrap_tools_archive(bootstrap_tools_dir, archive_name, &archive)?;
+    extract_windows_tool_executable_zip(&archive, install_dir, executable_name)
+}
+
+fn extract_windows_tool_executable_zip(
+    archive: &std::path::Path,
+    install_dir: &std::path::Path,
+    executable_name: &str,
+) -> std::result::Result<(), (&'static str, String)> {
+    fs::create_dir_all(install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    let tmp_dir = install_dir.join(format!("{executable_name}-extracting"));
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    fs::create_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    extract_zip_safely(archive, &tmp_dir)?;
+
+    let executable = find_file_named(&tmp_dir, &[executable_name])?;
+    fs::copy(&executable, install_dir.join(executable_name))
+        .map_err(|err| ("stage-failed", err.to_string()))?;
+    fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    Ok(())
+}
+
+fn windows_ripgrep_archive_name() -> Option<&'static str> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some("ripgrep-15.1.0-x86_64-pc-windows-msvc.zip"),
+        "aarch64" => Some("ripgrep-15.1.0-aarch64-pc-windows-msvc.zip"),
+        "x86" => Some("ripgrep-15.1.0-i686-pc-windows-msvc.zip"),
+        _ => None,
+    }
+}
+
+fn windows_ffmpeg_archive_name() -> Option<&'static str> {
+    let arch = windows_cache_arch()?;
+    match arch {
+        "x64" => Some("ffmpeg-windows-x64.zip"),
+        "arm64" => Some("ffmpeg-windows-arm64.zip"),
+        "x86" => Some("ffmpeg-windows-x86.zip"),
+        _ => None,
+    }
+}
+
 fn install_bundled_windows_node(
     home: &std::path::Path,
     bootstrap_tools_dir: Option<&std::path::Path>,
@@ -1998,6 +2101,21 @@ fn windows_node_command(home: &std::path::Path, path_text: &str) -> Option<PathB
     .into_iter()
     .find(|path| path.is_file())
     .or_else(|| windows_path_command(path_text, "node"))
+}
+
+fn windows_tool_command(
+    home: &std::path::Path,
+    path_text: &str,
+    command_name: &str,
+) -> Option<PathBuf> {
+    [
+        home.join("bin").join(format!("{command_name}.exe")),
+        home.join("bin").join(format!("{command_name}.cmd")),
+        home.join("bin").join(format!("{command_name}.bat")),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .or_else(|| windows_path_command(path_text, command_name))
 }
 
 fn windows_npm_command(home: &std::path::Path, path_text: &str) -> Option<PathBuf> {

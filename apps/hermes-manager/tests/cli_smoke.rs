@@ -130,6 +130,24 @@ fn windows_node_archive_name() -> &'static str {
 }
 
 #[cfg(target_os = "windows")]
+fn windows_ripgrep_archive_name() -> &'static str {
+    match windows_cache_arch() {
+        "x64" => "ripgrep-15.1.0-x86_64-pc-windows-msvc.zip",
+        "arm64" => "ripgrep-15.1.0-aarch64-pc-windows-msvc.zip",
+        _ => "ripgrep-15.1.0-i686-pc-windows-msvc.zip",
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_ffmpeg_archive_name() -> &'static str {
+    match windows_cache_arch() {
+        "x64" => "ffmpeg-windows-x64.zip",
+        "arm64" => "ffmpeg-windows-arm64.zip",
+        _ => "ffmpeg-windows-x86.zip",
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn assert_command_success(mut command: Command, label: &str) -> std::process::Output {
     let output = command.output().expect("command should run");
     assert!(
@@ -1197,6 +1215,45 @@ fn cli_smoke_falls_back_for_native_system_packages_when_tools_are_missing() {
     assert_eq!(report["stage"], "system-packages");
     assert_eq!(report["ok"], false);
     assert_eq!(report["failureCategory"], "fallback-to-script");
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_installs_native_system_packages_from_bundled_archives() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let bootstrap_tools = temp.path().join("resources").join("bootstrap-tools");
+    fs::create_dir_all(&bootstrap_tools).expect("bootstrap tools dir should be created");
+    let ripgrep_archive = bootstrap_tools.join(windows_ripgrep_archive_name());
+    let ffmpeg_archive = bootstrap_tools.join(windows_ffmpeg_archive_name());
+    write_zip_fixture(&ripgrep_archive, &[("ripgrep/rg.exe", b"")]);
+    write_zip_fixture(&ffmpeg_archive, &[("ffmpeg/bin/ffmpeg.exe", b"")]);
+    write_bootstrap_tools_manifest(
+        &bootstrap_tools,
+        &[ripgrep_archive.clone(), ffmpeg_archive.clone()],
+    );
+    let hermes_home_text = hermes_home.display().to_string();
+    let bootstrap_tools_text = bootstrap_tools.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "system-packages",
+        "--bootstrap-tools-dir",
+        &bootstrap_tools_text,
+        "--current-path",
+        "",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("system package output should be json");
+
+    assert_eq!(report["stage"], "system-packages");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], false);
+    assert!(hermes_home.join("bin").join("rg.exe").is_file());
+    assert!(hermes_home.join("bin").join("ffmpeg.exe").is_file());
 }
 
 #[cfg(target_os = "windows")]
