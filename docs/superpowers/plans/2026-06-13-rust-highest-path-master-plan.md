@@ -393,30 +393,38 @@ duplicating inference across JavaScript and Rust.
   dispatches manifest-matched native stages through the bridge, and `bootstrap-marker` is the first real script manifest
   stage handled natively. Windows `path` is also handled natively, including user PATH and `HERMES_HOME` writes.
   Windows `config-templates` is handled natively for directory setup, `.env`, `config.yaml`, `SOUL.md`, and bundled
-  skills fallback copy. Windows `uv`, `git`, `python`, `node`, `repository`, `venv`, `dependencies`, `system-packages`,
-  `node-deps`, and `platform-sdks` now have native handling or probes that skip safely when required tools, source
-  checkout, virtual environment, dependency sync, or SDK recovery are already satisfied/not needed and fall back to the
-  script when real install/check work is required. Windows non-interactive `configure` and `gateway` stages now
-  short-circuit through native skip results instead of launching PowerShell only to no-op. Desktop keeps script fallback
-  when full native bootstrap is not available or the native stage returns a known fallback category.**
+  skills fallback copy. Windows `uv`, `node`, `system-packages`, `node-deps`, `repository`, `venv`, `dependencies`, and
+  `desktop` now have native-first execution paths that use packaged resources where available and return structured
+  fallback categories when parity cannot be proven. Windows `git`, `python`, and `platform-sdks` still keep probe or
+  recovery fallback behavior for the cases that require PortableGit self-extraction, Python runtime acquisition, or
+  targeted SDK pip recovery. Windows non-interactive `configure` and `gateway` stages now short-circuit through native
+  skip results instead of launching PowerShell only to no-op. Desktop keeps script fallback when full native bootstrap
+  is not available or the native stage returns a known fallback category.**
 - Python/shell fallback remains available if native bridge is missing or exits with a known fallback code.
 
 **Current branch status:**
 
 - The desktop runner probes `hermes-manager bootstrap-manifest` and dispatches matching script stages through
   `hermes-manager bootstrap-stage` before invoking PowerShell.
-- Windows `uv`, `git`, `python`, `node`, `repository`, `path`, `config-templates`, `bootstrap-marker`,
-  `install-metadata`, `system-packages`, `node-deps`, `platform-sdks`, `configure`, and `gateway` are native handled,
-  native probed, or native skipped with structured stage output.
+- Windows `uv` installs from bundled `bootstrap-tools` archives after manifest SHA-256 verification.
+- Windows `node` installs a bundled portable Node.js archive, verifies the Node floor, and preserves npm.
+- Windows `system-packages` restores bundled ripgrep and ffmpeg into the managed bin directory.
+- Windows `node-deps` runs npm for root browser-tool dependencies and `ui-tui`, restores bundled npm cache and
+  Playwright browser cache, and falls back if browser-engine parity cannot be proven.
+- Windows `repository` can clone the official HTTPS repository with managed or PATH Git, detach to a pinned commit, and
+  verify HEAD; existing checkout update/repair still falls back to the script.
+- Windows `git`, `python`, `path`, `config-templates`, `bootstrap-marker`, `install-metadata`, `platform-sdks`,
+  `configure`, and `gateway` are native handled, native probed, or native skipped with structured stage output.
 - Windows `venv` is now a real native stage: it uses managed or PATH `uv`, creates `venv` with Python 3.11, verifies the
   venv Python shim, and returns a script fallback category for missing or failed prerequisites.
 - Windows `dependencies` is now a real native stage: it uses the managed venv, prefers a bundled wheelhouse when
   present, falls back through locked `uv sync` and editable install tiers, and verifies baseline imports before
   declaring success.
-- The desktop runner passes the active install root and packaged `wheelhouse/` resource path into native stages, so the
-  bridge can use the same local resources as the script fallback.
-- The remaining script-visible normal install gap is the optional `desktop` build stage. That stage should be handled
-  next as native-first with explicit fallback because it affects first-launch speed but still needs Electron/npm parity.
+- The desktop runner passes the active install root and packaged `bootstrap-tools/` and `wheelhouse/` resource paths into
+  native stages, so the bridge can use the same local resources as the script fallback.
+- The remaining script-visible normal install gaps are PortableGit self-extraction, Python runtime acquisition, and
+  platform SDK pip recovery. `canRunFullBootstrap` must stay false until those paths have native parity and packaged
+  artifact smoke evidence.
 - `configure` and `gateway` remain user-input stages. In GUI bootstrap they should stay native skipped unless the user
   explicitly starts an interactive setup flow.
 
