@@ -885,7 +885,7 @@ fn run_native_bootstrap_stage(
         "config-templates" => {
             run_native_config_templates_stage(home, options).map(|skipped| (skipped, None))
         }
-        "node-deps" => run_native_node_deps_stage(options),
+        "node-deps" => run_native_node_deps_stage(home, options),
         "desktop" => run_native_desktop_stage(home, options),
         "platform-sdks" => run_native_platform_sdks_stage(home, options),
         "configure" | "gateway" => run_native_interactive_skip_stage(stage),
@@ -1292,24 +1292,121 @@ fn run_native_dependencies_stage(
 }
 
 fn run_native_node_deps_stage(
+    home: &std::path::Path,
     options: NativeBootstrapStageOptions<'_>,
 ) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
     if !cfg!(target_os = "windows") {
         return Err((
             "fallback-to-script",
-            "native node dependency probe is only complete on Windows".to_string(),
+            "native node dependency stage is only complete on Windows".to_string(),
         ));
     }
     let path_text = windows_stage_path(options.current_path)?;
-    if windows_path_command(&path_text, "npm").is_none() {
+    let Some(npm) = windows_npm_command(home, &path_text) else {
         return Ok((
             true,
             Some("npm not available; Node.js dependencies skipped".to_string()),
         ));
+    };
+    let install_root = options
+        .install_root
+        .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    if !install_root.is_dir() {
+        return Err((
+            "fallback-to-script",
+            "install root missing; script decides how to install Node.js dependencies".to_string(),
+        ));
+    }
+
+    let npm_cache = home.join("npm-cache");
+    let electron_cache = home.join("electron-cache");
+    let playwright_cache = home.join("playwright-browsers");
+    fs::create_dir_all(&npm_cache).map_err(|err| ("stage-failed", err.to_string()))?;
+    fs::create_dir_all(&electron_cache).map_err(|err| ("stage-failed", err.to_string()))?;
+    fs::create_dir_all(&playwright_cache).map_err(|err| ("stage-failed", err.to_string()))?;
+    let _ = restore_bundled_windows_cache_archive(
+        home,
+        options.bootstrap_tools_dir.as_deref(),
+        "npm-cache",
+    )?;
+    let restored_playwright = restore_bundled_windows_cache_archive(
+        home,
+        options.bootstrap_tools_dir.as_deref(),
+        "playwright-browsers",
+    )?;
+
+    let mut installed = Vec::new();
+    if install_root.join("package.json").is_file() {
+        run_windows_npm_install(&npm, &install_root, &npm_cache, &electron_cache)?;
+        installed.push("browser tools");
+    }
+    let tui_dir = install_root.join("ui-tui");
+    if tui_dir.join("package.json").is_file() {
+        run_windows_npm_install(&npm, &tui_dir, &npm_cache, &electron_cache)?;
+        installed.push("TUI");
+    }
+    if installed.is_empty() {
+        return Ok((
+            true,
+            Some("no Node.js package manifests found; dependencies skipped".to_string()),
+        ));
+    }
+    if install_root.join("package.json").is_file() && restored_playwright.is_none() {
+        return Err((
+            "fallback-to-script",
+            "bundled Playwright browser cache missing; script installs browser engine".to_string(),
+        ));
+    }
+    Ok((
+        false,
+        Some(format!(
+            "Node.js dependencies installed for {}",
+            installed.join(", ")
+        )),
+    ))
+}
+
+fn run_windows_npm_install(
+    npm: &std::path::Path,
+    cwd: &std::path::Path,
+    npm_cache: &std::path::Path,
+    electron_cache: &std::path::Path,
+) -> std::result::Result<(), (&'static str, String)> {
+    if cwd.join("package-lock.json").is_file() {
+        let status = run_windows_npm_command(
+            npm,
+            ["ci", "--prefer-offline", "--no-audit", "--fund=false"],
+            cwd,
+            npm_cache,
+            electron_cache,
+        )?;
+        if status.success() {
+            return Ok(());
+        }
+    }
+    let status = run_windows_npm_command(
+        npm,
+        [
+            "install",
+            "--silent",
+            "--prefer-offline",
+            "--no-audit",
+            "--fund=false",
+        ],
+        cwd,
+        npm_cache,
+        electron_cache,
+    )?;
+    if status.success() {
+        return Ok(());
     }
     Err((
         "fallback-to-script",
-        "npm is available; script installs Node.js dependencies".to_string(),
+        format!(
+            "npm dependency install failed in {} with exit {:?}; script installs Node.js dependencies",
+            cwd.display(),
+            status.code()
+        ),
     ))
 }
 
@@ -2309,6 +2406,13 @@ where
         .env("electron_config_cache", electron_cache)
         .env("ELECTRON_CACHE", electron_cache)
         .env("ELECTRON_BUILDER_CACHE", electron_cache)
+        .env(
+            "PLAYWRIGHT_BROWSERS_PATH",
+            npm_cache
+                .parent()
+                .map(|parent| parent.join("playwright-browsers"))
+                .unwrap_or_else(|| PathBuf::from("playwright-browsers")),
+        )
         .env("CSC_IDENTITY_AUTO_DISCOVERY", "false")
         .env("WIN_CSC_LINK", "")
         .env("WIN_CSC_KEY_PASSWORD", "")

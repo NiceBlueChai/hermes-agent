@@ -148,6 +148,15 @@ fn windows_ffmpeg_archive_name() -> &'static str {
 }
 
 #[cfg(target_os = "windows")]
+fn windows_playwright_archive_name() -> &'static str {
+    match windows_cache_arch() {
+        "x64" => "playwright-browsers-windows-x64.zip",
+        "arm64" => "playwright-browsers-windows-arm64.zip",
+        _ => "playwright-browsers-windows-x86.zip",
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn assert_command_success(mut command: Command, label: &str) -> std::process::Output {
     let output = command.output().expect("command should run");
     assert!(
@@ -1159,6 +1168,81 @@ fn cli_smoke_falls_back_for_native_node_deps_when_npm_is_available() {
     assert_eq!(report["stage"], "node-deps");
     assert_eq!(report["ok"], false);
     assert_eq!(report["failureCategory"], "fallback-to-script");
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_runs_native_node_deps_with_bundled_caches() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let install_root = temp.path().join("checkout");
+    let tui_dir = install_root.join("ui-tui");
+    let npm_dir = temp.path().join("node");
+    let bootstrap_tools = temp.path().join("resources").join("bootstrap-tools");
+    fs::create_dir_all(&tui_dir).expect("TUI dir should be created");
+    fs::create_dir_all(&npm_dir).expect("npm dir should be created");
+    fs::create_dir_all(&bootstrap_tools).expect("bootstrap tools dir should be created");
+    fs::write(install_root.join("package.json"), "{}").expect("root package should be written");
+    fs::write(install_root.join("package-lock.json"), "{}")
+        .expect("root lockfile should be written");
+    fs::write(tui_dir.join("package.json"), "{}").expect("TUI package should be written");
+    fs::write(tui_dir.join("package-lock.json"), "{}").expect("TUI lockfile should be written");
+    fs::write(
+        npm_dir.join("npm.cmd"),
+        concat!(
+            "@echo off\r\n",
+            "if \"%1\"==\"ci\" mkdir node_modules 2>NUL\r\n",
+            "if \"%1\"==\"install\" mkdir node_modules 2>NUL\r\n",
+            "exit /b 0\r\n",
+        ),
+    )
+    .expect("npm shim should be written");
+    let npm_cache_archive =
+        bootstrap_tools.join(format!("npm-cache-windows-{}.zip", windows_cache_arch()));
+    let playwright_archive = bootstrap_tools.join(windows_playwright_archive_name());
+    write_zip_fixture(
+        &npm_cache_archive,
+        &[("npm-cache/_cacache/index", b"cache")],
+    );
+    write_zip_fixture(
+        &playwright_archive,
+        &[("playwright-browsers/chromium/chrome.exe", b"")],
+    );
+    write_bootstrap_tools_manifest(
+        &bootstrap_tools,
+        &[npm_cache_archive.clone(), playwright_archive.clone()],
+    );
+    let hermes_home_text = hermes_home.display().to_string();
+    let install_root_text = install_root.display().to_string();
+    let bootstrap_tools_text = bootstrap_tools.display().to_string();
+    let npm_path = npm_dir.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "node-deps",
+        "--install-root",
+        &install_root_text,
+        "--bootstrap-tools-dir",
+        &bootstrap_tools_text,
+        "--current-path",
+        &npm_path,
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("node deps output should be json");
+
+    assert_eq!(report["stage"], "node-deps");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], false);
+    assert!(install_root.join("node_modules").is_dir());
+    assert!(tui_dir.join("node_modules").is_dir());
+    assert!(hermes_home
+        .join("playwright-browsers")
+        .join("chromium")
+        .join("chrome.exe")
+        .is_file());
 }
 
 #[cfg(target_os = "windows")]
