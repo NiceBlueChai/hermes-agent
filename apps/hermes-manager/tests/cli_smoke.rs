@@ -724,6 +724,38 @@ fn cli_smoke_falls_back_for_native_platform_sdks_when_tokens_are_configured() {
 
 #[cfg(target_os = "windows")]
 #[test]
+fn cli_smoke_verifies_native_platform_sdks_when_imports_are_available() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let install_root = hermes_manager::paths::agent_root(&hermes_home);
+    let scripts_dir = install_root.join("venv").join("Scripts");
+    fs::create_dir_all(&scripts_dir).expect("venv should be created");
+    fs::write(scripts_dir.join("python.cmd"), "@echo off\r\nexit /b 0\r\n")
+        .expect("python shim should be written");
+    fs::write(hermes_home.join(".env"), "TELEGRAM_BOT_TOKEN=abc\n")
+        .expect("env file should be written");
+    let hermes_home_text = hermes_home.display().to_string();
+    let install_root_text = install_root.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "platform-sdks",
+        "--install-root",
+        &install_root_text,
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("platform sdk output should be json");
+
+    assert_eq!(report["stage"], "platform-sdks");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], false);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
 fn cli_smoke_runs_native_venv_stage_with_managed_uv() {
     let temp = tempfile::tempdir().expect("tempdir should be created");
     let hermes_home = temp.path().join("hermes");

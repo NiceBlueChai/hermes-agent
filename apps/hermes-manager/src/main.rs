@@ -1859,13 +1859,12 @@ fn run_native_platform_sdks_stage(
     let install_root = options
         .install_root
         .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
-    let python = install_root.join("venv").join("Scripts").join("python.exe");
-    if !python.is_file() {
+    let Some(python) = windows_venv_python_command(&install_root) else {
         return Ok((
             true,
             Some("venv Python missing; platform SDK verification skipped".to_string()),
         ));
-    }
+    };
     let env_path = home.join(".env");
     if !env_path.is_file() {
         return Ok((
@@ -1875,7 +1874,8 @@ fn run_native_platform_sdks_stage(
     }
     let env_text =
         fs::read_to_string(&env_path).map_err(|err| ("stage-failed", err.to_string()))?;
-    if !has_configured_platform_sdk_token(&env_text) {
+    let needed_sdks = configured_platform_sdks(&env_text);
+    if needed_sdks.is_empty() {
         return Ok((
             true,
             Some(
@@ -1884,32 +1884,155 @@ fn run_native_platform_sdks_stage(
             ),
         ));
     }
+    let mut missing = Vec::new();
+    for sdk in &needed_sdks {
+        if !python_import_succeeds(&python, sdk.import_name)? {
+            missing.push(*sdk);
+        }
+    }
+    if missing.is_empty() {
+        return Ok((
+            false,
+            Some(format!(
+                "verified {} platform SDK imports",
+                needed_sdks.len()
+            )),
+        ));
+    }
+    ensure_python_pip(&python)?;
+    for sdk in &missing {
+        let status = ProcessCommand::new(&python)
+            .args(["-m", "pip", "install", sdk.pip_spec])
+            .status()
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+        if !status.success() {
+            return Err((
+                "fallback-to-script",
+                format!(
+                    "pip install {} failed with exit {:?}; script recovers platform SDKs",
+                    sdk.pip_spec,
+                    status.code()
+                ),
+            ));
+        }
+    }
+    let still_missing: Vec<&str> = missing
+        .iter()
+        .filter_map(
+            |sdk| match python_import_succeeds(&python, sdk.import_name) {
+                Ok(true) => None,
+                _ => Some(sdk.import_name),
+            },
+        )
+        .collect();
+    if still_missing.is_empty() {
+        return Ok((
+            false,
+            Some(format!("installed {} platform SDKs", missing.len())),
+        ));
+    }
     Err((
         "fallback-to-script",
-        "messaging platform tokens found; script verifies and installs SDKs".to_string(),
+        format!(
+            "platform SDK imports still missing after pip install: {}",
+            still_missing.join(", ")
+        ),
     ))
 }
 
-fn has_configured_platform_sdk_token(env_text: &str) -> bool {
-    const TOKEN_NAMES: [&str; 5] = [
-        "TELEGRAM_BOT_TOKEN",
-        "DISCORD_BOT_TOKEN",
-        "SLACK_BOT_TOKEN",
-        "SLACK_APP_TOKEN",
-        "WHATSAPP_ENABLED",
-    ];
-    env_text.lines().any(|line| {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.contains("your-token-here") {
-            return false;
-        }
-        TOKEN_NAMES.iter().any(|name| {
-            trimmed
-                .strip_prefix(&format!("{name}="))
-                .map(|value| !value.trim().is_empty())
-                .unwrap_or(false)
+#[derive(Clone, Copy)]
+struct PlatformSdk {
+    token_name: &'static str,
+    import_name: &'static str,
+    pip_spec: &'static str,
+}
+
+fn platform_sdk_specs() -> &'static [PlatformSdk] {
+    &[
+        PlatformSdk {
+            token_name: "TELEGRAM_BOT_TOKEN",
+            import_name: "telegram",
+            pip_spec: "python-telegram-bot[webhooks]>=22.6,<23",
+        },
+        PlatformSdk {
+            token_name: "DISCORD_BOT_TOKEN",
+            import_name: "discord",
+            pip_spec: "discord.py[voice]>=2.7.1,<3",
+        },
+        PlatformSdk {
+            token_name: "SLACK_BOT_TOKEN",
+            import_name: "slack_sdk",
+            pip_spec: "slack-sdk>=3.27.0,<4",
+        },
+        PlatformSdk {
+            token_name: "SLACK_APP_TOKEN",
+            import_name: "slack_bolt",
+            pip_spec: "slack-bolt>=1.18.0,<2",
+        },
+        PlatformSdk {
+            token_name: "WHATSAPP_ENABLED",
+            import_name: "qrcode",
+            pip_spec: "qrcode>=7.0,<8",
+        },
+    ]
+}
+
+fn configured_platform_sdks(env_text: &str) -> Vec<PlatformSdk> {
+    platform_sdk_specs()
+        .iter()
+        .copied()
+        .filter(|sdk| {
+            env_text
+                .lines()
+                .any(|line| configured_env_line_matches(line, sdk.token_name))
         })
-    })
+        .collect()
+}
+
+fn configured_env_line_matches(line: &str, token_name: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.contains("your-token-here") {
+        return false;
+    }
+    trimmed
+        .strip_prefix(&format!("{token_name}="))
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn python_import_succeeds(
+    python: &std::path::Path,
+    import_name: &str,
+) -> std::result::Result<bool, (&'static str, String)> {
+    let status = ProcessCommand::new(python)
+        .args(["-c", &format!("import {import_name}")])
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    Ok(status.success())
+}
+
+fn ensure_python_pip(python: &std::path::Path) -> std::result::Result<(), (&'static str, String)> {
+    let pip = ProcessCommand::new(python)
+        .args(["-m", "pip", "--version"])
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if pip.success() {
+        return Ok(());
+    }
+    let ensurepip = ProcessCommand::new(python)
+        .args(["-m", "ensurepip", "--upgrade"])
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if ensurepip.success() {
+        return Ok(());
+    }
+    Err((
+        "fallback-to-script",
+        format!(
+            "ensurepip failed with exit {:?}; script recovers platform SDKs",
+            ensurepip.code()
+        ),
+    ))
 }
 
 fn windows_stage_path(
@@ -2455,6 +2578,17 @@ fn windows_git_command(home: &std::path::Path, path_text: &str) -> Option<PathBu
     .into_iter()
     .find(|path| path.is_file())
     .or_else(|| windows_path_command(path_text, "git"))
+}
+
+fn windows_venv_python_command(install_root: &std::path::Path) -> Option<PathBuf> {
+    let scripts = install_root.join("venv").join("Scripts");
+    [
+        scripts.join("python.exe"),
+        scripts.join("python.cmd"),
+        scripts.join("python.bat"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
 }
 
 fn windows_tool_command(
