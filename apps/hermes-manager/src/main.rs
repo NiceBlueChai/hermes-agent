@@ -1017,10 +1017,8 @@ fn run_native_git_stage(
     let path_text = windows_stage_path(options.current_path)?;
     let git = windows_git_command(home, &path_text);
     let Some(git) = git else {
-        return Err((
-            "fallback-to-script",
-            "Git missing; script installs managed PortableGit".to_string(),
-        ));
+        install_bundled_windows_git(home, options.bootstrap_tools_dir.as_deref())?;
+        return verify_managed_windows_git(home);
     };
     let output = ProcessCommand::new(&git)
         .arg("--version")
@@ -1036,6 +1034,123 @@ fn run_native_git_stage(
     Err((
         "fallback-to-script",
         "Git exists but did not run successfully; script installs managed PortableGit".to_string(),
+    ))
+}
+
+fn install_bundled_windows_git(
+    home: &std::path::Path,
+    bootstrap_tools_dir: Option<&std::path::Path>,
+) -> std::result::Result<(), (&'static str, String)> {
+    let Some(bootstrap_tools_dir) = bootstrap_tools_dir else {
+        return Err((
+            "fallback-to-script",
+            "Git missing and no bundled bootstrap-tools directory was provided".to_string(),
+        ));
+    };
+    let Some(archive_name) = windows_git_archive_name() else {
+        return Err((
+            "fallback-to-script",
+            "unsupported Windows architecture for bundled Git".to_string(),
+        ));
+    };
+    let archive = bootstrap_tools_dir.join(archive_name);
+    if !archive.is_file() {
+        return Err((
+            "fallback-to-script",
+            format!("bundled Git archive missing: {}", archive.display()),
+        ));
+    }
+    verify_bootstrap_tools_archive(bootstrap_tools_dir, archive_name, &archive)?;
+    let install_dir = home.join("git");
+    if try_extract_windows_git_zip(&archive, &install_dir)? {
+        return Ok(());
+    }
+    extract_windows_portable_git_exe(&archive, &install_dir)
+}
+
+fn verify_managed_windows_git(
+    home: &std::path::Path,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    let Some(git) = windows_git_command(home, "") else {
+        return Err((
+            "fallback-to-script",
+            "bundled Git install completed but git was not found".to_string(),
+        ));
+    };
+    let output = ProcessCommand::new(&git)
+        .arg("--version")
+        .output()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if output.status.success() {
+        let version = command_version_text(&output);
+        return Ok((
+            false,
+            Some(format!("installed bundled {version} at {}", git.display())),
+        ));
+    }
+    Err((
+        "fallback-to-script",
+        "bundled Git did not pass version check".to_string(),
+    ))
+}
+
+fn try_extract_windows_git_zip(
+    archive: &std::path::Path,
+    install_dir: &std::path::Path,
+) -> std::result::Result<bool, (&'static str, String)> {
+    let file = fs::File::open(archive).map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if zip::ZipArchive::new(file).is_err() {
+        return Ok(false);
+    }
+    let parent = install_dir.parent().ok_or_else(|| {
+        (
+            "stage-failed",
+            format!("Git install path has no parent: {}", install_dir.display()),
+        )
+    })?;
+    let tmp_dir = parent.join("git-extracting");
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    fs::create_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    extract_zip_safely(archive, &tmp_dir)?;
+    let git = find_file_named(&tmp_dir, &["git.exe", "git.cmd", "git.bat"])?;
+    let source_dir = git
+        .ancestors()
+        .find(|path| path.join("cmd").is_dir() || path.join("git-bash.exe").is_file())
+        .unwrap_or_else(|| git.parent().unwrap_or(&tmp_dir));
+    if install_dir.exists() {
+        fs::remove_dir_all(install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    fs::rename(source_dir, install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    Ok(true)
+}
+
+fn extract_windows_portable_git_exe(
+    archive: &std::path::Path,
+    install_dir: &std::path::Path,
+) -> std::result::Result<(), (&'static str, String)> {
+    if install_dir.exists() {
+        fs::remove_dir_all(install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    fs::create_dir_all(install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    let output_arg = format!("-o{}", install_dir.display());
+    let status = ProcessCommand::new(archive)
+        .args([output_arg.as_str(), "-y"])
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if status.success() {
+        return Ok(());
+    }
+    Err((
+        "fallback-to-script",
+        format!(
+            "PortableGit self-extraction failed with exit {:?}; script installs managed Git",
+            status.code()
+        ),
     ))
 }
 
@@ -2060,6 +2175,15 @@ fn windows_uv_archive_name() -> Option<&'static str> {
         "x86_64" => Some("uv-x86_64-pc-windows-msvc.zip"),
         "aarch64" => Some("uv-aarch64-pc-windows-msvc.zip"),
         "x86" => Some("uv-i686-pc-windows-msvc.zip"),
+        _ => None,
+    }
+}
+
+fn windows_git_archive_name() -> Option<&'static str> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some("PortableGit-2.54.0-64-bit.7z.exe"),
+        "aarch64" => Some("PortableGit-2.54.0-arm64.7z.exe"),
+        "x86" => Some("MinGit-2.54.0-32-bit.zip"),
         _ => None,
     }
 }

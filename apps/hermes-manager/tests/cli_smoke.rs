@@ -157,6 +157,15 @@ fn windows_playwright_archive_name() -> &'static str {
 }
 
 #[cfg(target_os = "windows")]
+fn windows_git_archive_name() -> &'static str {
+    match windows_cache_arch() {
+        "x64" => "PortableGit-2.54.0-64-bit.7z.exe",
+        "arm64" => "PortableGit-2.54.0-arm64.7z.exe",
+        _ => "MinGit-2.54.0-32-bit.zip",
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn assert_command_success(mut command: Command, label: &str) -> std::process::Output {
     let output = command.output().expect("command should run");
     assert!(
@@ -1596,6 +1605,49 @@ fn cli_smoke_falls_back_for_native_git_stage_when_git_is_missing() {
     assert_eq!(report["stage"], "git");
     assert_eq!(report["ok"], false);
     assert_eq!(report["failureCategory"], "fallback-to-script");
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_installs_native_git_stage_from_bundled_archive() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let bootstrap_tools = temp.path().join("resources").join("bootstrap-tools");
+    fs::create_dir_all(&bootstrap_tools).expect("bootstrap tools dir should be created");
+    let git_archive = bootstrap_tools.join(windows_git_archive_name());
+    write_zip_fixture(
+        &git_archive,
+        &[(
+            "PortableGit/cmd/git.cmd",
+            b"@echo off\r\necho git version 2.54.0.windows.1\r\nexit /b 0\r\n",
+        )],
+    );
+    write_bootstrap_tools_manifest(&bootstrap_tools, &[git_archive]);
+    let hermes_home_text = hermes_home.display().to_string();
+    let bootstrap_tools_text = bootstrap_tools.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "git",
+        "--bootstrap-tools-dir",
+        &bootstrap_tools_text,
+        "--current-path",
+        "",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("git install output should be json");
+
+    assert_eq!(report["stage"], "git");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], false);
+    assert!(hermes_home
+        .join("git")
+        .join("cmd")
+        .join("git.cmd")
+        .is_file());
 }
 
 #[cfg(target_os = "windows")]
