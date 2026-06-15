@@ -121,6 +121,15 @@ fn windows_uv_archive_name() -> &'static str {
 }
 
 #[cfg(target_os = "windows")]
+fn windows_node_archive_name() -> &'static str {
+    match windows_cache_arch() {
+        "x64" => "node-v22.12.0-win-x64.zip",
+        "arm64" => "node-v22.12.0-win-arm64.zip",
+        _ => "node-v22.12.0-win-x86.zip",
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn assert_command_success(mut command: Command, label: &str) -> std::process::Output {
     let output = command.output().expect("command should run");
     assert!(
@@ -1244,6 +1253,52 @@ fn cli_smoke_falls_back_for_native_node_stage_when_node_is_missing() {
     assert_eq!(report["stage"], "node");
     assert_eq!(report["ok"], false);
     assert_eq!(report["failureCategory"], "fallback-to-script");
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_installs_native_node_stage_from_bundled_archive() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let bootstrap_tools = temp.path().join("resources").join("bootstrap-tools");
+    fs::create_dir_all(&bootstrap_tools).expect("bootstrap tools dir should be created");
+    let node_archive = bootstrap_tools.join(windows_node_archive_name());
+    write_zip_fixture(
+        &node_archive,
+        &[
+            (
+                "node-v22.12.0-win-x64/node.cmd",
+                b"@echo off\r\necho v22.12.0\r\nexit /b 0\r\n",
+            ),
+            (
+                "node-v22.12.0-win-x64/npm.cmd",
+                b"@echo off\r\nexit /b 0\r\n",
+            ),
+        ],
+    );
+    write_bootstrap_tools_manifest(&bootstrap_tools, &[node_archive]);
+    let hermes_home_text = hermes_home.display().to_string();
+    let bootstrap_tools_text = bootstrap_tools.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "node",
+        "--bootstrap-tools-dir",
+        &bootstrap_tools_text,
+        "--current-path",
+        "",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("node stage output should be json");
+
+    assert_eq!(report["stage"], "node");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], false);
+    assert!(hermes_home.join("node").join("node.cmd").is_file());
+    assert!(hermes_home.join("node").join("npm.cmd").is_file());
 }
 
 #[cfg(target_os = "windows")]

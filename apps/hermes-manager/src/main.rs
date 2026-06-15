@@ -1439,13 +1439,10 @@ fn run_native_node_stage(
         ));
     }
     let path_text = windows_stage_path(options.current_path)?;
-    let node = windows_path_command(&path_text, "node")
-        .or_else(|| Some(home.join("node").join("node.exe")).filter(|path| path.is_file()));
+    let node = windows_node_command(home, &path_text);
     let Some(node) = node else {
-        return Err((
-            "fallback-to-script",
-            "Node.js missing; script installs managed Node.js".to_string(),
-        ));
+        install_bundled_windows_node(home, options.bootstrap_tools_dir.as_deref())?;
+        return verify_managed_windows_node(home);
     };
     let output = ProcessCommand::new(&node)
         .arg("--version")
@@ -1460,10 +1457,8 @@ fn run_native_node_stage(
             )),
         ));
     }
-    Err((
-        "fallback-to-script",
-        format!("Node.js {version} missing or unsupported; script installs managed Node.js"),
-    ))
+    install_bundled_windows_node(home, options.bootstrap_tools_dir.as_deref())?;
+    verify_managed_windows_node(home)
 }
 
 fn run_native_system_packages_stage(
@@ -1839,6 +1834,170 @@ fn windows_uv_archive_name() -> Option<&'static str> {
         "x86" => Some("uv-i686-pc-windows-msvc.zip"),
         _ => None,
     }
+}
+
+fn install_bundled_windows_node(
+    home: &std::path::Path,
+    bootstrap_tools_dir: Option<&std::path::Path>,
+) -> std::result::Result<(), (&'static str, String)> {
+    let Some(bootstrap_tools_dir) = bootstrap_tools_dir else {
+        return Err((
+            "fallback-to-script",
+            "Node.js missing and no bundled bootstrap-tools directory was provided".to_string(),
+        ));
+    };
+    let archive_name = find_bundled_windows_node_archive(bootstrap_tools_dir)?;
+    let archive = bootstrap_tools_dir.join(&archive_name);
+    verify_bootstrap_tools_archive(bootstrap_tools_dir, &archive_name, &archive)?;
+    extract_windows_node_zip(&archive, &home.join("node"))
+}
+
+fn verify_managed_windows_node(
+    home: &std::path::Path,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    let Some(node) = windows_node_command(home, "") else {
+        return Err((
+            "fallback-to-script",
+            "bundled Node.js install completed but node was not found".to_string(),
+        ));
+    };
+    let output = ProcessCommand::new(&node)
+        .arg("--version")
+        .output()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    let version = command_version_text(&output);
+    if !output.status.success() || !node_version_is_supported(&version) {
+        return Err((
+            "fallback-to-script",
+            format!("bundled Node.js {version} did not pass version check"),
+        ));
+    }
+    if windows_npm_command(home, "").is_none() {
+        return Err((
+            "fallback-to-script",
+            "bundled Node.js install completed but npm was not found".to_string(),
+        ));
+    }
+    Ok((
+        false,
+        Some(format!(
+            "installed bundled Node.js {version} at {}",
+            node.display()
+        )),
+    ))
+}
+
+fn find_bundled_windows_node_archive(
+    bootstrap_tools_dir: &std::path::Path,
+) -> std::result::Result<String, (&'static str, String)> {
+    let Some(suffix) = windows_node_archive_suffix() else {
+        return Err((
+            "fallback-to-script",
+            "unsupported Windows architecture for bundled Node.js".to_string(),
+        ));
+    };
+    let entries =
+        fs::read_dir(bootstrap_tools_dir).map_err(|err| ("fallback-to-script", err.to_string()))?;
+    let mut matches: Vec<((u32, u32, u32), String)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("node-v") || !name.ends_with(suffix) {
+            continue;
+        }
+        let Some(version) = parse_windows_node_archive_version(name, suffix) else {
+            continue;
+        };
+        let version_text = format!("{}.{}.{}", version.0, version.1, version.2);
+        if node_version_is_supported(&version_text) {
+            matches.push((version, name.to_string()));
+        }
+    }
+    matches
+        .into_iter()
+        .max_by_key(|(version, _)| *version)
+        .map(|(_, name)| name)
+        .ok_or_else(|| {
+            (
+                "fallback-to-script",
+                format!("supported bundled Node.js archive missing for *{suffix}"),
+            )
+        })
+}
+
+fn parse_windows_node_archive_version(name: &str, suffix: &str) -> Option<(u32, u32, u32)> {
+    let version = name.strip_prefix("node-v")?.strip_suffix(suffix)?;
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse::<u32>().ok()?;
+    let minor = parts.next()?.parse::<u32>().ok()?;
+    let patch = parts.next()?.parse::<u32>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
+fn windows_node_archive_suffix() -> Option<&'static str> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some("-win-x64.zip"),
+        "aarch64" => Some("-win-arm64.zip"),
+        "x86" => Some("-win-x86.zip"),
+        _ => None,
+    }
+}
+
+fn extract_windows_node_zip(
+    archive: &std::path::Path,
+    install_dir: &std::path::Path,
+) -> std::result::Result<(), (&'static str, String)> {
+    let parent = install_dir.parent().ok_or_else(|| {
+        (
+            "stage-failed",
+            format!(
+                "Node.js install path has no parent: {}",
+                install_dir.display()
+            ),
+        )
+    })?;
+    let tmp_dir = parent.join("node-extracting");
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    fs::create_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    extract_zip_safely(archive, &tmp_dir)?;
+
+    let node = find_file_named(&tmp_dir, &["node.exe", "node.cmd", "node.bat"])?;
+    let source_dir = node.parent().ok_or_else(|| {
+        (
+            "fallback-to-script",
+            format!("bundled Node.js entry has no parent: {}", node.display()),
+        )
+    })?;
+    if install_dir.exists() {
+        fs::remove_dir_all(install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    let moved_tmp_root = source_dir == tmp_dir;
+    fs::rename(source_dir, install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    if !moved_tmp_root && tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    Ok(())
+}
+
+fn windows_node_command(home: &std::path::Path, path_text: &str) -> Option<PathBuf> {
+    [
+        home.join("node").join("node.exe"),
+        home.join("node").join("node.cmd"),
+        home.join("node").join("node.bat"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .or_else(|| windows_path_command(path_text, "node"))
 }
 
 fn windows_npm_command(home: &std::path::Path, path_text: &str) -> Option<PathBuf> {
