@@ -876,7 +876,7 @@ fn run_native_bootstrap_stage(
         "path" => run_native_path_stage(home, options).map(|skipped| (skipped, None)),
         "uv" => run_native_uv_stage(home, options),
         "git" => run_native_git_stage(home, options),
-        "python" => run_native_python_stage(options),
+        "python" => run_native_python_stage(home, options),
         "repository" => run_native_repository_stage(home, options),
         "venv" => run_native_venv_stage(home, options),
         "dependencies" | "python-deps" => run_native_dependencies_stage(home, options),
@@ -1040,6 +1040,7 @@ fn run_native_git_stage(
 }
 
 fn run_native_python_stage(
+    home: &std::path::Path,
     options: NativeBootstrapStageOptions<'_>,
 ) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
     if !cfg!(target_os = "windows") {
@@ -1049,27 +1050,87 @@ fn run_native_python_stage(
         ));
     }
     let path_text = windows_stage_path(options.current_path)?;
-    let Some(python) = windows_path_command(&path_text, "python") else {
+    if let Some(python) = windows_path_command(&path_text, "python") {
+        let output = ProcessCommand::new(&python)
+            .arg("--version")
+            .output()
+            .map_err(|err| ("stage-failed", err.to_string()))?;
+        let version = command_version_text(&output);
+        if output.status.success() && python_version_is_supported(&version) {
+            return Ok((
+                true,
+                Some(format!("{version} already available; python stage skipped")),
+            ));
+        }
+    }
+    let Some(uv) = windows_uv_command(home, &path_text) else {
         return Err((
             "fallback-to-script",
-            "Python missing; script uses uv to find or install Python 3.11".to_string(),
+            "Python missing and uv is unavailable; script installs Python 3.11".to_string(),
         ));
     };
-    let output = ProcessCommand::new(&python)
-        .arg("--version")
-        .output()
-        .map_err(|err| ("stage-failed", err.to_string()))?;
-    let version = command_version_text(&output);
-    if output.status.success() && python_version_is_supported(&version) {
+    if let Some((python, version)) = find_uv_python(&uv, "3.11")? {
         return Ok((
-            true,
-            Some(format!("{version} already available; python stage skipped")),
+            false,
+            Some(format!(
+                "{version} available through uv at {}; python stage completed",
+                python.display()
+            )),
+        ));
+    }
+    let install = ProcessCommand::new(&uv)
+        .args(["python", "install", "3.11"])
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if !install.success() {
+        return Err((
+            "fallback-to-script",
+            format!(
+                "uv python install 3.11 failed with exit {:?}; script installs Python",
+                install.code()
+            ),
+        ));
+    }
+    if let Some((python, version)) = find_uv_python(&uv, "3.11")? {
+        return Ok((
+            false,
+            Some(format!(
+                "{version} installed through uv at {}; python stage completed",
+                python.display()
+            )),
         ));
     }
     Err((
         "fallback-to-script",
-        format!("{version} missing or unsupported; script uses uv to install Python 3.11"),
+        "uv python install completed but Python 3.11 was not findable".to_string(),
     ))
+}
+
+fn find_uv_python(
+    uv: &std::path::Path,
+    version: &str,
+) -> std::result::Result<Option<(PathBuf, String)>, (&'static str, String)> {
+    let output = ProcessCommand::new(uv)
+        .args(["python", "find", version])
+        .output()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let python_text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if python_text.is_empty() {
+        return Ok(None);
+    }
+    let python = PathBuf::from(python_text);
+    let version_output = ProcessCommand::new(&python)
+        .arg("--version")
+        .output()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    let version_text = command_version_text(&version_output);
+    if version_output.status.success() && python_version_is_supported(&version_text) {
+        return Ok(Some((python, version_text)));
+    }
+    Ok(None)
 }
 
 fn run_native_repository_stage(

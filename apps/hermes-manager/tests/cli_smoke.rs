@@ -1538,7 +1538,9 @@ fn cli_smoke_falls_back_for_native_uv_stage_when_uv_is_missing() {
 fn cli_smoke_skips_native_git_stage_when_git_is_available() {
     let temp = tempfile::tempdir().expect("tempdir should be created");
     let hermes_home = temp.path().join("hermes");
+    let bootstrap_tools = temp.path().join("resources").join("bootstrap-tools");
     let git_dir = temp.path().join("git");
+    fs::create_dir_all(&bootstrap_tools).expect("bootstrap tools dir should be created");
     fs::create_dir_all(&git_dir).expect("git dir should be created");
     fs::write(
         git_dir.join("git.cmd"),
@@ -1546,6 +1548,7 @@ fn cli_smoke_skips_native_git_stage_when_git_is_available() {
     )
     .expect("git shim should be written");
     let hermes_home_text = hermes_home.display().to_string();
+    let bootstrap_tools_text = bootstrap_tools.display().to_string();
     let git_path = git_dir.display().to_string();
 
     let out = run_manager(&[
@@ -1554,6 +1557,8 @@ fn cli_smoke_skips_native_git_stage_when_git_is_available() {
         "--json",
         "bootstrap-stage",
         "git",
+        "--bootstrap-tools-dir",
+        &bootstrap_tools_text,
         "--current-path",
         &git_path,
     ]);
@@ -1563,6 +1568,7 @@ fn cli_smoke_skips_native_git_stage_when_git_is_available() {
     assert_eq!(report["stage"], "git");
     assert_eq!(report["ok"], true);
     assert_eq!(report["skipped"], true);
+    assert!(!hermes_home.join("git").exists());
 }
 
 #[cfg(target_os = "windows")]
@@ -1646,6 +1652,49 @@ fn cli_smoke_falls_back_for_native_python_stage_when_python_is_missing() {
     assert_eq!(report["stage"], "python");
     assert_eq!(report["ok"], false);
     assert_eq!(report["failureCategory"], "fallback-to-script");
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_installs_native_python_stage_with_managed_uv() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let bin_dir = hermes_home.join("bin");
+    let python_dir = temp.path().join("python");
+    fs::create_dir_all(&bin_dir).expect("bin dir should be created");
+    fs::create_dir_all(&python_dir).expect("python dir should be created");
+    let python_cmd = python_dir.join("python.cmd");
+    fs::write(&python_cmd, "@echo Python 3.11.9\r\n").expect("python shim should be written");
+    fs::write(
+        bin_dir.join("uv.cmd"),
+        format!(
+            concat!(
+                "@echo off\r\n",
+                "if \"%1\"==\"python\" if \"%2\"==\"find\" echo {}\r\n",
+                "if \"%1\"==\"python\" if \"%2\"==\"install\" exit /b 0\r\n",
+                "exit /b 0\r\n",
+            ),
+            python_cmd.display()
+        ),
+    )
+    .expect("uv shim should be written");
+    let hermes_home_text = hermes_home.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "python",
+        "--current-path",
+        "",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("python install output should be json");
+
+    assert_eq!(report["stage"], "python");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], false);
 }
 
 #[cfg(target_os = "windows")]
