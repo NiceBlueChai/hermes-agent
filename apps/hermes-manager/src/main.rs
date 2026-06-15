@@ -1015,15 +1015,7 @@ fn run_native_git_stage(
         ));
     }
     let path_text = windows_stage_path(options.current_path)?;
-    let git = windows_path_command(&path_text, "git").or_else(|| {
-        [
-            home.join("git").join("cmd").join("git.exe"),
-            home.join("git").join("bin").join("git.exe"),
-            home.join("git").join("mingw64").join("bin").join("git.exe"),
-        ]
-        .into_iter()
-        .find(|path| path.is_file())
-    });
+    let git = windows_git_command(home, &path_text);
     let Some(git) = git else {
         return Err((
             "fallback-to-script",
@@ -1097,28 +1089,96 @@ fn run_native_repository_stage(
                 .to_string(),
         ));
     };
+    let path_text = windows_stage_path(options.current_path)?;
+    let Some(git) = windows_git_command(home, &path_text) else {
+        return Err((
+            "fallback-to-script",
+            "Git missing; script prepares the repository".to_string(),
+        ));
+    };
     let install_root = options
         .install_root
         .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    if !install_root.exists() {
+        let parent = install_root.parent().ok_or_else(|| {
+            (
+                "stage-failed",
+                format!("install root has no parent: {}", install_root.display()),
+            )
+        })?;
+        fs::create_dir_all(parent).map_err(|err| ("stage-failed", err.to_string()))?;
+        let branch = options.branch.unwrap_or("main");
+        let clone_status = ProcessCommand::new(&git)
+            .args([
+                "-c",
+                "windows.appendAtomically=false",
+                "clone",
+                "--branch",
+                branch,
+                "https://github.com/NousResearch/hermes-agent.git",
+            ])
+            .arg(&install_root)
+            .status()
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+        if !clone_status.success() {
+            return Err((
+                "fallback-to-script",
+                format!(
+                    "git clone failed with exit {:?}; script tries SSH, HTTPS, and ZIP",
+                    clone_status.code()
+                ),
+            ));
+        }
+        let checkout_status = ProcessCommand::new(&git)
+            .args([
+                "-c",
+                "windows.appendAtomically=false",
+                "checkout",
+                "--detach",
+                expected_commit,
+            ])
+            .current_dir(&install_root)
+            .status()
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+        if !checkout_status.success() {
+            return Err((
+                "fallback-to-script",
+                format!(
+                    "git checkout {expected_commit} failed with exit {:?}; script updates source",
+                    checkout_status.code()
+                ),
+            ));
+        }
+        return verify_native_repository_commit(&git, &install_root, expected_commit, false);
+    }
     if !install_root.join(".git").exists() {
         return Err((
             "fallback-to-script",
             "repository checkout missing; script clones or downloads source".to_string(),
         ));
     }
-    let output = ProcessCommand::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(&install_root)
+    verify_native_repository_commit(&git, &install_root, expected_commit, true)
+}
+
+fn verify_native_repository_commit(
+    git: &std::path::Path,
+    install_root: &std::path::Path,
+    expected_commit: &str,
+    skipped: bool,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    let output = ProcessCommand::new(git)
+        .args(["-c", "windows.appendAtomically=false", "rev-parse", "HEAD"])
+        .current_dir(install_root)
         .output()
         .map_err(|err| ("fallback-to-script", err.to_string()))?;
     let current_commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if output.status.success() && current_commit.eq_ignore_ascii_case(expected_commit) {
-        return Ok((
-            true,
-            Some(format!(
-                "repository already at pinned commit {current_commit}"
-            )),
-        ));
+        let reason = if skipped {
+            format!("repository already at pinned commit {current_commit}")
+        } else {
+            format!("repository cloned at pinned commit {current_commit}")
+        };
+        return Ok((skipped, Some(reason)));
     }
     Err((
         "fallback-to-script",
@@ -2198,6 +2258,18 @@ fn windows_node_command(home: &std::path::Path, path_text: &str) -> Option<PathB
     .into_iter()
     .find(|path| path.is_file())
     .or_else(|| windows_path_command(path_text, "node"))
+}
+
+fn windows_git_command(home: &std::path::Path, path_text: &str) -> Option<PathBuf> {
+    [
+        home.join("git").join("cmd").join("git.exe"),
+        home.join("git").join("cmd").join("git.cmd"),
+        home.join("git").join("bin").join("git.exe"),
+        home.join("git").join("mingw64").join("bin").join("git.exe"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .or_else(|| windows_path_command(path_text, "git"))
 }
 
 fn windows_tool_command(
