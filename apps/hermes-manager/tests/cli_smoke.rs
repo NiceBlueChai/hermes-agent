@@ -112,6 +112,15 @@ fn windows_cache_arch() -> &'static str {
 }
 
 #[cfg(target_os = "windows")]
+fn windows_uv_archive_name() -> &'static str {
+    match windows_cache_arch() {
+        "x64" => "uv-x86_64-pc-windows-msvc.zip",
+        "arm64" => "uv-aarch64-pc-windows-msvc.zip",
+        _ => "uv-i686-pc-windows-msvc.zip",
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn assert_command_success(mut command: Command, label: &str) -> std::process::Output {
     let output = command.output().expect("command should run");
     assert!(
@@ -1263,6 +1272,42 @@ fn cli_smoke_skips_native_uv_stage_when_uv_is_available() {
     assert_eq!(report["stage"], "uv");
     assert_eq!(report["ok"], true);
     assert_eq!(report["skipped"], true);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_installs_native_uv_stage_from_bundled_archive() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let bootstrap_tools = temp.path().join("resources").join("bootstrap-tools");
+    fs::create_dir_all(&bootstrap_tools).expect("bootstrap tools dir should be created");
+    let uv_archive = bootstrap_tools.join(windows_uv_archive_name());
+    write_zip_fixture(
+        &uv_archive,
+        &[("uv/uv.cmd", b"@echo off\r\necho uv 0.8.0\r\nexit /b 0\r\n")],
+    );
+    write_bootstrap_tools_manifest(&bootstrap_tools, &[uv_archive]);
+    let hermes_home_text = hermes_home.display().to_string();
+    let bootstrap_tools_text = bootstrap_tools.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "uv",
+        "--bootstrap-tools-dir",
+        &bootstrap_tools_text,
+        "--current-path",
+        "",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("uv stage output should be json");
+
+    assert_eq!(report["stage"], "uv");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], false);
+    assert!(hermes_home.join("bin").join("uv.cmd").is_file());
 }
 
 #[cfg(target_os = "windows")]

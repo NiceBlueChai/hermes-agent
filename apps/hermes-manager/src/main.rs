@@ -982,12 +982,12 @@ fn run_native_uv_stage(
     let path_text = windows_stage_path(options.current_path)?;
     let uv = Some(home.join("bin").join("uv.exe"))
         .filter(|path| path.is_file())
+        .or_else(|| Some(home.join("bin").join("uv.cmd")).filter(|path| path.is_file()))
+        .or_else(|| Some(home.join("bin").join("uv.bat")).filter(|path| path.is_file()))
         .or_else(|| windows_path_command(&path_text, "uv"));
     let Some(uv) = uv else {
-        return Err((
-            "fallback-to-script",
-            "uv missing; script installs managed uv".to_string(),
-        ));
+        install_bundled_windows_uv(home, options.bootstrap_tools_dir.as_deref())?;
+        return verify_managed_windows_uv(home);
     };
     let output = ProcessCommand::new(&uv)
         .arg("--version")
@@ -1000,10 +1000,8 @@ fn run_native_uv_stage(
             Some(format!("{version} already available; uv stage skipped")),
         ));
     }
-    Err((
-        "fallback-to-script",
-        "uv exists but did not run successfully; script reinstalls managed uv".to_string(),
-    ))
+    install_bundled_windows_uv(home, options.bootstrap_tools_dir.as_deref())?;
+    verify_managed_windows_uv(home)
 }
 
 fn run_native_git_stage(
@@ -1675,6 +1673,172 @@ fn windows_uv_command(home: &std::path::Path, path_text: &str) -> Option<PathBuf
     .into_iter()
     .find(|path| path.is_file())
     .or_else(|| windows_path_command(path_text, "uv"))
+}
+
+fn install_bundled_windows_uv(
+    home: &std::path::Path,
+    bootstrap_tools_dir: Option<&std::path::Path>,
+) -> std::result::Result<(), (&'static str, String)> {
+    let Some(bootstrap_tools_dir) = bootstrap_tools_dir else {
+        return Err((
+            "fallback-to-script",
+            "uv missing and no bundled bootstrap-tools directory was provided".to_string(),
+        ));
+    };
+    let Some(archive_name) = windows_uv_archive_name() else {
+        return Err((
+            "fallback-to-script",
+            "unsupported Windows architecture for bundled uv".to_string(),
+        ));
+    };
+    let archive = bootstrap_tools_dir.join(archive_name);
+    if !archive.is_file() {
+        return Err((
+            "fallback-to-script",
+            format!("bundled uv archive missing: {}", archive.display()),
+        ));
+    }
+    verify_bootstrap_tools_archive(bootstrap_tools_dir, archive_name, &archive)?;
+    extract_windows_uv_zip(&archive, &home.join("bin"))
+}
+
+fn verify_managed_windows_uv(
+    home: &std::path::Path,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    let Some(uv) = windows_uv_command(home, "") else {
+        return Err((
+            "fallback-to-script",
+            "bundled uv install completed but uv was not found".to_string(),
+        ));
+    };
+    let output = ProcessCommand::new(&uv)
+        .arg("--version")
+        .output()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if output.status.success() {
+        let version = command_version_text(&output);
+        return Ok((
+            false,
+            Some(format!("installed bundled {version} at {}", uv.display())),
+        ));
+    }
+    Err((
+        "fallback-to-script",
+        "bundled uv did not pass version check".to_string(),
+    ))
+}
+
+fn extract_windows_uv_zip(
+    archive: &std::path::Path,
+    install_dir: &std::path::Path,
+) -> std::result::Result<(), (&'static str, String)> {
+    fs::create_dir_all(install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    let tmp_dir = install_dir.join("uv-extracting");
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    fs::create_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    extract_zip_safely(archive, &tmp_dir)?;
+
+    let uv = find_file_named(&tmp_dir, &["uv.exe", "uv.cmd", "uv.bat"])?;
+    let uv_name = uv.file_name().ok_or_else(|| {
+        (
+            "fallback-to-script",
+            format!("bundled uv entry has no file name: {}", uv.display()),
+        )
+    })?;
+    fs::copy(&uv, install_dir.join(uv_name)).map_err(|err| ("stage-failed", err.to_string()))?;
+    if let Ok(uvx) = find_file_named(&tmp_dir, &["uvx.exe", "uvx.cmd", "uvx.bat"]) {
+        if let Some(uvx_name) = uvx.file_name() {
+            fs::copy(&uvx, install_dir.join(uvx_name))
+                .map_err(|err| ("stage-failed", err.to_string()))?;
+        }
+    }
+    fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    Ok(())
+}
+
+fn extract_zip_safely(
+    archive: &std::path::Path,
+    output_dir: &std::path::Path,
+) -> std::result::Result<(), (&'static str, String)> {
+    let file = fs::File::open(archive).map_err(|err| ("fallback-to-script", err.to_string()))?;
+    let mut zip =
+        zip::ZipArchive::new(file).map_err(|err| ("fallback-to-script", err.to_string()))?;
+    for index in 0..zip.len() {
+        let mut entry = zip
+            .by_index(index)
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+        let Some(enclosed_name) = entry.enclosed_name() else {
+            return Err((
+                "fallback-to-script",
+                format!("unsafe ZIP entry in {}", archive.display()),
+            ));
+        };
+        if enclosed_name.as_os_str().is_empty() {
+            return Err((
+                "fallback-to-script",
+                format!("blank ZIP entry in {}", archive.display()),
+            ));
+        }
+        let output = output_dir.join(enclosed_name);
+        if entry.is_dir() {
+            fs::create_dir_all(&output).map_err(|err| ("stage-failed", err.to_string()))?;
+            continue;
+        }
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent).map_err(|err| ("stage-failed", err.to_string()))?;
+        }
+        let mut out = fs::File::create(&output).map_err(|err| ("stage-failed", err.to_string()))?;
+        std::io::copy(&mut entry, &mut out)
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    }
+    Ok(())
+}
+
+fn find_file_named(
+    root: &std::path::Path,
+    names: &[&str],
+) -> std::result::Result<PathBuf, (&'static str, String)> {
+    let entries = fs::read_dir(root).map_err(|err| ("stage-failed", err.to_string()))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            if let Ok(found) = find_file_named(&path, names) {
+                return Ok(found);
+            }
+        } else if file_type.is_file() {
+            let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if names
+                .iter()
+                .any(|name| file_name.eq_ignore_ascii_case(name))
+            {
+                return Ok(path);
+            }
+        }
+    }
+    Err((
+        "fallback-to-script",
+        format!(
+            "none of {} found under {}",
+            names.join(", "),
+            root.display()
+        ),
+    ))
+}
+
+fn windows_uv_archive_name() -> Option<&'static str> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some("uv-x86_64-pc-windows-msvc.zip"),
+        "aarch64" => Some("uv-aarch64-pc-windows-msvc.zip"),
+        "x86" => Some("uv-i686-pc-windows-msvc.zip"),
+        _ => None,
+    }
 }
 
 fn windows_npm_command(home: &std::path::Path, path_text: &str) -> Option<PathBuf> {
