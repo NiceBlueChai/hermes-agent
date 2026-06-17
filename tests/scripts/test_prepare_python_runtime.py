@@ -194,9 +194,16 @@ class PreparePythonRuntimeTests(unittest.TestCase):
 
         self.assertIn("python-runtime-archive:", windows_workflow)
         self.assertIn("HERMES_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['python-runtime-archive'] }}", windows_workflow)
+        self.assertIn("astral-sh/setup-uv@", windows_workflow)
+        self.assertIn("scripts/build_python_runtime_archive.py", windows_workflow)
+        self.assertIn("dist/python-runtime/python-runtime-windows-x64.zip", windows_workflow)
         self.assertIn('@("--audited-archive", "$env:HERMES_PYTHON_RUNTIME_ARCHIVE")', windows_workflow)
+        self.assertIn('@("--archive", "dist/python-runtime/python-runtime-windows-x64.zip")', windows_workflow)
         self.assertIn("scripts/prepare_python_runtime.py", windows_workflow)
-        self.assertIn("--self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime", windows_workflow)
+        self.assertIn(
+            "--self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime",
+            windows_workflow,
+        )
         self.assertIn("--wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse", windows_workflow)
         self.assertIn("--wheelhouse-platform windows", windows_workflow)
         self.assertIn("--python-runtime-dir apps/bootstrap-installer/src-tauri/python-runtime", windows_workflow)

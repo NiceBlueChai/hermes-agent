@@ -90,9 +90,10 @@ git diff --check
 
 ## Goal 4: Prove Windows Bundled Python Runtime As Default Candidate
 
-**Status:** In progress. Windows workflow now has a Python runtime lifecycle smoke and `--self-check-lifecycle`
-extracts a manifest-owned runtime archive into a temporary directory. Full completion still requires a signed Windows
-x64 CI run with an audited runtime archive proving runtime, wheelhouse, venv, and dependency stages together.
+**Status:** In progress. Windows workflow now builds a Python runtime archive by default, keeps external audited archive
+override support, has a Python runtime lifecycle smoke, and `--self-check-lifecycle` extracts a manifest-owned runtime
+archive into a temporary directory. Full completion still requires a signed Windows x64 CI run proving runtime,
+wheelhouse, venv, and dependency stages together.
 
 **Completion standard:**
 

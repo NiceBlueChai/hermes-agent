@@ -70,6 +70,9 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      - name: Setup uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
+
       - name: Install npm dependencies
         run: npm ci
 
@@ -121,7 +124,6 @@ jobs:
           --arch x64
 
       - name: Bundle Python runtime archive
-        if: ${{ inputs['python-runtime-archive'] != '' }}
         env:
           HERMES_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['python-runtime-archive'] }}
         run: |
@@ -137,11 +139,14 @@ jobs:
           )
           if ($env:HERMES_PYTHON_RUNTIME_ARCHIVE) {
             $args += @("--audited-archive", "$env:HERMES_PYTHON_RUNTIME_ARCHIVE")
+          } else {
+            python scripts/build_python_runtime_archive.py --platform windows --arch x64 --force
+            $args += @("--archive", "dist/python-runtime/python-runtime-windows-x64.zip")
+            $args += @("--source-url", "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}")
           }
           python @args
 
       - name: Validate Python runtime archive
-        if: ${{ inputs['python-runtime-archive'] != '' }}
         run: >
           python scripts/prepare_python_runtime.py
           --validate-only
@@ -222,7 +227,6 @@ jobs:
           --self-check-wheelhouse-arch x64
 
       - name: Smoke built installer Python runtime resources
-        if: ${{ inputs['python-runtime-archive'] != '' }}
         run: >
           .\apps\bootstrap-installer\src-tauri\target\release\Hermes-Setup.exe --self-check
           --self-check-expect-commit "${{ github.sha }}"
@@ -242,7 +246,6 @@ jobs:
           --self-check-wheelhouse-arch x64
 
       - name: Smoke built installer Python runtime lifecycle
-        if: ${{ inputs['python-runtime-archive'] != '' }}
         run: >
           .\apps\bootstrap-installer\src-tauri\target\release\Hermes-Setup.exe --self-check-lifecycle
           --self-check-expect-commit "${{ github.sha }}"
@@ -276,7 +279,6 @@ jobs:
         run: python scripts/validate_fallback_burn_down.py
 
       - name: Validate Python runtime artifacts
-        if: ${{ inputs['python-runtime-archive'] != '' }}
         run: >
           python scripts/validate_installer_artifacts.py
           --artifact "apps/bootstrap-installer/src-tauri/python-runtime/python-runtime-manifest.json"
@@ -337,7 +339,6 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Python runtime archive
-        if: ${{ inputs['python-runtime-archive'] != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: Hermes-Setup-python-runtime
