@@ -1365,6 +1365,7 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         self.assertIn("Unsigned smoke builds are not release artifacts", workflow)
 
         for step_name in (
+            "Validate Azure signing configuration",
             "Azure login (OIDC)",
             "Sign Hermes-Setup.exe with Azure Artifact Signing",
             "Verify signed installer artifacts",
@@ -1387,12 +1388,44 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         self.assertNotIn("bundle/nsis/*.exe", unsigned_validation)
         self.assertIn("python-runtime-manifest.json", unsigned_validation)
 
+    def test_windows_installer_workflow_preflights_azure_signing_config(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+
+        preflight = workflow.index("- name: Validate Azure signing configuration")
+        build = workflow.index("- name: Build installer")
+        login = workflow.index("- name: Azure login (OIDC)")
+
+        self.assertLess(preflight, build)
+        self.assertLess(preflight, login)
+        signing_config = next(
+            section
+            for section in workflow.split("\n      - name: ")
+            if section.startswith("Validate Azure signing configuration")
+        )
+        self.assertIn("if: ${{ !inputs['unsigned-smoke-only'] }}", signing_config)
+        for name in (
+            "AZURE_CLIENT_ID",
+            "AZURE_TENANT_ID",
+            "AZURE_SUBSCRIPTION_ID",
+            "AZURE_SIGNING_ENDPOINT",
+            "AZURE_SIGNING_ACCOUNT_NAME",
+            "AZURE_SIGNING_CERTIFICATE_PROFILE",
+        ):
+            self.assertIn(name, signing_config)
+        self.assertIn("Missing Azure signing configuration", signing_config)
+
     def test_windows_installer_workflow_validates_signed_outputs_before_upload(self):
         repo_root = Path(__file__).resolve().parents[2]
         workflow = (
             repo_root / ".github" / "workflows" / "build-windows-installer.yml"
         ).read_text(encoding="utf-8")
 
+        preflight = workflow.index("- name: Validate Azure signing configuration")
+        login = workflow.index("- name: Azure login (OIDC)")
+        build = workflow.index("- name: Build installer")
         signing = workflow.index("- name: Sign Hermes-Setup.exe with Azure Artifact Signing")
         signature_validation = workflow.index("- name: Verify signed installer artifacts")
         raw_smoke = workflow.index("- name: Smoke built installer binary")
@@ -1402,6 +1435,10 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         runtime_validation = workflow.index("- name: Validate Python runtime artifacts")
         first_upload = workflow.index("- name: Upload NSIS installer")
 
+        self.assertLess(preflight, build)
+        self.assertLess(preflight, login)
+        self.assertLess(build, login)
+        self.assertLess(login, signing)
         self.assertLess(signing, signature_validation)
         self.assertLess(signature_validation, raw_smoke)
         self.assertLess(raw_smoke, lifecycle_smoke)

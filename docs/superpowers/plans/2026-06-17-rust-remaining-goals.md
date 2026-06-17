@@ -102,7 +102,8 @@ runtime lifecycle smoke, unsigned artifact validation, fallback registry validat
 That `unsigned-smoke-only` mode skips signing and installer binary uploads and does not satisfy the signed-release
 completion standard. A later unsigned fork run
 `https://github.com/NiceBlueChai/hermes-agent/actions/runs/27682605571` also passed on head
-`aed8471f30ab002aeaafde94aba071329f05107e`, after `canRunFullBootstrap` became evidence-gated.
+`aed8471f30ab002aeaafde94aba071329f05107e`, after `canRunFullBootstrap` became evidence-gated. Signed mode now has an
+explicit Azure signing configuration preflight so missing signing secrets and variables fail before installer build.
 
 **Completion standard:**
 
@@ -243,6 +244,9 @@ publication.
   `aed8471f30ab002aeaafde94aba071329f05107e`, including Linux and macOS packaged runtime lifecycle smoke and fallback
   burn-down validation.
 - These runs are unsigned fork smoke and do not satisfy the signed Windows/macOS/Linux release evidence requirement.
+- Signed Windows workflow mode now preflights `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
+  `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT_NAME`, and `AZURE_SIGNING_CERTIFICATE_PROFILE` before Azure login,
+  so missing release-signing configuration is reported directly before the expensive installer build.
 
 **Completion standard:**
 
