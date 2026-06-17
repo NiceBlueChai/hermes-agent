@@ -1,0 +1,222 @@
+<!--
+文件意图：记录 Rust 自包含发布路线的剩余可执行目标、完成标准和验证命令，便于 goal 模式逐项推进。
+-->
+
+# Rust Remaining Goals Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
+> superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Finish the Rust-backed self-contained release path without deleting features or removing recovery fallbacks
+before release evidence exists.
+
+**Architecture:** Keep Python and Electron as the feature layers. Move only installer, packaged bootstrap, resource
+validation, repair, update, and uninstall boundaries into Rust-backed native paths with shell scripts retained for direct
+installs and one-release recovery.
+
+**Tech Stack:** Rust/Tauri bootstrap installer, `apps/hermes-manager`, Electron bootstrap runner, Python release
+validators, GitHub Actions packaging workflows, PowerShell/POSIX installer fallbacks.
+
+---
+
+## Current Status
+
+- Branch: `docs/rust-self-contained-release`
+- Fork remote: `git@github.com:NiceBlueChai/hermes-agent.git`
+- Latest pushed checkpoint before this plan: `4835d2705 feat(manager): 平台SDK复用检出wheelhouse`
+- `canRunFullBootstrap` must remain `false` until signed Windows, macOS, and Linux packaged release smoke proves full
+  native bootstrap parity.
+- No script fallback may be removed until `docs/release/fallback-burn-down.json` has matching release evidence.
+
+## Goal 1: Document Remaining Goals In Repository
+
+**Completion standard:**
+
+- This file exists and lists all remaining release goals with concrete completion standards.
+- The master plan remains the authoritative design reference:
+  `docs/superpowers/plans/2026-06-13-rust-highest-path-master-plan.md`.
+
+**Verification:**
+
+```powershell
+git diff --check
+```
+
+## Goal 2: Lock Windows Release Artifact Validation Order
+
+**Completion standard:**
+
+- `.github/workflows/build-windows-installer.yml` signs the raw `Hermes-Setup.exe` before smoke.
+- The signed raw exe runs `--self-check` and `--self-check-lifecycle` before artifact upload.
+- NSIS output under `target/release/bundle/nsis/*.exe` is validated before upload.
+- `tests/scripts/test_prepare_bootstrap_tools.py` fails if signing, raw smoke, lifecycle smoke, validation, and upload
+  are reordered unsafely.
+- Do not pretend NSIS supports direct no-UI app flags unless the installer demonstrably forwards them.
+
+**Verification:**
+
+```powershell
+python -m unittest tests.scripts.test_prepare_bootstrap_tools tests.scripts.test_validate_installer_artifacts
+git diff --check
+```
+
+## Goal 3: Enforce Zero Unreasoned Script Stages In Packaged Bootstrap
+
+**Completion standard:**
+
+- Every packaged bootstrap stage is classified as one of:
+  `native`, `probe-only`, `native-first-with-script-fallback:<reason>`, or `direct-install-script:<reason>`.
+- Packaged GUI bootstrap summaries report zero pure script-only stages.
+- Any script fallback carries a concrete reason string and receives the same bundled resource paths as the native path.
+- Interactive stages such as `configure` and `gateway` remain Rust-handled skips in GUI bootstrap.
+
+**Verification:**
+
+```powershell
+cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml build_stage_plan -- --nocapture
+python -m unittest tests.scripts.test_prepare_bootstrap_tools
+git diff --check
+```
+
+## Goal 4: Prove Windows Bundled Python Runtime As Default Candidate
+
+**Completion standard:**
+
+- Windows x64 packaged smoke proves bundled Python runtime extraction, wheelhouse use, venv creation, and dependency
+  install work together.
+- Runtime manifest is platform-specific, checksummed, manifest-owned, and validated by `--self-check`.
+- Runtime extraction rejects traversal, symlinks, and non-regular archive entries.
+- System Python and `uv python install` remain direct-install or recovery fallbacks for at least one release.
+- Release size and security-update notes are written before enabling the runtime bundle by default.
+
+**Verification:**
+
+```powershell
+python -m unittest tests.scripts.test_validate_installer_artifacts tests.scripts.test_prepare_bootstrap_tools
+cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml self_check_validates -- --nocapture
+git diff --check
+```
+
+## Goal 5: Extend Bundled Python Runtime Proof To macOS And Linux
+
+**Completion standard:**
+
+- macOS `.app/Contents/MacOS/Hermes` packaged smoke validates runtime manifest, runtime extraction, wheelhouse Python tag,
+  and lifecycle self-check.
+- Linux AppImage packaged smoke validates the same runtime and wheelhouse path.
+- Runtime fallback behavior remains intact on all three supported desktop platforms.
+
+**Verification:**
+
+```powershell
+python -m unittest tests.scripts.test_validate_installer_artifacts tests.scripts.test_prepare_bootstrap_tools
+cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml self_check_validates -- --nocapture
+git diff --check
+```
+
+## Goal 6: Finish No-Git Normal Packaged Install And Update Proof
+
+**Completion standard:**
+
+- Fresh packaged installs prefer manifest-verified source archive or bundled source snapshot on Windows, macOS, and
+  Linux.
+- Archive-created updates refresh source through Rust and call `hermes update --finalize-only`.
+- Git preparation is not entered before dependency finalization for supported archive-created installs.
+- Git clone/update remains available for direct script installs and recovery.
+
+**Verification:**
+
+```powershell
+cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml archive -- --nocapture
+cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml update -- --nocapture
+git diff --check
+```
+
+## Goal 7: Close Rust Repair And Uninstall Parity Gaps
+
+**Completion standard:**
+
+- Lite uninstall preserves user config, `.env`, sessions, skills, memories, logs, and secrets.
+- Repair-clean removes only managed runtime, cache, tools, and staged updater resources.
+- Desktop uninstall prefers `hermes-manager` for lite mode and falls back to Python uninstall on failure.
+- If full uninstall moves into Rust, it requires explicit confirmation and still rejects unsafe paths outside owned
+  roots.
+
+**Verification:**
+
+```powershell
+cargo test --manifest-path apps/hermes-manager/Cargo.toml -- --nocapture
+node --test apps/desktop/electron/desktop-uninstall.test.cjs apps/desktop/electron/bootstrap-platform.test.cjs
+git diff --check
+```
+
+## Goal 8: Add Size Gates For Any New Default Bundle
+
+**Completion standard:**
+
+- Any newly defaulted bundle has manifest owner, checksum, platform, architecture, validator coverage, and stale/missing
+  fallback behavior.
+- Decision-gated bundles such as ffmpeg, platform SDK wheels, voice/STT/TTS, and extra browser automation resources have
+  release-size and security-update notes before default inclusion.
+- CI fails if bundle size exceeds the documented budget.
+
+**Verification:**
+
+```powershell
+python -m unittest tests.scripts.test_prepare_bootstrap_tools tests.scripts.test_validate_installer_artifacts
+git diff --check
+```
+
+## Goal 9: Flip canRunFullBootstrap Only With Release Evidence
+
+**Completion standard:**
+
+- One signed Windows release reports `canRunFullBootstrap=true`.
+- One signed macOS release reports `canRunFullBootstrap=true`.
+- One signed Linux release reports `canRunFullBootstrap=true`.
+- Packaged smoke covers the native bridge on all three platforms.
+- Repair and uninstall clean resources created by the native path.
+- Release notes document the install behavior change.
+
+**Verification:**
+
+```powershell
+python scripts/validate_fallback_burn_down.py
+node --test apps/desktop/electron/bootstrap-runner.test.cjs apps/desktop/electron/bootstrap-platform.test.cjs
+cargo test --manifest-path apps/hermes-manager/Cargo.toml -- --nocapture
+git diff --check
+```
+
+## Goal 10: Burn Down Release Fallbacks
+
+**Completion standard:**
+
+- Each removed fallback has release evidence recorded in `docs/release/fallback-burn-down.json`.
+- `scripts/validate_fallback_burn_down.py` confirms the entry, marker, required checks, evidence platform, release URL,
+  and check names.
+- Direct `install.ps1` and `install.sh` still cover source installs where applicable.
+- Removing fallback does not delete user-visible functionality.
+
+**Verification:**
+
+```powershell
+python -m unittest tests.scripts.test_validate_fallback_burn_down
+python scripts/validate_fallback_burn_down.py
+git diff --check
+```
+
+## Goal 11: Defer Or Approve Larger Rust Candidates
+
+**Completion standard:**
+
+- Each deeper Rust candidate has a short candidate note covering exact parity tests, measurable dependency or reliability
+  gain, prompt-cache impact, and model-tool footprint impact.
+- Fast-changing agent logic, provider logic, gateway behavior, and plugin execution stay out of Rust unless a candidate
+  note proves the migration is worth the maintenance cost.
+
+**Verification:**
+
+```powershell
+git diff --check
+```
+

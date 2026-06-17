@@ -58,6 +58,9 @@ The branch already contains the important foundation:
 
 This baseline means the next work should close release-quality gaps, not start a broad rewrite.
 
+For goal-mode execution, use `docs/superpowers/plans/2026-06-17-rust-remaining-goals.md` as the concise remaining
+goal checklist and keep this file as the design reference.
+
 ## Highest-Path Definition
 
 The highest practical Rust boundary is reached when a normal packaged install has this shape:
