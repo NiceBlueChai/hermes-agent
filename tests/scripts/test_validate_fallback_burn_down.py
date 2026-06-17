@@ -1262,6 +1262,50 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
             ["windows", "macos", "linux"],
         )
 
+    def test_print_template_rejects_full_bootstrap_missing_required_platform(self) -> None:
+        """Full bootstrap templates must not hide a missing signed release platform."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            checks = ["can-run-full-bootstrap", "release-notes"]
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "desktop-bootstrap-script-fallback",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {"platform": "windows", "checks": checks},
+                                    {"platform": "macos", "checks": checks},
+                                ],
+                                "evidence": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(
+                registry,
+                root,
+                "--print-template",
+                "desktop-bootstrap-script-fallback",
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing requiredEvidence platform: linux", result.stderr)
+
     def test_add_evidence_appends_signed_release_evidence(self) -> None:
         """Release operators can record signed evidence without hand-editing JSON."""
         with tempfile.TemporaryDirectory() as tmp:

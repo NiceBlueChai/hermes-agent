@@ -25,6 +25,8 @@ GITHUB_RELEASE_TAG_RE = re.compile(
     r"^https://github\.com/[^/\s]+/[^/\s]+/releases/tag/([^/?#\s]+)(?:[?#].*)?$"
 )
 VALID_PLATFORMS = frozenset(("windows", "macos", "linux"))
+FULL_BOOTSTRAP_FALLBACK_ID = "desktop-bootstrap-script-fallback"
+FULL_BOOTSTRAP_RELEASE_PLATFORMS = frozenset(("windows", "macos", "linux"))
 
 
 def validate_registry(
@@ -284,6 +286,11 @@ def validate_required_evidence(entry: dict[str, Any], entry_id: str) -> dict[str
             raise RuntimeError(f"entry {entry_id} has duplicate requiredEvidence platform: {platform}")
         checks = require_string_list(requirement, "checks", entry_id, "requiredEvidence")
         required[platform] = set(checks)
+    if entry_id == FULL_BOOTSTRAP_FALLBACK_ID:
+        missing_platforms = sorted(FULL_BOOTSTRAP_RELEASE_PLATFORMS - set(required))
+        if missing_platforms:
+            missing = ", ".join(missing_platforms)
+            raise RuntimeError(f"entry {entry_id} missing requiredEvidence platform: {missing}")
     return required
 
 
