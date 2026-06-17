@@ -424,6 +424,17 @@ jobs:
           ) -join " "
           Write-Host "Record signed fallback burn-down evidence with:"
           Write-Host $command
+          $evidenceDir = ".release-evidence"
+          New-Item -ItemType Directory -Force -Path $evidenceDir | Out-Null
+          Set-Content -Path "$evidenceDir/fallback-burn-down-windows.ps1" -Value $command -Encoding utf8NoBOM
+
+      - name: Upload signed fallback evidence command
+        if: ${{ !inputs['unsigned-smoke-only'] }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: Hermes-Setup-fallback-evidence
+          path: .release-evidence/fallback-burn-down-windows.ps1
+          if-no-files-found: error
 
       - name: Validate Hermes source archive artifacts
         if: ${{ inputs['source-archive'] != '' }}
@@ -916,6 +927,16 @@ jobs:
             )
           fi
           echo "${command[*]}"
+          mkdir -p .release-evidence
+          printf '%s\n' "${command[*]}" > ".release-evidence/fallback-burn-down-${{ matrix.platform }}.sh"
+
+      - name: Upload signed fallback evidence command
+        if: ${{ !inputs['unsigned-smoke-only'] }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ matrix.artifact-name }}-fallback-evidence
+          path: .release-evidence/fallback-burn-down-${{ matrix.platform }}.sh
+          if-no-files-found: error
 
       - name: Upload Unix installer artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1

@@ -294,6 +294,8 @@ validation and before upload, so release operators can record evidence without h
 workflow mode now requires explicit `release-tag` and `release-notes-url` inputs before signing proceeds, rejects
 release tags containing whitespace or `/`, requires the release notes URL to equal the current repository's GitHub
 `releases/tag/<tag>` page, and uses those inputs in the printed evidence command instead of placeholder release metadata.
+The signed paths now also write that command into a `.release-evidence/fallback-burn-down-*` file and upload it as a
+signed-only artifact, so the final release evidence command does not depend on scraping workflow logs.
 
 **Evidence:**
 
@@ -551,6 +553,8 @@ release tags containing whitespace or `/`, requires the release notes URL to equ
 - Local workflow tests now require signed installer workflows to validate `release-tag` and `release-notes-url` inputs,
   reject release tags with whitespace or `/`, require the exact current-repository GitHub `releases/tag/<tag>` URL,
   use those values in the evidence command, and avoid printing placeholder release metadata.
+- Local workflow tests now require signed installer workflows to upload the fallback burn-down evidence command as a
+  signed-only `.release-evidence/fallback-burn-down-*` artifact for Windows, macOS, and Linux release paths.
 
 **Completion standard:**
 
