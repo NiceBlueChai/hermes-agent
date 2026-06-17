@@ -61,6 +61,12 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                 "marker": "HERMES-FALLBACK-BURN-DOWN: missing-marker",
                                 "fallback": "Fallback description.",
                                 "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["packaged-native-bridge-smoke"],
+                                    }
+                                ],
                                 "evidence": [],
                             }
                         ],
@@ -89,6 +95,12 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                 "marker": marker,
                 "fallback": "Fallback description.",
                 "removalGate": "Release evidence gate.",
+                "requiredEvidence": [
+                    {
+                        "platform": "windows",
+                        "checks": ["packaged-native-bridge-smoke"],
+                    }
+                ],
                 "evidence": [],
             }
             registry = root / "fallback.json"
@@ -101,6 +113,134 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("duplicate id", result.stderr)
+
+    def test_missing_required_evidence_fails(self) -> None:
+        """Every retained fallback must declare the release evidence needed for removal."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: missing-required-evidence"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "missing-required-evidence",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "evidence": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("requiredEvidence", result.stderr)
+
+    def test_evidence_must_match_required_platform(self) -> None:
+        """Evidence entries must reference a declared platform."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: bad-evidence"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "bad-evidence",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["packaged-native-bridge-smoke"],
+                                    }
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": "linux",
+                                        "release": "v1.0.0",
+                                        "url": "https://example.invalid/release",
+                                        "checks": ["packaged-native-bridge-smoke"],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("undeclared evidence platform", result.stderr)
+
+    def test_evidence_must_match_required_checks(self) -> None:
+        """Evidence entries must only claim declared checks for that platform."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: bad-evidence-check"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "bad-evidence-check",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["packaged-native-bridge-smoke"],
+                                    }
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": "windows",
+                                        "release": "v1.0.0",
+                                        "url": "https://example.invalid/release",
+                                        "checks": ["unreviewed-check"],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("undeclared evidence check", result.stderr)
 
     def test_unsafe_file_path_fails(self) -> None:
         """Registry file paths must stay inside the repository root."""
@@ -119,6 +259,12 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                 "marker": "HERMES-FALLBACK-BURN-DOWN: unsafe-path",
                                 "fallback": "Fallback description.",
                                 "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["packaged-native-bridge-smoke"],
+                                    }
+                                ],
                                 "evidence": [],
                             }
                         ],

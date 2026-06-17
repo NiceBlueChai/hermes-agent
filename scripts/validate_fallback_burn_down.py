@@ -20,6 +20,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REGISTRY = REPO_ROOT / "docs" / "release" / "fallback-burn-down.json"
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+VALID_PLATFORMS = frozenset(("windows", "macos", "linux"))
 
 
 def validate_registry(registry_path: Path, repo_root: Path) -> int:
@@ -77,14 +78,62 @@ def validate_entry(
     if entry_id not in marker:
         raise RuntimeError(f"entry {entry_id} marker must include the id")
 
-    evidence = entry.get("evidence")
-    if not isinstance(evidence, list):
-        raise RuntimeError(f"entry {entry_id} evidence must be a list")
+    required_evidence = validate_required_evidence(entry, entry_id)
+    validate_evidence(entry, entry_id, required_evidence)
 
     source_path = resolve_repo_file(repo_root, require_string(entry, "file", index), entry_id)
     source_text = source_path.read_text(encoding="utf-8")
     if marker not in source_text:
         raise RuntimeError(f"entry {entry_id} marker not found in {source_path}")
+
+
+def validate_required_evidence(entry: dict[str, Any], entry_id: str) -> dict[str, set[str]]:
+    """Validate required release evidence and return checks by platform."""
+
+    requirements = entry.get("requiredEvidence")
+    if not isinstance(requirements, list) or not requirements:
+        raise RuntimeError(f"entry {entry_id} requiredEvidence must be a non-empty list")
+
+    required: dict[str, set[str]] = {}
+    for index, requirement in enumerate(requirements):
+        if not isinstance(requirement, dict):
+            raise RuntimeError(f"entry {entry_id} requiredEvidence {index} must be an object")
+        platform = require_nested_string(requirement, "platform", entry_id, "requiredEvidence")
+        if platform not in VALID_PLATFORMS:
+            raise RuntimeError(f"entry {entry_id} requiredEvidence has invalid platform: {platform}")
+        if platform in required:
+            raise RuntimeError(f"entry {entry_id} has duplicate requiredEvidence platform: {platform}")
+        checks = require_string_list(requirement, "checks", entry_id, "requiredEvidence")
+        required[platform] = set(checks)
+    return required
+
+
+def validate_evidence(
+    entry: dict[str, Any],
+    entry_id: str,
+    required_evidence: dict[str, set[str]],
+) -> None:
+    """Validate recorded release evidence against the declared removal gate."""
+
+    evidence = entry.get("evidence")
+    if not isinstance(evidence, list):
+        raise RuntimeError(f"entry {entry_id} evidence must be a list")
+
+    for index, item in enumerate(evidence):
+        if not isinstance(item, dict):
+            raise RuntimeError(f"entry {entry_id} evidence {index} must be an object")
+        platform = require_nested_string(item, "platform", entry_id, "evidence")
+        if platform not in required_evidence:
+            raise RuntimeError(f"entry {entry_id} has undeclared evidence platform: {platform}")
+        require_nested_string(item, "release", entry_id, "evidence")
+        url = require_nested_string(item, "url", entry_id, "evidence")
+        if not url.startswith("https://"):
+            raise RuntimeError(f"entry {entry_id} evidence url must be HTTPS: {url}")
+        checks = require_string_list(item, "checks", entry_id, "evidence")
+        allowed_checks = required_evidence[platform]
+        for check in checks:
+            if check not in allowed_checks:
+                raise RuntimeError(f"entry {entry_id} has undeclared evidence check: {check}")
 
 
 def require_string(entry: dict[str, Any], key: str, index: int) -> str:
@@ -94,6 +143,36 @@ def require_string(entry: dict[str, Any], key: str, index: int) -> str:
     if not isinstance(value, str) or not value.strip():
         raise RuntimeError(f"entry {index} field {key} must be a non-empty string")
     return value
+
+
+def require_nested_string(entry: dict[str, Any], key: str, entry_id: str, section: str) -> str:
+    """Return a required non-empty string from a nested registry object."""
+
+    value = entry.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise RuntimeError(f"entry {entry_id} {section} field {key} must be a non-empty string")
+    return value
+
+
+def require_string_list(entry: dict[str, Any], key: str, entry_id: str, section: str) -> list[str]:
+    """Return a required non-empty string list from a nested registry object."""
+
+    values = entry.get(key)
+    if not isinstance(values, list) or not values:
+        raise RuntimeError(f"entry {entry_id} {section} field {key} must be a non-empty list")
+
+    strings: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str) or not value.strip():
+            raise RuntimeError(f"entry {entry_id} {section} field {key} has invalid value")
+        if not ID_RE.match(value):
+            raise RuntimeError(f"entry {entry_id} {section} field {key} has invalid id: {value}")
+        if value in seen:
+            raise RuntimeError(f"entry {entry_id} {section} field {key} has duplicate value: {value}")
+        seen.add(value)
+        strings.append(value)
+    return strings
 
 
 def resolve_repo_file(repo_root: Path, raw_path: str, entry_id: str) -> Path:
