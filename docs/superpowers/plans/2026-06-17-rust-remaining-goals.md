@@ -152,6 +152,10 @@ git diff --check
 
 ## Goal 7: Close Rust Repair And Uninstall Parity Gaps
 
+**Status:** Complete on branch. Verified with
+`cargo test --manifest-path apps/hermes-manager/Cargo.toml -- --nocapture` and
+`node --test apps/desktop/electron/desktop-uninstall.test.cjs apps/desktop/electron/bootstrap-platform.test.cjs`.
+
 **Completion standard:**
 
 - Lite uninstall preserves user config, `.env`, sessions, skills, memories, logs, and secrets.
