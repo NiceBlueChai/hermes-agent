@@ -1010,14 +1010,22 @@ fn release_notes_check_missing_link(evidence: &FallbackEvidence) -> bool {
         && !evidence
             .release_notes
             .as_deref()
-            .is_some_and(|url| is_github_release_tag_url(url, &evidence.release))
+            .is_some_and(|url| release_notes_link_matches_artifact(evidence, url))
 }
 
 fn release_notes_link_invalid(evidence: &FallbackEvidence) -> bool {
     evidence
         .release_notes
         .as_deref()
-        .is_some_and(|url| !is_github_release_tag_url(url, &evidence.release))
+        .is_some_and(|url| !release_notes_link_matches_artifact(evidence, url))
+}
+
+fn release_notes_link_matches_artifact(
+    evidence: &FallbackEvidence,
+    release_notes_url: &str,
+) -> bool {
+    is_github_release_tag_url(release_notes_url, &evidence.release)
+        && github_release_repo(release_notes_url) == github_release_repo(&evidence.url)
 }
 
 fn is_github_release_tag_url(url: &str, release: &str) -> bool {
@@ -1030,6 +1038,16 @@ fn is_github_release_tag_url(url: &str, release: &str) -> bool {
     };
     let marker = format!("/releases/tag/{release}");
     path.ends_with(&marker) && path.matches('/').count() >= 4
+}
+
+fn github_release_repo(url: &str) -> Option<String> {
+    let path_start = url.strip_prefix("https://github.com/")?;
+    let mut path_parts = path_start.split(['?', '#']);
+    let path = path_parts.next()?;
+    let mut segments = path.split('/');
+    let owner = segments.next()?;
+    let repo = segments.next()?;
+    Some(format!("{owner}/{repo}"))
 }
 
 fn is_git_commit_sha(value: &str) -> bool {
@@ -3514,6 +3532,52 @@ mod tests {
             ],
             "https://github.com/OWNER/REPO/releases/tag/v9.9.9/extra",
         );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_release_notes_from_different_repo() {
+        let required_platforms = ["windows", "macos", "linux"];
+        let required_evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "checks": ["can-run-full-bootstrap", "release-notes"]
+                })
+            })
+            .collect::<Vec<_>>();
+        let evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "release": "v9.9.9",
+                    "url": "https://github.com/OWNER/REPO/releases/tag/v9.9.9",
+                    "releaseNotes": "https://github.com/OTHER/REPO/releases/tag/v9.9.9",
+                    "commit": "a".repeat(40),
+                    "signed": true,
+                    "checks": ["can-run-full-bootstrap", "release-notes"]
+                })
+            })
+            .collect::<Vec<_>>();
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": required_evidence,
+                    "evidence": evidence
+                }
+            ]
+        })
+        .to_string();
 
         assert!(!can_run_full_bootstrap_from_registry_text(&registry));
     }

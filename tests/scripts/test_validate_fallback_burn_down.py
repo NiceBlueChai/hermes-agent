@@ -595,6 +595,56 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("evidence url must be a GitHub release tag URL", result.stderr)
 
+    def test_release_notes_url_must_match_release_repo(self) -> None:
+        """Release-note evidence must point at the same GitHub repository as the artifact."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: release-notes-wrong-repo"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "release-notes-wrong-repo",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": "windows",
+                                        "release": "v1.0.0",
+                                        "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                                        "releaseNotes": "https://github.com/OTHER/REPO/releases/tag/v1.0.0",
+                                        "commit": "a" * 40,
+                                        "signed": True,
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("evidence releaseNotes must reference the same GitHub repository", result.stderr)
+
     def test_same_release_artifact_rejects_conflicting_release_notes(self) -> None:
         """One signed release artifact must point at one published release note URL."""
         with tempfile.TemporaryDirectory() as tmp:

@@ -261,7 +261,8 @@ must also carry a HTTPS `releaseNotes` URL so the final gate points at the exact
 release-notes URL must both include the claimed `release` tag, preventing evidence for one tag from unlocking another.
 Complete Windows, macOS, and Linux evidence must also share the same `release` tag and `commit` SHA, so platform
 evidence from different signed releases cannot be stitched together to unlock the final gate. Evidence `url` and
-`releaseNotes` values must point at GitHub release tag pages, matching the generated `--print-template` shape.
+`releaseNotes` values must point at GitHub release tag pages for the same repository, matching the generated
+`--print-template` shape.
 
 **Evidence:**
 
@@ -389,6 +390,8 @@ evidence from different signed releases cannot be stitched together to unlock th
   is complete but no shared release and commit exists, it still prints replacement skeletons for all platforms.
 - Local validator and manager tests now reject release evidence whose `url` or `releaseNotes` is not a GitHub release
   tag URL, so arbitrary HTTPS pages cannot unlock fallback removal.
+- Local validator and manager tests now reject release-note links that point at a different GitHub repository than the
+  signed artifact URL.
 
 **Completion standard:**
 

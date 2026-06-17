@@ -325,6 +325,10 @@ def validate_evidence(
                 raise RuntimeError(
                     f"entry {entry_id} evidence releaseNotes must be a GitHub release tag URL: {release}"
                 )
+            if github_release_repo(release_notes) != github_release_repo(url):
+                raise RuntimeError(
+                    f"entry {entry_id} evidence releaseNotes must reference the same GitHub repository"
+                )
             artifact = (platform, release, url, commit)
             existing_release_notes = release_notes_by_artifact.setdefault(artifact, release_notes)
             if existing_release_notes != release_notes:
@@ -412,6 +416,8 @@ def complete_evidence_release_keys(
             continue
         if "release-notes" in checks and not is_github_release_tag_url(release_notes, release):
             continue
+        if "release-notes" in checks and github_release_repo(release_notes) != github_release_repo(url):
+            continue
         artifact = (release, url, commit)
         checks_by_artifact.setdefault(artifact, set()).update(
             check for check in checks if isinstance(check, str)
@@ -446,6 +452,16 @@ def is_github_release_tag_url(url: str, release: str) -> bool:
 
     match = GITHUB_RELEASE_TAG_RE.match(url)
     return bool(match and match.group(1) == release)
+
+
+def github_release_repo(url: str) -> str | None:
+    """Return the owner/repo pair for a GitHub release URL."""
+
+    match = GITHUB_RELEASE_TAG_RE.match(url)
+    if match is None:
+        return None
+    parts = url.split("/")
+    return "/".join(parts[3:5])
 
 
 def require_string(entry: dict[str, Any], key: str, index: int) -> str:
