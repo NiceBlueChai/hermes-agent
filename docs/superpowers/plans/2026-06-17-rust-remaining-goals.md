@@ -243,7 +243,9 @@ flag. The checked-in registry still has no signed release evidence, so the repor
 Windows, macOS, and Linux evidence each cover every required check. Release-note draft text is recorded in
 `docs/release/native-bootstrap-release-notes.md` and must be reconciled with the actual signed release artifacts before
 publication. When the gate eventually reports `true`, the desktop bootstrap runner now uses the native manager manifest
-directly and no longer requires `install.ps1` or `install.sh` just to discover the first-launch stage list.
+directly and no longer requires `install.ps1` or `install.sh` just to discover the first-launch stage list. Fallback
+burn-down evidence must now carry `signed: true`; `scripts/validate_fallback_burn_down.py` rejects unsigned evidence and
+`hermes-manager bootstrap-capabilities` ignores unsigned evidence when computing `canRunFullBootstrap`.
 
 **Evidence:**
 
@@ -270,6 +272,8 @@ directly and no longer requires `install.ps1` or `install.sh` just to discover t
 - [Unix smoke run 27684717355](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27684717355) passed on head
   `e64c1a3b8882baefd08031bb378740a4b54f86f9`, including Linux and macOS packaged runtime lifecycle smoke with the
   Python runtime default gate active.
+- Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
+  `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 
 **Completion standard:**
 

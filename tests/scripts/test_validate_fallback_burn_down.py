@@ -227,6 +227,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                         "platform": "windows",
                                         "release": "v1.0.0",
                                         "url": "https://example.invalid/release",
+                                        "signed": True,
                                         "checks": ["unreviewed-check"],
                                     }
                                 ],
@@ -241,6 +242,54 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("undeclared evidence check", result.stderr)
+
+    def test_evidence_must_be_marked_signed(self) -> None:
+        """Fallback removal evidence must come from signed release artifacts."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: unsigned-evidence"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "unsigned-evidence",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["packaged-native-bridge-smoke"],
+                                    }
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": "windows",
+                                        "release": "v1.0.0",
+                                        "url": "https://example.invalid/release",
+                                        "signed": False,
+                                        "checks": ["packaged-native-bridge-smoke"],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("evidence signed must be true", result.stderr)
 
     def test_unsafe_file_path_fails(self) -> None:
         """Registry file paths must stay inside the repository root."""

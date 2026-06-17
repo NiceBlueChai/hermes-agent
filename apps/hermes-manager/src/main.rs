@@ -296,6 +296,7 @@ struct FallbackEvidence {
     platform: String,
     release: String,
     url: String,
+    signed: bool,
     checks: Vec<String>,
 }
 
@@ -942,7 +943,10 @@ fn release_evidence_checks_by_platform(
 ) -> BTreeMap<String, BTreeSet<String>> {
     let mut checks_by_platform: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for evidence in &entry.evidence {
-        if evidence.release.trim().is_empty() || !evidence.url.starts_with("https://") {
+        if !evidence.signed
+            || evidence.release.trim().is_empty()
+            || !evidence.url.starts_with("https://")
+        {
             continue;
         }
         checks_by_platform
@@ -3257,7 +3261,31 @@ mod tests {
         assert!(!can_run_full_bootstrap_from_registry_text(&registry));
     }
 
+    #[test]
+    fn full_bootstrap_gate_rejects_unsigned_release_evidence() {
+        let registry = full_bootstrap_registry_fixture_with_signed(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            false,
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
     fn full_bootstrap_registry_fixture(platforms: &[&str], checks: &[&str]) -> String {
+        full_bootstrap_registry_fixture_with_signed(platforms, checks, true)
+    }
+
+    fn full_bootstrap_registry_fixture_with_signed(
+        platforms: &[&str],
+        checks: &[&str],
+        signed: bool,
+    ) -> String {
         let required_platforms = ["windows", "macos", "linux"];
         let required_evidence = required_platforms
             .iter()
@@ -3280,6 +3308,7 @@ mod tests {
                     "platform": platform,
                     "release": "v9.9.9",
                     "url": "https://example.invalid/releases/v9.9.9",
+                    "signed": signed,
                     "checks": checks
                 })
             })

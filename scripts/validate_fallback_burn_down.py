@@ -2,9 +2,9 @@
 """Validate the release evidence registry for fallback burn-down work.
 
 The Phase 8 rule is evidence-driven: fallback branches can only be deleted
-after a release proves the Rust replacement path across supported platforms.
-This validator keeps every retained fallback tied to a stable source marker and
-an explicit removal gate so the list remains auditable.
+after a signed release proves the Rust replacement path across supported
+platforms. This validator keeps every retained fallback tied to a stable source
+marker and an explicit removal gate so the list remains auditable.
 """
 
 from __future__ import annotations
@@ -129,6 +129,8 @@ def validate_evidence(
         url = require_nested_string(item, "url", entry_id, "evidence")
         if not url.startswith("https://"):
             raise RuntimeError(f"entry {entry_id} evidence url must be HTTPS: {url}")
+        if item.get("signed") is not True:
+            raise RuntimeError(f"entry {entry_id} evidence signed must be true")
         checks = require_string_list(item, "checks", entry_id, "evidence")
         allowed_checks = required_evidence[platform]
         for check in checks:
