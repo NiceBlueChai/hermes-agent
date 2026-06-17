@@ -111,6 +111,9 @@ fork run `https://github.com/NiceBlueChai/hermes-agent/actions/runs/27684717379`
 lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact upload, and source
 artifact validation. Local tests now prove the default gate rejects release notes that omit the manifest audit fields,
 the signed installer size comparison, the Python runtime archive source, or the Python security-update rebuild policy.
+The same gate now accepts optional structured release evidence JSON and validates the actual Python runtime manifest,
+archive source URL, archive SHA-256, security-update rebuild policy, signed installer sizes, and signed installer size
+delta before default inclusion can be claimed.
 
 **Completion standard:**
 
@@ -314,6 +317,9 @@ release tags containing whitespace or `/`, requires the release notes URL to equ
   passed on head `e64c1a3b8882baefd08031bb378740a4b54f86f9`, including the Python runtime default gate before
   packaging, built binary smoke, Python runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback
   burn-down validation, runtime artifact upload, and source artifact validation.
+- Local Python runtime tests now require `validate_python_runtime_default_gate.py --evidence` to validate structured
+  signed-release evidence for the runtime manifest, archive source, SHA-256, security-update rebuild policy, signed
+  installer sizes, and exact size delta.
 - [Unsigned Windows smoke run 27685640529](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27685640529)
   passed on head `d0722920b49e906a939d5614880ff9ee06920d7c`, revalidating fallback burn-down validation after unsigned
   evidence was forbidden from unlocking `canRunFullBootstrap`.

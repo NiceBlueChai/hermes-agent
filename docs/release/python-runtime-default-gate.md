@@ -39,3 +39,21 @@ Before default inclusion, CI must run the signed Windows `Hermes-Setup.exe` with
 
 The smoke evidence must prove the runtime archive is manifest-owned, checksum-validated, platform-specific, and aligned
 with the wheelhouse Python tag.
+
+## Structured Release Evidence
+
+Before enabling the bundled Python runtime by default, attach a JSON evidence file to the release PR and validate it
+with:
+
+```powershell
+python scripts/validate_python_runtime_default_gate.py --evidence <signed-runtime-evidence.json>
+```
+
+The evidence file must include:
+
+- `pythonRuntime.version`, `sourceUrl`, `archiveSha256`, `securityUpdatePolicy`, and the actual
+  `python-runtime-manifest.json` payload.
+- `signedInstaller.withRuntimeBytes`, `withoutRuntimeBytes`, and `sizeDeltaBytes`.
+
+The validator requires the runtime source and manifest file URLs to be HTTPS, the runtime archive SHA-256 to match a
+manifest file, and `sizeDeltaBytes` to equal `withRuntimeBytes - withoutRuntimeBytes`.
