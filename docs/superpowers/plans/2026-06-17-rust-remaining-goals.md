@@ -345,6 +345,15 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   `589c42ccdabf96c3d594bf117de46d4fa5849991`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   signed runtime default evidence JSON generation/upload was added. The new signed-only runtime evidence steps were
   parsed by GitHub and skipped in unsigned smoke mode.
+- [Unsigned Windows smoke run 27726203165](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27726203165)
+  passed on head `bd616b8914ef8348dce0406a47aa492cfcaefd5d`, revalidating Windows build, Python runtime default
+  gate, runtime resource smoke, runtime lifecycle smoke, unsigned artifact validation, fallback burn-down validation,
+  runtime artifact upload, and Python runtime artifact validation after signed workflow preflight began requiring an
+  audited runtime archive input.
+- [Unix smoke run 27726203189](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27726203189) passed on head
+  `bd616b8914ef8348dce0406a47aa492cfcaefd5d`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  signed workflow preflight began requiring audited runtime archive inputs. The new signed-only preflight checks were
+  parsed by GitHub and skipped in unsigned smoke mode.
 - [Unsigned Windows smoke run 27722259009](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27722259009)
   passed on head `d973e23bbf6e032ba61f2c7bd6f6f9f2fba9488b`, revalidating the Python runtime default gate on a Windows
   runner after structured signed-release evidence validation was added, then passing built binary smoke, Python runtime
