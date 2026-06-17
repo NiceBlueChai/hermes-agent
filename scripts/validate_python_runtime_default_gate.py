@@ -142,6 +142,8 @@ def validate_release_evidence_payload(payload: object) -> None:
         raise RuntimeError(
             "signedInstaller.sizeDeltaBytes must equal withRuntimeBytes minus withoutRuntimeBytes"
         )
+    if size_delta <= 0:
+        raise RuntimeError("signedInstaller.sizeDeltaBytes must be positive")
 
 
 def validate_release_evidence(path: Path) -> None:

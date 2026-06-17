@@ -68,4 +68,4 @@ The evidence file must include:
 - `signedInstaller.withRuntimeBytes`, `withoutRuntimeBytes`, and `sizeDeltaBytes`.
 
 The validator requires the runtime source and manifest file URLs to be HTTPS, the runtime archive SHA-256 to match a
-manifest file, and `sizeDeltaBytes` to equal `withRuntimeBytes - withoutRuntimeBytes`.
+manifest file, `sizeDeltaBytes` to equal `withRuntimeBytes - withoutRuntimeBytes`, and that delta to be positive.

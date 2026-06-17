@@ -437,6 +437,42 @@ class PreparePythonRuntimeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "sizeDeltaBytes"):
                 module.validate_release_evidence(evidence_path)
 
+    def test_python_runtime_default_gate_rejects_non_positive_runtime_size_delta(self):
+        module = _load_default_gate_module()
+        evidence = {
+            "pythonRuntime": {
+                "version": "3.11.9",
+                "sourceUrl": "https://example.invalid/python-runtime-windows-x64.zip",
+                "archiveSha256": "a" * 64,
+                "securityUpdatePolicy": "Rebuild promptly after Python patch security updates.",
+                "manifest": {
+                    "platform": "windows",
+                    "arch": "x64",
+                    "pythonTag": "cp311",
+                    "files": [
+                        {
+                            "name": "python-runtime-windows-x64.zip",
+                            "url": "https://example.invalid/python-runtime-windows-x64.zip",
+                            "sizeBytes": 100,
+                            "sha256": "a" * 64,
+                        }
+                    ],
+                },
+            },
+            "signedInstaller": {
+                "withRuntimeBytes": 250,
+                "withoutRuntimeBytes": 250,
+                "sizeDeltaBytes": 0,
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_path = Path(tmp) / "evidence.json"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "sizeDeltaBytes must be positive"):
+                module.validate_release_evidence(evidence_path)
+
 
 if __name__ == "__main__":
     unittest.main()
