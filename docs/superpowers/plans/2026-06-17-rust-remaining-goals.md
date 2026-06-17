@@ -330,6 +330,15 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   and macOS workflow paths to upload `python-runtime-default-evidence-*.json` artifacts.
 - A local CLI smoke generated runtime default evidence from a temporary manifest and artifact, parsed it with
   `python -m json.tool`, and validated it again with `validate_python_runtime_default_gate.py --evidence`.
+- [Unsigned Windows smoke run 27725143579](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27725143579)
+  passed on head `589c42ccdabf96c3d594bf117de46d4fa5849991`, revalidating Windows build, Python runtime default gate,
+  runtime resource smoke, runtime lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime
+  artifact upload, and Python runtime artifact validation after signed runtime default evidence JSON generation/upload
+  was added. The new signed-only runtime evidence steps were parsed by GitHub and skipped in unsigned smoke mode.
+- [Unix smoke run 27725151117](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27725151117) passed on head
+  `589c42ccdabf96c3d594bf117de46d4fa5849991`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  signed runtime default evidence JSON generation/upload was added. The new signed-only runtime evidence steps were
+  parsed by GitHub and skipped in unsigned smoke mode.
 - [Unsigned Windows smoke run 27722259009](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27722259009)
   passed on head `d973e23bbf6e032ba61f2c7bd6f6f9f2fba9488b`, revalidating the Python runtime default gate on a Windows
   runner after structured signed-release evidence validation was added, then passing built binary smoke, Python runtime
