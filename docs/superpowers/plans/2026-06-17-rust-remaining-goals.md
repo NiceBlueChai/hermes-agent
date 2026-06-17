@@ -174,6 +174,9 @@ git diff --check
 
 ## Goal 8: Add Size Gates For Any New Default Bundle
 
+**Status:** Complete on branch. Verified with
+`python -m unittest tests.scripts.test_prepare_bootstrap_tools tests.scripts.test_validate_installer_artifacts`.
+
 **Completion standard:**
 
 - Any newly defaulted bundle has manifest owner, checksum, platform, architecture, validator coverage, and stale/missing
@@ -241,4 +244,3 @@ git diff --check
 ```powershell
 git diff --check
 ```
-
