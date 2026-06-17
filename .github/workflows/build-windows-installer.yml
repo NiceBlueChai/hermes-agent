@@ -574,26 +574,27 @@ jobs:
             )"
             test -n "${package_bin}"
           fi
+          resource_root="${GITHUB_WORKSPACE}/apps/bootstrap-installer/src-tauri"
           "${package_bin}" --self-check \
             --self-check-expect-commit "${{ github.sha }}" \
-            --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools \
+            --self-check-bootstrap-tools "${resource_root}/bootstrap-tools" \
             --self-check-bootstrap-tools-platform ${{ matrix.platform }} \
             --self-check-bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
-            --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse \
+            --self-check-wheelhouse "${resource_root}/wheelhouse" \
             --self-check-wheelhouse-platform ${{ matrix.platform }} \
             --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
-            --self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime \
+            --self-check-python-runtime "${resource_root}/python-runtime" \
             --self-check-python-runtime-platform ${{ matrix.platform }} \
             --self-check-python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
           "${package_bin}" --self-check-lifecycle \
             --self-check-expect-commit "${{ github.sha }}" \
-            --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools \
+            --self-check-bootstrap-tools "${resource_root}/bootstrap-tools" \
             --self-check-bootstrap-tools-platform ${{ matrix.platform }} \
             --self-check-bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
-            --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse \
+            --self-check-wheelhouse "${resource_root}/wheelhouse" \
             --self-check-wheelhouse-platform ${{ matrix.platform }} \
             --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
-            --self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime \
+            --self-check-python-runtime "${resource_root}/python-runtime" \
             --self-check-python-runtime-platform ${{ matrix.platform }} \
             --self-check-python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
 

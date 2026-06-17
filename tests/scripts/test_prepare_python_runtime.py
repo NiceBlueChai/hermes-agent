@@ -217,6 +217,10 @@ class PreparePythonRuntimeTests(unittest.TestCase):
         self.assertIn("os: ubuntu-latest", windows_workflow)
         self.assertIn("os: macos-latest", windows_workflow)
         self.assertIn("Smoke Unix packaged runtime lifecycle", windows_workflow)
+        self.assertIn('resource_root="${GITHUB_WORKSPACE}/apps/bootstrap-installer/src-tauri"', windows_workflow)
+        self.assertIn('--self-check-bootstrap-tools "${resource_root}/bootstrap-tools"', windows_workflow)
+        self.assertIn('--self-check-wheelhouse "${resource_root}/wheelhouse"', windows_workflow)
+        self.assertIn('--self-check-python-runtime "${resource_root}/python-runtime"', windows_workflow)
 
         self.assertIn("linux-python-runtime-archive:", unix_workflow)
         self.assertIn("macos-python-runtime-archive:", unix_workflow)
