@@ -152,6 +152,7 @@ jobs:
           --validate-only
           --platform windows
           --arch x64
+          --python-tag cp311
 
       - name: Bundle Hermes source archive
         if: ${{ inputs['source-archive'] != '' }}
