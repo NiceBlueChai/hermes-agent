@@ -906,7 +906,9 @@ fn can_run_full_bootstrap_from_registry_text(registry_text: &str) -> bool {
 }
 
 fn full_bootstrap_release_evidence_complete(entry: &FallbackBurnDownEntry) -> bool {
-    let required = required_full_bootstrap_checks_by_platform(entry);
+    let Some(required) = required_full_bootstrap_checks_by_platform(entry) else {
+        return false;
+    };
     if !FULL_BOOTSTRAP_RELEASE_PLATFORMS
         .iter()
         .all(|platform| required.contains_key(*platform))
@@ -937,17 +939,34 @@ fn full_bootstrap_release_evidence_complete(entry: &FallbackBurnDownEntry) -> bo
 
 fn required_full_bootstrap_checks_by_platform(
     entry: &FallbackBurnDownEntry,
-) -> BTreeMap<String, BTreeSet<String>> {
-    entry
-        .required_evidence
-        .iter()
-        .map(|requirement| {
-            (
-                requirement.platform.clone(),
-                requirement.checks.iter().cloned().collect::<BTreeSet<_>>(),
-            )
-        })
-        .collect()
+) -> Option<BTreeMap<String, BTreeSet<String>>> {
+    let mut required = BTreeMap::new();
+    for requirement in &entry.required_evidence {
+        if !FULL_BOOTSTRAP_RELEASE_PLATFORMS.contains(&requirement.platform.as_str()) {
+            return None;
+        }
+        if requirement.checks.is_empty() {
+            return None;
+        }
+        if requirement
+            .checks
+            .iter()
+            .any(|check| !is_fallback_evidence_check_id(check))
+        {
+            return None;
+        }
+        if required.contains_key(&requirement.platform) {
+            return None;
+        }
+        let mut checks = BTreeSet::new();
+        for check in &requirement.checks {
+            if !checks.insert(check.clone()) {
+                return None;
+            }
+        }
+        required.insert(requirement.platform.clone(), checks);
+    }
+    Some(required)
 }
 
 fn complete_release_evidence_keys(
@@ -968,6 +987,7 @@ fn complete_release_evidence_keys(
             || release_notes_check_missing_link(evidence)
             || release_notes_link_invalid(evidence)
             || !is_git_commit_sha(&evidence.commit)
+            || !evidence_checks_match_required(evidence, required_checks)
         {
             continue;
         }
@@ -1028,6 +1048,25 @@ fn release_notes_link_matches_artifact(
         && github_release_repo(release_notes_url) == github_release_repo(&evidence.url)
 }
 
+fn evidence_checks_match_required(
+    evidence: &FallbackEvidence,
+    required_checks: &BTreeSet<String>,
+) -> bool {
+    if evidence.checks.is_empty() {
+        return false;
+    }
+    let mut seen = BTreeSet::new();
+    for check in &evidence.checks {
+        if !is_fallback_evidence_check_id(check)
+            || !required_checks.contains(check)
+            || !seen.insert(check)
+        {
+            return false;
+        }
+    }
+    true
+}
+
 fn is_github_release_tag_url(url: &str, release: &str) -> bool {
     if release == "vX.Y.Z" {
         return false;
@@ -1078,6 +1117,15 @@ fn is_git_commit_sha(value: &str) -> bool {
         && value
             .chars()
             .all(|ch| ch.is_ascii_digit() || ('a'..='f').contains(&ch))
+}
+
+fn is_fallback_evidence_check_id(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_lowercase() || first.is_ascii_digit())
+        && chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
 }
 
 struct NativeBootstrapStageOptions<'a> {
@@ -3380,6 +3428,435 @@ mod tests {
                 "repair-uninstall-native-resources",
             ],
         );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_duplicate_required_platforms() {
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": [
+                        {
+                            "platform": "windows",
+                            "checks": ["can-run-full-bootstrap", "release-notes"]
+                        },
+                        {
+                            "platform": "windows",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ],
+                    "evidence": [
+                        {
+                            "platform": "windows",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "releaseNotes": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ]
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_unknown_required_platforms() {
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": [
+                        {
+                            "platform": "windows",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "freebsd",
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ],
+                    "evidence": [
+                        {
+                            "platform": "windows",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ]
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_empty_required_checks() {
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": [
+                        {
+                            "platform": "windows",
+                            "checks": []
+                        },
+                        {
+                            "platform": "macos",
+                            "checks": []
+                        },
+                        {
+                            "platform": "linux",
+                            "checks": []
+                        }
+                    ],
+                    "evidence": [
+                        {
+                            "platform": "windows",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": []
+                        },
+                        {
+                            "platform": "macos",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": []
+                        },
+                        {
+                            "platform": "linux",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": []
+                        }
+                    ]
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_invalid_required_check_names() {
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": [
+                        {
+                            "platform": "windows",
+                            "checks": ["can-run-full-bootstrap", ""]
+                        },
+                        {
+                            "platform": "macos",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ],
+                    "evidence": [
+                        {
+                            "platform": "windows",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap", ""]
+                        },
+                        {
+                            "platform": "macos",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ]
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_duplicate_required_checks() {
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": [
+                        {
+                            "platform": "windows",
+                            "checks": ["can-run-full-bootstrap", "can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ],
+                    "evidence": [
+                        {
+                            "platform": "windows",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ]
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_undeclared_evidence_checks() {
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": [
+                        {
+                            "platform": "windows",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ],
+                    "evidence": [
+                        {
+                            "platform": "windows",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap", "unreviewed-check"]
+                        },
+                        {
+                            "platform": "macos",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ]
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_duplicate_evidence_checks() {
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": [
+                        {
+                            "platform": "windows",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ],
+                    "evidence": [
+                        {
+                            "platform": "windows",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap", "can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ]
+                }
+            ]
+        })
+        .to_string();
 
         assert!(!can_run_full_bootstrap_from_registry_text(&registry));
     }

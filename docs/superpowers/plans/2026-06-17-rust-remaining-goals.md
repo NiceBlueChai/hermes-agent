@@ -267,6 +267,9 @@ evidence from different signed releases cannot be stitched together to unlock th
 be recorded or used by `canRunFullBootstrap`. The manager-side gate also requires the GitHub path to be exactly
 `owner/repo/releases/tag/<tag>` with non-empty, whitespace-free owner, repository, and tag segments, so malformed paths
 or repository subpaths that merely end with `/releases/tag/<tag>` cannot unlock the native bootstrap gate.
+The manager-side gate now also rejects malformed evidence contracts instead of relying on map/set deduplication:
+duplicate or unknown required platforms, empty, invalid, or duplicate required checks, and undeclared or duplicate
+evidence checks cannot unlock `canRunFullBootstrap`.
 
 **Evidence:**
 
@@ -442,6 +445,8 @@ or repository subpaths that merely end with `/releases/tag/<tag>` cannot unlock 
   matching the Python fallback burn-down validator's GitHub release URL shape.
 - Local validator tests now reject `--add-evidence` updates that would rewrite the `releaseNotes` URL for an existing
   signed release artifact, keeping recorded release notes immutable once attached.
+- Local manager tests now reject malformed required/evidence contracts that the Python validator would reject, keeping
+  the Rust `canRunFullBootstrap` gate aligned when required platforms or check lists are duplicated or invalid.
 
 **Completion standard:**
 
