@@ -575,6 +575,16 @@ jobs:
             test -n "${package_bin}"
           fi
           resource_root="${GITHUB_WORKSPACE}/apps/bootstrap-installer/src-tauri"
+          echo "package_bin=${package_bin}"
+          ls -la "${package_bin}"
+          file "${package_bin}" || true
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            app_root="$(dirname "$(dirname "$(dirname "${package_bin}")")")"
+            echo "app_root=${app_root}"
+            ls -la "${app_root}"
+            otool -L "${package_bin}" || true
+            codesign --verify --deep --strict --verbose=4 "${app_root}" || true
+          fi
           "${package_bin}" --self-check \
             --self-check-expect-commit "${{ github.sha }}" \
             --self-check-bootstrap-tools "${resource_root}/bootstrap-tools" \
