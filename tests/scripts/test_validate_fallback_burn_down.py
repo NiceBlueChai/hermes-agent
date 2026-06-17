@@ -302,6 +302,63 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("evidence signed must be true", result.stderr)
 
+    def test_signed_full_bootstrap_evidence_requires_signature_type(self) -> None:
+        """Full-bootstrap release evidence must name the platform signing proof."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "desktop-bootstrap-script-fallback",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["can-run-full-bootstrap"],
+                                    },
+                                    {
+                                        "platform": "macos",
+                                        "checks": ["can-run-full-bootstrap"],
+                                    },
+                                    {
+                                        "platform": "linux",
+                                        "checks": ["can-run-full-bootstrap"],
+                                    },
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": "windows",
+                                        "release": "v1.0.0",
+                                        "url": VALID_RELEASE_V1_URL,
+                                        "commit": "a" * 40,
+                                        "signed": True,
+                                        "checks": ["can-run-full-bootstrap"],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("evidence signature must be", result.stderr)
+
     def test_evidence_must_include_release_commit(self) -> None:
         """Fallback removal evidence must name the exact signed release commit."""
         with tempfile.TemporaryDirectory() as tmp:

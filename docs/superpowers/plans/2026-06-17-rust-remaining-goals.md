@@ -275,6 +275,9 @@ manager parser before signed evidence can be recorded. Release workflows now put
 archive bundling, so transient download or cache hangs fail quickly instead of consuming the full release job timeout.
 The validator now also requires the `desktop-bootstrap-script-fallback` entry to declare Windows, macOS, and Linux
 required evidence before printing the full-bootstrap template, preventing incomplete signed evidence skeletons.
+Full-bootstrap signed evidence must now carry a platform signature type: `authenticode` for Windows,
+`developer-id-notarized` for macOS, and `sigstore` for Linux. The Python validator rejects missing or mismatched
+signature types, and the Rust `canRunFullBootstrap` gate ignores evidence without the expected platform signature.
 
 **Evidence:**
 
@@ -485,6 +488,9 @@ required evidence before printing the full-bootstrap template, preventing incomp
   release smoke from hanging the full job when external archive/cache preparation stalls.
 - Local validator tests now reject full-bootstrap evidence templates when `requiredEvidence` omits any supported release
   platform, preventing incomplete signed evidence skeletons from being generated.
+- Local validator and manager tests now reject full-bootstrap signed evidence without the expected platform signature
+  type, and `--print-template desktop-bootstrap-script-fallback` emits the required `signature` values for release
+  operators.
 
 **Completion standard:**
 

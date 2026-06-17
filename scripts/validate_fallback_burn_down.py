@@ -27,6 +27,11 @@ GITHUB_RELEASE_TAG_RE = re.compile(
 VALID_PLATFORMS = frozenset(("windows", "macos", "linux"))
 FULL_BOOTSTRAP_FALLBACK_ID = "desktop-bootstrap-script-fallback"
 FULL_BOOTSTRAP_RELEASE_PLATFORMS = frozenset(("windows", "macos", "linux"))
+FULL_BOOTSTRAP_SIGNATURES = {
+    "windows": "authenticode",
+    "macos": "developer-id-notarized",
+    "linux": "sigstore",
+}
 
 
 def validate_registry(
@@ -89,17 +94,18 @@ def evidence_template(registry_path: Path, entry_id: str) -> dict[str, Any]:
                     shared_release_keys or not all_platforms_have_complete_artifact
                 ):
                     continue
-                evidence.append(
-                    {
-                        "platform": platform,
-                        "release": "vX.Y.Z",
-                        "url": "https://github.com/OWNER/REPO/releases/tag/vX.Y.Z",
-                        "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/vX.Y.Z",
-                        "commit": "<40-character-git-sha>",
-                        "signed": True,
-                        "checks": sorted(required_checks),
-                    }
-                )
+                template = {
+                    "platform": platform,
+                    "release": "vX.Y.Z",
+                    "url": "https://github.com/OWNER/REPO/releases/tag/vX.Y.Z",
+                    "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/vX.Y.Z",
+                    "commit": "<40-character-git-sha>",
+                    "signed": True,
+                    "checks": sorted(required_checks),
+                }
+                if entry_id == FULL_BOOTSTRAP_FALLBACK_ID:
+                    template["signature"] = FULL_BOOTSTRAP_SIGNATURES[platform]
+                evidence.append(template)
             return {"entryId": entry_id, "evidence": evidence}
     raise RuntimeError(f"template entry not found: {entry_id}")
 
@@ -112,6 +118,7 @@ def add_signed_evidence(
     release: str,
     url: str,
     release_notes: str | None,
+    signature: str | None,
     commit: str,
     checks: list[str],
     all_required_checks: bool,
@@ -145,6 +152,8 @@ def add_signed_evidence(
     }
     if release_notes is not None:
         new_item["releaseNotes"] = release_notes
+    if signature is not None:
+        new_item["signature"] = signature
     validate_evidence({**target, "evidence": [new_item]}, entry_id, required)
 
     evidence = target.get("evidence")
@@ -331,6 +340,13 @@ def validate_evidence(
             raise RuntimeError(f"entry {entry_id} evidence commit must be a 40-character git SHA")
         if item.get("signed") is not True:
             raise RuntimeError(f"entry {entry_id} evidence signed must be true")
+        if entry_id == FULL_BOOTSTRAP_FALLBACK_ID:
+            signature = item.get("signature")
+            expected_signature = FULL_BOOTSTRAP_SIGNATURES[platform]
+            if signature != expected_signature:
+                raise RuntimeError(
+                    f"entry {entry_id} evidence signature must be {expected_signature}"
+                )
         checks = require_string_list(item, "checks", entry_id, "evidence")
         release_notes = item.get("releaseNotes")
         if release_notes is not None:
@@ -431,6 +447,7 @@ def complete_evidence_release_keys(
             or not isinstance(commit, str)
             or not COMMIT_RE.match(commit)
             or not isinstance(checks, list)
+            or not full_bootstrap_signature_matches_platform(entry, item, platform)
         ):
             continue
         if "release-notes" in checks and (
@@ -472,6 +489,18 @@ def collected_evidence_checks(
                 check for check in checks if isinstance(check, str)
             )
     return checks_by_platform
+
+
+def full_bootstrap_signature_matches_platform(
+    entry: dict[str, Any],
+    item: dict[str, Any],
+    platform: str,
+) -> bool:
+    """Return whether full-bootstrap evidence carries the required signature type."""
+
+    if entry.get("id") != FULL_BOOTSTRAP_FALLBACK_ID:
+        return True
+    return item.get("signature") == FULL_BOOTSTRAP_SIGNATURES.get(platform)
 
 
 def is_github_release_tag_url(url: str, release: str) -> bool:
@@ -580,6 +609,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="HTTPS URL for the published release notes when recording the release-notes check.",
     )
+    parser.add_argument(
+        "--signature",
+        default=None,
+        help="Platform signing proof type for full-bootstrap release evidence.",
+    )
     parser.add_argument("--commit", default=None)
     parser.add_argument(
         "--check",
@@ -624,6 +658,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.release,
                 args.url,
                 args.release_notes,
+                args.signature,
                 args.commit,
                 args.checks,
                 args.all_required_checks,

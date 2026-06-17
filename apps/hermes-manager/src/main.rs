@@ -298,6 +298,7 @@ struct FallbackEvidence {
     url: String,
     #[serde(rename = "releaseNotes")]
     release_notes: Option<String>,
+    signature: Option<String>,
     commit: String,
     signed: bool,
     checks: Vec<String>,
@@ -307,6 +308,11 @@ const FALLBACK_BURN_DOWN_REGISTRY: &str =
     include_str!("../../../docs/release/fallback-burn-down.json");
 const FULL_BOOTSTRAP_FALLBACK_ID: &str = "desktop-bootstrap-script-fallback";
 const FULL_BOOTSTRAP_RELEASE_PLATFORMS: [&str; 3] = ["windows", "macos", "linux"];
+const FULL_BOOTSTRAP_SIGNATURES: [(&str, &str); 3] = [
+    ("windows", "authenticode"),
+    ("macos", "developer-id-notarized"),
+    ("linux", "sigstore"),
+];
 
 const BASE_NATIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
     BootstrapStageDescriptor {
@@ -988,6 +994,7 @@ fn complete_release_evidence_keys(
             || release_notes_link_invalid(evidence)
             || !is_git_commit_sha(&evidence.commit)
             || !evidence_checks_match_required(evidence, required_checks)
+            || !full_bootstrap_signature_matches_platform(evidence)
         {
             continue;
         }
@@ -1031,6 +1038,13 @@ fn release_notes_check_missing_link(evidence: &FallbackEvidence) -> bool {
             .release_notes
             .as_deref()
             .is_some_and(|url| release_notes_link_matches_artifact(evidence, url))
+}
+
+fn full_bootstrap_signature_matches_platform(evidence: &FallbackEvidence) -> bool {
+    FULL_BOOTSTRAP_SIGNATURES
+        .iter()
+        .find(|(platform, _signature)| *platform == evidence.platform)
+        .is_some_and(|(_platform, signature)| evidence.signature.as_deref() == Some(*signature))
 }
 
 fn release_notes_link_invalid(evidence: &FallbackEvidence) -> bool {
@@ -3419,6 +3433,21 @@ mod tests {
     }
 
     #[test]
+    fn full_bootstrap_gate_rejects_signed_evidence_without_signature_type() {
+        let registry = full_bootstrap_registry_fixture_without_signature(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
     fn full_bootstrap_gate_rejects_partial_release_evidence() {
         let registry = full_bootstrap_registry_fixture(
             &["windows", "macos", "linux"],
@@ -4349,6 +4378,33 @@ mod tests {
         commit: String,
         url: &str,
     ) -> String {
+        full_bootstrap_registry_fixture_with_optional_signature(
+            platforms, checks, signed, commit, url, true,
+        )
+    }
+
+    fn full_bootstrap_registry_fixture_without_signature(
+        platforms: &[&str],
+        checks: &[&str],
+    ) -> String {
+        full_bootstrap_registry_fixture_with_optional_signature(
+            platforms,
+            checks,
+            true,
+            "a".repeat(40),
+            "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+            false,
+        )
+    }
+
+    fn full_bootstrap_registry_fixture_with_optional_signature(
+        platforms: &[&str],
+        checks: &[&str],
+        signed: bool,
+        commit: String,
+        url: &str,
+        include_signature: bool,
+    ) -> String {
         let required_platforms = ["windows", "macos", "linux"];
         let required_evidence = required_platforms
             .iter()
@@ -4367,7 +4423,7 @@ mod tests {
         let evidence = platforms
             .iter()
             .map(|platform| {
-                serde_json::json!({
+                let mut evidence = serde_json::json!({
                     "platform": platform,
                     "release": "v9.9.9",
                     "url": url,
@@ -4375,7 +4431,12 @@ mod tests {
                     "commit": commit,
                     "signed": signed,
                     "checks": checks
-                })
+                });
+                if include_signature {
+                    evidence["signature"] =
+                        serde_json::json!(full_bootstrap_signature_for_platform(platform));
+                }
+                evidence
             })
             .collect::<Vec<_>>();
 
@@ -4395,5 +4456,14 @@ mod tests {
             ]
         })
         .to_string()
+    }
+
+    fn full_bootstrap_signature_for_platform(platform: &str) -> &'static str {
+        match platform {
+            "windows" => "authenticode",
+            "macos" => "developer-id-notarized",
+            "linux" => "sigstore",
+            _ => "unknown",
+        }
     }
 }
