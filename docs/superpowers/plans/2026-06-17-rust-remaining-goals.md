@@ -555,6 +555,14 @@ signed-only artifact, so the final release evidence command does not depend on s
   use those values in the evidence command, and avoid printing placeholder release metadata.
 - Local workflow tests now require signed installer workflows to upload the fallback burn-down evidence command as a
   signed-only `.release-evidence/fallback-burn-down-*` artifact for Windows, macOS, and Linux release paths.
+- [Unix smoke run 27723006956](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27723006956) passed on head
+  `823268a8ebee9cdbab0d3b7f14a7bedc3c8eef20`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  signed fallback evidence command artifacts were added. The new upload step was parsed by GitHub and skipped in
+  unsigned smoke mode.
+- [Unsigned Windows smoke run 27723448105](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27723448105)
+  passed on head `823268a8ebee9cdbab0d3b7f14a7bedc3c8eef20`, revalidating Windows built binary smoke, Python runtime
+  resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact upload,
+  and Python runtime artifact validation after the signed fallback evidence command artifact step was added.
 
 **Completion standard:**
 
