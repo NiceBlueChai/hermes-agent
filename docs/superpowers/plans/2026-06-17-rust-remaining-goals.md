@@ -477,6 +477,10 @@ inputs in the printed evidence command instead of placeholder release metadata.
   `84a770afb3f47eea24357106cf36349f2029fb1c`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   signed fallback evidence command output was added. The new command-output step was parsed by GitHub and skipped in
   unsigned smoke mode, preserving the release evidence boundary.
+- [Unix smoke run 27720615008](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27720615008) passed on head
+  `b2446ccf276c4cbbbf325f32073974c0e9a099bd`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  signed workflow mode began requiring release evidence metadata inputs. The new metadata preflight was parsed by
+  GitHub and skipped in unsigned smoke mode.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 - Local validator and manager tests now reject split evidence where a platform's required checks are spread across
