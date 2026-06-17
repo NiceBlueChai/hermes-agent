@@ -23,7 +23,11 @@ ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 VALID_PLATFORMS = frozenset(("windows", "macos", "linux"))
 
 
-def validate_registry(registry_path: Path, repo_root: Path) -> int:
+def validate_registry(
+    registry_path: Path,
+    repo_root: Path,
+    require_complete: str | None = None,
+) -> int:
     """Validate fallback entries and return the number of checked entries."""
 
     payload = load_registry(registry_path)
@@ -35,10 +39,20 @@ def validate_registry(registry_path: Path, repo_root: Path) -> int:
         raise RuntimeError("entries must be a non-empty list")
 
     seen_ids: set[str] = set()
+    entries_by_id: dict[str, dict[str, Any]] = {}
+    requirements_by_id: dict[str, dict[str, set[str]]] = {}
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             raise RuntimeError(f"entry {index} must be an object")
-        validate_entry(entry, index, repo_root, seen_ids)
+        required = validate_entry(entry, index, repo_root, seen_ids)
+        entry_id = entry["id"]
+        entries_by_id[entry_id] = entry
+        requirements_by_id[entry_id] = required
+    if require_complete is not None:
+        entry = entries_by_id.get(require_complete)
+        if entry is None:
+            raise RuntimeError(f"required complete entry not found: {require_complete}")
+        validate_complete_evidence(entry, require_complete, requirements_by_id[require_complete])
     return len(entries)
 
 
@@ -61,7 +75,7 @@ def validate_entry(
     index: int,
     repo_root: Path,
     seen_ids: set[str],
-) -> None:
+) -> dict[str, set[str]]:
     """Validate one fallback entry and its source marker."""
 
     entry_id = require_string(entry, "id", index)
@@ -85,6 +99,7 @@ def validate_entry(
     source_text = source_path.read_text(encoding="utf-8")
     if marker not in source_text:
         raise RuntimeError(f"entry {entry_id} marker not found in {source_path}")
+    return required_evidence
 
 
 def validate_required_evidence(entry: dict[str, Any], entry_id: str) -> dict[str, set[str]]:
@@ -136,6 +151,28 @@ def validate_evidence(
         for check in checks:
             if check not in allowed_checks:
                 raise RuntimeError(f"entry {entry_id} has undeclared evidence check: {check}")
+
+
+def validate_complete_evidence(
+    entry: dict[str, Any],
+    entry_id: str,
+    required_evidence: dict[str, set[str]],
+) -> None:
+    """Validate that one fallback entry has complete signed evidence for every required check."""
+    checks_by_platform: dict[str, set[str]] = {platform: set() for platform in required_evidence}
+    for item in entry.get("evidence", []):
+        platform = item["platform"]
+        if item.get("signed") is True and platform in checks_by_platform:
+            checks_by_platform[platform].update(item["checks"])
+
+    for platform, required_checks in required_evidence.items():
+        evidence_checks = checks_by_platform.get(platform, set())
+        missing = sorted(required_checks - evidence_checks)
+        if missing:
+            checks = ", ".join(missing)
+            raise RuntimeError(
+                f"entry {entry_id} missing complete evidence for {platform}: {checks}"
+            )
 
 
 def require_string(entry: dict[str, Any], key: str, index: int) -> str:
@@ -201,6 +238,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     parser.add_argument("--repo-root", type=Path, default=REPO_ROOT)
+    parser.add_argument(
+        "--require-complete",
+        metavar="ENTRY_ID",
+        default=None,
+        help="Require complete signed evidence for one fallback entry.",
+    )
     return parser.parse_args(argv)
 
 
@@ -209,12 +252,14 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        count = validate_registry(args.registry, args.repo_root)
+        count = validate_registry(args.registry, args.repo_root, args.require_complete)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
     print(f"validated {count} fallback burn-down entries")
+    if args.require_complete:
+        print(f"complete evidence: {args.require_complete}")
     return 0
 
 

@@ -13,7 +13,11 @@ SCRIPT = REPO_ROOT / "scripts" / "validate_fallback_burn_down.py"
 REGISTRY = REPO_ROOT / "docs" / "release" / "fallback-burn-down.json"
 
 
-def run_validator(registry: Path, repo_root: Path) -> subprocess.CompletedProcess[str]:
+def run_validator(
+    registry: Path,
+    repo_root: Path,
+    *extra_args: str,
+) -> subprocess.CompletedProcess[str]:
     """Run the fallback burn-down validator and capture text output."""
     return subprocess.run(
         [
@@ -23,6 +27,7 @@ def run_validator(registry: Path, repo_root: Path) -> subprocess.CompletedProces
             str(registry),
             "--repo-root",
             str(repo_root),
+            *extra_args,
         ],
         check=False,
         text=True,
@@ -290,6 +295,102 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("evidence signed must be true", result.stderr)
+
+    def test_require_complete_passes_when_signed_evidence_covers_all_checks(self) -> None:
+        """Release fallback removal can require complete signed evidence for one entry."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: complete-evidence"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            checks = ["can-run-full-bootstrap", "release-notes"]
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "complete-evidence",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {"platform": platform, "checks": checks}
+                                    for platform in ("windows", "macos", "linux")
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": platform,
+                                        "release": "v1.0.0",
+                                        "url": f"https://example.invalid/releases/v1.0.0/{platform}",
+                                        "signed": True,
+                                        "checks": checks,
+                                    }
+                                    for platform in ("windows", "macos", "linux")
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root, "--require-complete", "complete-evidence")
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("complete evidence: complete-evidence", result.stdout)
+
+    def test_require_complete_fails_when_a_required_platform_is_missing(self) -> None:
+        """Release fallback removal should fail if signed evidence is incomplete."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: incomplete-evidence"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            checks = ["can-run-full-bootstrap", "release-notes"]
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "incomplete-evidence",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {"platform": platform, "checks": checks}
+                                    for platform in ("windows", "macos", "linux")
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": platform,
+                                        "release": "v1.0.0",
+                                        "url": f"https://example.invalid/releases/v1.0.0/{platform}",
+                                        "signed": True,
+                                        "checks": checks,
+                                    }
+                                    for platform in ("windows", "macos")
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root, "--require-complete", "incomplete-evidence")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing complete evidence for linux", result.stderr)
 
     def test_unsafe_file_path_fails(self) -> None:
         """Registry file paths must stay inside the repository root."""

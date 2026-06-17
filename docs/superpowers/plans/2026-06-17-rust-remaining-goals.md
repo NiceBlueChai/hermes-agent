@@ -245,7 +245,9 @@ Windows, macOS, and Linux evidence each cover every required check. Release-note
 publication. When the gate eventually reports `true`, the desktop bootstrap runner now uses the native manager manifest
 directly and no longer requires `install.ps1` or `install.sh` just to discover the first-launch stage list. Fallback
 burn-down evidence must now carry `signed: true`; `scripts/validate_fallback_burn_down.py` rejects unsigned evidence and
-`hermes-manager bootstrap-capabilities` ignores unsigned evidence when computing `canRunFullBootstrap`.
+`hermes-manager bootstrap-capabilities` ignores unsigned evidence when computing `canRunFullBootstrap`. The validator
+also supports `--require-complete desktop-bootstrap-script-fallback` so the final fallback removal can fail fast until
+all signed platform evidence is present.
 
 **Evidence:**
 
@@ -294,6 +296,7 @@ burn-down evidence must now carry `signed: true`; `scripts/validate_fallback_bur
 
 ```powershell
 python scripts/validate_fallback_burn_down.py
+python scripts/validate_fallback_burn_down.py --require-complete desktop-bootstrap-script-fallback
 cargo test --manifest-path apps/hermes-manager/Cargo.toml full_bootstrap -- --nocapture
 node --test apps/desktop/electron/bootstrap-runner.test.cjs apps/desktop/electron/bootstrap-platform.test.cjs
 cargo test --manifest-path apps/hermes-manager/Cargo.toml -- --nocapture
