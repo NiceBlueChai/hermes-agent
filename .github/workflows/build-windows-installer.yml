@@ -427,13 +427,25 @@ jobs:
           $evidenceDir = ".release-evidence"
           New-Item -ItemType Directory -Force -Path $evidenceDir | Out-Null
           Set-Content -Path "$evidenceDir/fallback-burn-down-windows.ps1" -Value $command -Encoding utf8NoBOM
+          python scripts/validate_fallback_burn_down.py `
+            --print-evidence-item desktop-bootstrap-script-fallback `
+            --platform windows `
+            --release "$env:HERMES_RELEASE_TAG" `
+            --url "$releaseUrl" `
+            --release-notes "$env:HERMES_RELEASE_NOTES_URL" `
+            --commit "${{ github.sha }}" `
+            --all-required-checks `
+            --signature authenticode `
+            > "$evidenceDir/fallback-burn-down-windows.json"
 
       - name: Upload signed fallback evidence command
         if: ${{ !inputs['unsigned-smoke-only'] }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: Hermes-Setup-fallback-evidence
-          path: .release-evidence/fallback-burn-down-windows.ps1
+          path: |
+            .release-evidence/fallback-burn-down-windows.ps1
+            .release-evidence/fallback-burn-down-windows.json
           if-no-files-found: error
 
       - name: Validate Hermes source archive artifacts
@@ -929,13 +941,17 @@ jobs:
           echo "${command[*]}"
           mkdir -p .release-evidence
           printf '%s\n' "${command[*]}" > ".release-evidence/fallback-burn-down-${{ matrix.platform }}.sh"
+          "${command[@]/--add-evidence/--print-evidence-item}" \
+            > ".release-evidence/fallback-burn-down-${{ matrix.platform }}.json"
 
       - name: Upload signed fallback evidence command
         if: ${{ !inputs['unsigned-smoke-only'] }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: ${{ matrix.artifact-name }}-fallback-evidence
-          path: .release-evidence/fallback-burn-down-${{ matrix.platform }}.sh
+          path: |
+            .release-evidence/fallback-burn-down-${{ matrix.platform }}.sh
+            .release-evidence/fallback-burn-down-${{ matrix.platform }}.json
           if-no-files-found: error
 
       - name: Upload Unix installer artifacts

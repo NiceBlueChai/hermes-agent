@@ -1507,6 +1507,84 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
             ],
         )
 
+    def test_print_evidence_item_outputs_signed_release_json_without_mutating_registry(self) -> None:
+        """Signed release workflows can upload machine-readable evidence without editing the registry."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: print-evidence-item"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            original_payload = {
+                "schemaVersion": 1,
+                "entries": [
+                    {
+                        "id": "print-evidence-item",
+                        "owner": "desktop",
+                        "file": "src/entry.js",
+                        "marker": marker,
+                        "fallback": "Fallback description.",
+                        "removalGate": "Release evidence gate.",
+                        "requiredEvidence": [
+                            {
+                                "platform": "linux",
+                                "checks": [
+                                    "can-run-full-bootstrap",
+                                    "packaged-native-bridge-smoke",
+                                    "release-notes",
+                                ],
+                            }
+                        ],
+                        "evidence": [],
+                    }
+                ],
+            }
+            registry.write_text(json.dumps(original_payload), encoding="utf-8")
+
+            result = run_validator(
+                registry,
+                root,
+                "--print-evidence-item",
+                "print-evidence-item",
+                "--platform",
+                "linux",
+                "--release",
+                "v1.0.0",
+                "--url",
+                VALID_RELEASE_V1_URL,
+                "--release-notes",
+                VALID_RELEASE_V1_URL,
+                "--commit",
+                "e" * 40,
+                "--all-required-checks",
+            )
+
+            printed = json.loads(result.stdout)
+            payload_after = json.loads(registry.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(payload_after, original_payload)
+        self.assertEqual(printed["entryId"], "print-evidence-item")
+        self.assertEqual(
+            printed["evidence"],
+            [
+                {
+                    "platform": "linux",
+                    "release": "v1.0.0",
+                    "url": VALID_RELEASE_V1_URL,
+                    "releaseNotes": VALID_RELEASE_V1_URL,
+                    "commit": "e" * 40,
+                    "signed": True,
+                    "checks": [
+                        "can-run-full-bootstrap",
+                        "packaged-native-bridge-smoke",
+                        "release-notes",
+                    ],
+                }
+            ],
+        )
+
     def test_add_evidence_requires_release_notes_for_all_required_checks(self) -> None:
         """Release operators get an immediate error when release notes would be recorded."""
         with tempfile.TemporaryDirectory() as tmp:

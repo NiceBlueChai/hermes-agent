@@ -125,6 +125,59 @@ def add_signed_evidence(
 ) -> None:
     """Record one signed release evidence item in the fallback registry."""
 
+    payload, target, required, new_item = build_signed_evidence_item(
+        registry_path,
+        repo_root,
+        entry_id,
+        platform,
+        release,
+        url,
+        release_notes,
+        signature,
+        commit,
+        checks,
+        all_required_checks,
+    )
+
+    evidence = target.get("evidence")
+    if not isinstance(evidence, list):
+        raise RuntimeError(f"entry {entry_id} evidence must be a list")
+
+    matching = find_matching_evidence(evidence, new_item)
+    if matching is None:
+        evidence.append(new_item)
+    else:
+        if "releaseNotes" in new_item:
+            existing_release_notes = matching.get("releaseNotes")
+            if (
+                isinstance(existing_release_notes, str)
+                and existing_release_notes != new_item["releaseNotes"]
+            ):
+                raise RuntimeError(
+                    f"entry {entry_id} has conflicting releaseNotes for release artifact: {release}"
+                )
+            matching["releaseNotes"] = new_item["releaseNotes"]
+        matching["checks"] = merge_checks(matching.get("checks"), new_item["checks"])
+
+    validate_evidence(target, entry_id, required)
+    registry_path.write_text(json.dumps(payload, indent=4) + "\n", encoding="utf-8")
+
+
+def build_signed_evidence_item(
+    registry_path: Path,
+    repo_root: Path,
+    entry_id: str,
+    platform: str,
+    release: str,
+    url: str,
+    release_notes: str | None,
+    signature: str | None,
+    commit: str,
+    checks: list[str],
+    all_required_checks: bool,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, set[str]], dict[str, Any]]:
+    """Build and validate one signed release evidence item without mutating the registry file."""
+
     validate_registry(registry_path, repo_root)
     payload = load_registry(registry_path)
     entries = payload.get("entries")
@@ -155,29 +208,7 @@ def add_signed_evidence(
     if signature is not None:
         new_item["signature"] = signature
     validate_evidence({**target, "evidence": [new_item]}, entry_id, required)
-
-    evidence = target.get("evidence")
-    if not isinstance(evidence, list):
-        raise RuntimeError(f"entry {entry_id} evidence must be a list")
-
-    matching = find_matching_evidence(evidence, new_item)
-    if matching is None:
-        evidence.append(new_item)
-    else:
-        if "releaseNotes" in new_item:
-            existing_release_notes = matching.get("releaseNotes")
-            if (
-                isinstance(existing_release_notes, str)
-                and existing_release_notes != new_item["releaseNotes"]
-            ):
-                raise RuntimeError(
-                    f"entry {entry_id} has conflicting releaseNotes for release artifact: {release}"
-                )
-            matching["releaseNotes"] = new_item["releaseNotes"]
-        matching["checks"] = merge_checks(matching.get("checks"), resolved_checks)
-
-    validate_evidence(target, entry_id, required)
-    registry_path.write_text(json.dumps(payload, indent=4) + "\n", encoding="utf-8")
+    return payload, target, required, new_item
 
 
 def resolve_evidence_checks(
@@ -601,6 +632,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Append or merge signed release evidence for one fallback entry.",
     )
+    parser.add_argument(
+        "--print-evidence-item",
+        metavar="ENTRY_ID",
+        default=None,
+        help="Print one validated signed release evidence item without mutating the registry.",
+    )
     parser.add_argument("--platform", choices=sorted(VALID_PLATFORMS), default=None)
     parser.add_argument("--release", default=None)
     parser.add_argument("--url", default=None)
@@ -635,7 +672,11 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        if args.add_evidence:
+        if args.add_evidence and args.print_evidence_item:
+            raise RuntimeError("--add-evidence cannot be combined with --print-evidence-item")
+        if args.add_evidence or args.print_evidence_item:
+            command_name = "--add-evidence" if args.add_evidence else "--print-evidence-item"
+            entry_id = args.add_evidence or args.print_evidence_item
             missing = [
                 name
                 for name, value in (
@@ -649,11 +690,27 @@ def main(argv: list[str] | None = None) -> int:
             if not args.checks and not args.all_required_checks:
                 missing.append("--check or --all-required-checks")
             if missing:
-                raise RuntimeError(f"--add-evidence requires {', '.join(missing)}")
-            add_signed_evidence(
+                raise RuntimeError(f"{command_name} requires {', '.join(missing)}")
+            if args.add_evidence:
+                add_signed_evidence(
+                    args.registry,
+                    args.repo_root,
+                    entry_id,
+                    args.platform,
+                    args.release,
+                    args.url,
+                    args.release_notes,
+                    args.signature,
+                    args.commit,
+                    args.checks,
+                    args.all_required_checks,
+                )
+                print(f"added evidence: {entry_id} {args.platform}")
+                return 0
+            _payload, _target, _required, new_item = build_signed_evidence_item(
                 args.registry,
                 args.repo_root,
-                args.add_evidence,
+                entry_id,
                 args.platform,
                 args.release,
                 args.url,
@@ -663,7 +720,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.checks,
                 args.all_required_checks,
             )
-            print(f"added evidence: {args.add_evidence} {args.platform}")
+            print(json.dumps({"entryId": entry_id, "evidence": [new_item]}, indent=4))
             return 0
 
         count = validate_registry(

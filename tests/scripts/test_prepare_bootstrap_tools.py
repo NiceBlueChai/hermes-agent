@@ -1561,6 +1561,10 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             self.assertIn("releases/tag/", workflow_text)
             self.assertIn("Upload signed fallback evidence command", workflow_text)
             self.assertIn(".release-evidence/fallback-burn-down", workflow_text)
+            self.assertIn("--print-evidence-item", workflow_text)
+            self.assertIn("desktop-bootstrap-script-fallback", workflow_text)
+            self.assertIn(".release-evidence/fallback-burn-down", workflow_text)
+            self.assertIn(".json", workflow_text)
             self.assertNotIn("<release-tag>", workflow_text)
 
         self.assertIn(evidence_marker, windows_workflow)

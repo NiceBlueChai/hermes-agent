@@ -604,13 +604,17 @@ jobs:
                   echo "${command[*]}"
                   mkdir -p .release-evidence
                   printf '%s\n' "${command[*]}" > ".release-evidence/fallback-burn-down-${{ matrix.platform }}.sh"
+                  "${command[@]/--add-evidence/--print-evidence-item}" \
+                      > ".release-evidence/fallback-burn-down-${{ matrix.platform }}.json"
 
             - name: Upload signed fallback evidence command
               if: ${{ !inputs['unsigned-smoke-only'] }}
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
               with:
                   name: ${{ matrix.artifact-name }}-fallback-evidence
-                  path: .release-evidence/fallback-burn-down-${{ matrix.platform }}.sh
+                  path: |
+                      .release-evidence/fallback-burn-down-${{ matrix.platform }}.sh
+                      .release-evidence/fallback-burn-down-${{ matrix.platform }}.json
                   if-no-files-found: error
 
             - name: Upload installer artifacts
