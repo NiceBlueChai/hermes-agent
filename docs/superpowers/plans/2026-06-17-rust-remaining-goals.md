@@ -382,6 +382,12 @@ native bootstrap gate.
 - [Unix smoke run 27703355862](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27703355862) passed on head
   `13b45f8d32c38f71f4cfd5f8491c82758121d6d7`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   generated `OWNER/REPO` and `vX.Y.Z` placeholders were rejected as real release evidence.
+- [Unsigned Windows smoke run 27704425534](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27704425534)
+  passed on head `07e057f9c0f0f6296a0f60e5d0656d25c95bb15c`, revalidating fallback burn-down validation after the
+  Rust manager release URL parser was tightened to reject extra repository path segments.
+- [Unix smoke run 27704425496](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27704425496) passed on head
+  `07e057f9c0f0f6296a0f60e5d0656d25c95bb15c`, revalidating Linux and macOS packaged runtime lifecycle smoke after the
+  Rust manager release URL parser was tightened to reject extra repository path segments.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 - Local validator and manager tests now reject split evidence where a platform's required checks are spread across
