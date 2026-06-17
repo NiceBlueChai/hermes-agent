@@ -248,7 +248,8 @@ burn-down evidence must now carry `signed: true`; `scripts/validate_fallback_bur
 `hermes-manager bootstrap-capabilities` ignores unsigned evidence when computing `canRunFullBootstrap`. The validator
 also requires each evidence item to carry a 40-character release commit SHA and supports
 `--require-complete desktop-bootstrap-script-fallback` so the final fallback removal can fail fast until all signed
-platform evidence is present.
+platform evidence is present. Use `--print-template desktop-bootstrap-script-fallback` after the signed release smoke to
+generate the missing evidence skeleton instead of hand-authoring the JSON shape.
 
 **Evidence:**
 
@@ -303,6 +304,7 @@ platform evidence is present.
 
 ```powershell
 python scripts/validate_fallback_burn_down.py
+python scripts/validate_fallback_burn_down.py --print-template desktop-bootstrap-script-fallback
 python scripts/validate_fallback_burn_down.py --require-complete desktop-bootstrap-script-fallback
 cargo test --manifest-path apps/hermes-manager/Cargo.toml full_bootstrap -- --nocapture
 node --test apps/desktop/electron/bootstrap-runner.test.cjs apps/desktop/electron/bootstrap-platform.test.cjs

@@ -28,6 +28,7 @@ def validate_registry(
     registry_path: Path,
     repo_root: Path,
     require_complete: str | None = None,
+    print_template: str | None = None,
 ) -> int:
     """Validate fallback entries and return the number of checked entries."""
 
@@ -54,7 +55,35 @@ def validate_registry(
         if entry is None:
             raise RuntimeError(f"required complete entry not found: {require_complete}")
         validate_complete_evidence(entry, require_complete, requirements_by_id[require_complete])
+    if print_template is not None and print_template not in entries_by_id:
+        raise RuntimeError(f"template entry not found: {print_template}")
     return len(entries)
+
+
+def evidence_template(registry_path: Path, entry_id: str) -> dict[str, Any]:
+    """Return a signed release evidence skeleton for one fallback entry."""
+    payload = load_registry(registry_path)
+    for entry in payload.get("entries", []):
+        if isinstance(entry, dict) and entry.get("id") == entry_id:
+            required = validate_required_evidence(entry, entry_id)
+            checks_by_platform = collected_evidence_checks(entry, required)
+            evidence = []
+            for platform, required_checks in required.items():
+                missing = sorted(required_checks - checks_by_platform.get(platform, set()))
+                if not missing:
+                    continue
+                evidence.append(
+                    {
+                        "platform": platform,
+                        "release": "vX.Y.Z",
+                        "url": "https://github.com/OWNER/REPO/releases/tag/vX.Y.Z",
+                        "commit": "<40-character-git-sha>",
+                        "signed": True,
+                        "checks": missing,
+                    }
+                )
+            return {"entryId": entry_id, "evidence": evidence}
+    raise RuntimeError(f"template entry not found: {entry_id}")
 
 
 def load_registry(registry_path: Path) -> dict[str, Any]:
@@ -163,11 +192,7 @@ def validate_complete_evidence(
     required_evidence: dict[str, set[str]],
 ) -> None:
     """Validate that one fallback entry has complete signed evidence for every required check."""
-    checks_by_platform: dict[str, set[str]] = {platform: set() for platform in required_evidence}
-    for item in entry.get("evidence", []):
-        platform = item["platform"]
-        if item.get("signed") is True and platform in checks_by_platform:
-            checks_by_platform[platform].update(item["checks"])
+    checks_by_platform = collected_evidence_checks(entry, required_evidence)
 
     for platform, required_checks in required_evidence.items():
         evidence_checks = checks_by_platform.get(platform, set())
@@ -177,6 +202,24 @@ def validate_complete_evidence(
             raise RuntimeError(
                 f"entry {entry_id} missing complete evidence for {platform}: {checks}"
             )
+
+
+def collected_evidence_checks(
+    entry: dict[str, Any],
+    required_evidence: dict[str, set[str]],
+) -> dict[str, set[str]]:
+    """Collect already-recorded signed checks by platform."""
+    checks_by_platform: dict[str, set[str]] = {platform: set() for platform in required_evidence}
+    for item in entry.get("evidence", []):
+        if not isinstance(item, dict):
+            continue
+        platform = item.get("platform")
+        checks = item.get("checks")
+        if item.get("signed") is True and platform in checks_by_platform and isinstance(checks, list):
+            checks_by_platform[platform].update(
+                check for check in checks if isinstance(check, str)
+            )
+    return checks_by_platform
 
 
 def require_string(entry: dict[str, Any], key: str, index: int) -> str:
@@ -248,6 +291,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Require complete signed evidence for one fallback entry.",
     )
+    parser.add_argument(
+        "--print-template",
+        metavar="ENTRY_ID",
+        default=None,
+        help="Print a JSON skeleton for missing signed evidence on one fallback entry.",
+    )
     return parser.parse_args(argv)
 
 
@@ -256,7 +305,15 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        count = validate_registry(args.registry, args.repo_root, args.require_complete)
+        count = validate_registry(
+            args.registry,
+            args.repo_root,
+            args.require_complete,
+            args.print_template,
+        )
+        if args.print_template:
+            print(json.dumps(evidence_template(args.registry, args.print_template), indent=4))
+            return 0
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1

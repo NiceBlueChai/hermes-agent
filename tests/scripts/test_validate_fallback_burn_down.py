@@ -444,6 +444,60 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing complete evidence for linux", result.stderr)
 
+    def test_print_template_outputs_missing_signed_evidence_skeleton(self) -> None:
+        """Release operators can generate a complete evidence skeleton for one fallback."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: template-evidence"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "template-evidence",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["can-run-full-bootstrap", "release-notes"],
+                                    }
+                                ],
+                                "evidence": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root, "--print-template", "template-evidence")
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        template = json.loads(result.stdout)
+        self.assertEqual(template["entryId"], "template-evidence")
+        self.assertEqual(
+            template["evidence"],
+            [
+                {
+                    "platform": "windows",
+                    "release": "vX.Y.Z",
+                    "url": "https://github.com/OWNER/REPO/releases/tag/vX.Y.Z",
+                    "commit": "<40-character-git-sha>",
+                    "signed": True,
+                    "checks": ["can-run-full-bootstrap", "release-notes"],
+                }
+            ],
+        )
+
     def test_unsafe_file_path_fails(self) -> None:
         """Registry file paths must stay inside the repository root."""
         with tempfile.TemporaryDirectory() as tmp:
