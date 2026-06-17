@@ -1921,3 +1921,53 @@ fn cli_smoke_clones_native_repository_when_checkout_is_missing() {
     assert_eq!(report["skipped"], false);
     assert!(install_root.join(".git").is_dir());
 }
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_smoke_updates_native_repository_when_checkout_is_stale() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let install_root = temp.path().join("repo");
+    let git_dir = temp.path().join("git");
+    fs::create_dir_all(install_root.join(".git")).expect("repo git dir should be created");
+    fs::create_dir_all(&git_dir).expect("git dir should be created");
+    fs::write(
+        git_dir.join("git.cmd"),
+        concat!(
+            "@echo off\r\n",
+            "if \"%3\"==\"rev-parse\" if exist native-fetch.marker echo abcdef1234567890\r\n",
+            "if \"%3\"==\"rev-parse\" if exist native-fetch.marker exit /b 0\r\n",
+            "if \"%3\"==\"rev-parse\" echo 0000000000000000\r\n",
+            "if \"%3\"==\"rev-parse\" exit /b 0\r\n",
+            "if \"%3\"==\"fetch\" echo fetched>native-fetch.marker\r\n",
+            "if \"%3\"==\"fetch\" exit /b 0\r\n",
+            "if \"%3\"==\"checkout\" exit /b 0\r\n",
+            "exit /b 1\r\n",
+        ),
+    )
+    .expect("git shim should be written");
+    let hermes_home_text = hermes_home.display().to_string();
+    let install_root_text = install_root.display().to_string();
+    let git_path = git_dir.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "repository",
+        "--install-root",
+        &install_root_text,
+        "--current-path",
+        &git_path,
+        "--commit",
+        "abcdef1234567890",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("repository update output should be json");
+
+    assert_eq!(report["stage"], "repository");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], false);
+    assert!(install_root.join("native-fetch.marker").is_file());
+}

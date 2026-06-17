@@ -412,8 +412,8 @@ duplicating inference across JavaScript and Rust.
 - Windows `system-packages` restores bundled ripgrep and ffmpeg into the managed bin directory.
 - Windows `node-deps` runs npm for root browser-tool dependencies and `ui-tui`, restores bundled npm cache and
   Playwright browser cache, and falls back if browser-engine parity cannot be proven.
-- Windows `repository` can clone the official HTTPS repository with managed or PATH Git, detach to a pinned commit, and
-  verify HEAD; existing checkout update/repair still falls back to the script.
+- Windows `repository` can clone the official HTTPS repository with managed or PATH Git, detach to a pinned commit,
+  fetch a stale checkout to the pinned commit, and verify HEAD before falling back to the script.
 - Windows `platform-sdks` verifies configured messaging SDK imports in the venv and attempts targeted pip recovery
   before returning a fallback category.
 - Windows `path`, `config-templates`, `bootstrap-marker`, `install-metadata`, `configure`, and `gateway` are native

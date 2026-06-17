@@ -1333,7 +1333,71 @@ fn run_native_repository_stage(
             "repository checkout missing; script clones or downloads source".to_string(),
         ));
     }
-    verify_native_repository_commit(&git, &install_root, expected_commit, true)
+    if let Ok(result) = verify_native_repository_commit(&git, &install_root, expected_commit, true)
+    {
+        return Ok(result);
+    }
+    fetch_native_repository_commit(&git, &install_root, expected_commit)?;
+    checkout_native_repository_commit(&git, &install_root, expected_commit)?;
+    verify_native_repository_commit(&git, &install_root, expected_commit, false)
+}
+
+fn fetch_native_repository_commit(
+    git: &std::path::Path,
+    install_root: &std::path::Path,
+    expected_commit: &str,
+) -> std::result::Result<(), (&'static str, String)> {
+    let status = ProcessCommand::new(git)
+        .args([
+            "-c",
+            "windows.appendAtomically=false",
+            "fetch",
+            "--depth",
+            "1",
+            "origin",
+            expected_commit,
+        ])
+        .current_dir(install_root)
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if status.success() {
+        return Ok(());
+    }
+    Err((
+        "fallback-to-script",
+        format!(
+            "git fetch {expected_commit} failed with exit {:?}; script updates source",
+            status.code()
+        ),
+    ))
+}
+
+fn checkout_native_repository_commit(
+    git: &std::path::Path,
+    install_root: &std::path::Path,
+    expected_commit: &str,
+) -> std::result::Result<(), (&'static str, String)> {
+    let status = ProcessCommand::new(git)
+        .args([
+            "-c",
+            "windows.appendAtomically=false",
+            "checkout",
+            "--detach",
+            expected_commit,
+        ])
+        .current_dir(install_root)
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if status.success() {
+        return Ok(());
+    }
+    Err((
+        "fallback-to-script",
+        format!(
+            "git checkout {expected_commit} failed with exit {:?}; script updates source",
+            status.code()
+        ),
+    ))
 }
 
 fn verify_native_repository_commit(
