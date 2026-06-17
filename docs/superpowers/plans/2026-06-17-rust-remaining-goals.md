@@ -320,6 +320,11 @@ release tags containing whitespace or `/`, requires the release notes URL to equ
 - Local Python runtime tests now require `validate_python_runtime_default_gate.py --evidence` to validate structured
   signed-release evidence for the runtime manifest, archive source, SHA-256, security-update rebuild policy, signed
   installer sizes, and exact size delta.
+- [Unsigned Windows smoke run 27722259009](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27722259009)
+  passed on head `d973e23bbf6e032ba61f2c7bd6f6f9f2fba9488b`, revalidating the Python runtime default gate on a Windows
+  runner after structured signed-release evidence validation was added, then passing built binary smoke, Python runtime
+  resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact upload,
+  and Python runtime artifact validation.
 - [Unsigned Windows smoke run 27685640529](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27685640529)
   passed on head `d0722920b49e906a939d5614880ff9ee06920d7c`, revalidating fallback burn-down validation after unsigned
   evidence was forbidden from unlocking `canRunFullBootstrap`.
