@@ -410,6 +410,12 @@ evidence checks cannot unlock `canRunFullBootstrap`.
 - [Unix smoke run 27708129552](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27708129552) passed on head
   `b5263f0631b1e79837e168dc5be5ba17f9181913`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   `--add-evidence` was changed to reject `releaseNotes` rewrites for an existing signed release artifact.
+- [Unsigned Windows smoke run 27709380798](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27709380798)
+  passed on head `33c840ae9e02b5136c554c1102fcd6836a81ef15`, revalidating fallback burn-down validation after
+  the Rust manager required/evidence contract checks were aligned with the Python validator.
+- [Unix smoke run 27710885918](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27710885918) passed on head
+  `33c840ae9e02b5136c554c1102fcd6836a81ef15`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  the Rust manager required/evidence contract checks were aligned with the Python validator.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 - Local validator and manager tests now reject split evidence where a platform's required checks are spread across
