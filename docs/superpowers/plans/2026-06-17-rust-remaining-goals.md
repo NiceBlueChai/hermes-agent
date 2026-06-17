@@ -100,7 +100,9 @@ missing. Unsigned fork run `https://github.com/NiceBlueChai/hermes-agent/actions
 bootstrap tool bundle/validate, wheelhouse bundle/validate, Python runtime bundle/validate, runtime resource smoke,
 runtime lifecycle smoke, unsigned artifact validation, fallback registry validation, and runtime artifact upload.
 That `unsigned-smoke-only` mode skips signing and installer binary uploads and does not satisfy the signed-release
-completion standard.
+completion standard. A later unsigned fork run
+`https://github.com/NiceBlueChai/hermes-agent/actions/runs/27682605571` also passed on head
+`aed8471f30ab002aeaafde94aba071329f05107e`, after `canRunFullBootstrap` became evidence-gated.
 
 **Completion standard:**
 
@@ -144,6 +146,9 @@ Goal 9.
 - `Unix packaged runtime smoke (macos)` passed: bootstrap tools bundle/validate, wheelhouse bundle/validate, Python
   runtime bundle/validate, built binary smoke, built lifecycle smoke, packaged `.app` lifecycle smoke, macOS artifact
   validation using `CFBundleExecutable`, fallback burn-down validation, and artifact uploads.
+- [Build Windows Installer run 27682605513](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27682605513)
+  completed successfully on head `aed8471f30ab002aeaafde94aba071329f05107e`, revalidating Linux and macOS packaged
+  runtime smoke after `canRunFullBootstrap` moved behind the release evidence gate.
 
 **Verification:**
 
@@ -226,6 +231,18 @@ flag. The checked-in registry still has no signed release evidence, so the repor
 Windows, macOS, and Linux evidence each cover every required check. Release-note draft text is recorded in
 `docs/release/native-bootstrap-release-notes.md` and must be reconciled with the actual signed release artifacts before
 publication.
+
+**Evidence:**
+
+- Local manager and desktop tests prove the new gate remains `false` with the checked-in empty evidence registry and
+  becomes `true` only when Windows, macOS, and Linux evidence cover every required check.
+- [Unsigned Windows smoke run 27682605571](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27682605571)
+  passed on head `aed8471f30ab002aeaafde94aba071329f05107e`, including built binary smoke, Python runtime resource
+  smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, and runtime artifact upload.
+- [Unix smoke run 27682605513](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27682605513) passed on head
+  `aed8471f30ab002aeaafde94aba071329f05107e`, including Linux and macOS packaged runtime lifecycle smoke and fallback
+  burn-down validation.
+- These runs are unsigned fork smoke and do not satisfy the signed Windows/macOS/Linux release evidence requirement.
 
 **Completion standard:**
 
