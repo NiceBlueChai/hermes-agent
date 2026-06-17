@@ -372,6 +372,8 @@ evidence from different signed releases cannot be stitched together to unlock th
   the final `canRunFullBootstrap` gate points at one unambiguous published release-note target.
 - Local validator and manager tests now reject cross-platform evidence assembled from different signed release tags or
   commits, so the final gate requires one shared signed release across Windows, macOS, and Linux.
+- Local validator tests now prove `--print-template` does not hide mixed-release platform evidence; when every platform
+  is complete but no shared release and commit exists, it still prints replacement skeletons for all platforms.
 
 **Completion standard:**
 

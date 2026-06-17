@@ -68,9 +68,21 @@ def evidence_template(registry_path: Path, entry_id: str) -> dict[str, Any]:
         if isinstance(entry, dict) and entry.get("id") == entry_id:
             required = validate_required_evidence(entry, entry_id)
             evidence = []
+            complete_release_keys_by_platform = {
+                platform: complete_evidence_release_keys(entry, platform, required_checks)
+                for platform, required_checks in required.items()
+            }
+            all_platforms_have_complete_artifact = all(complete_release_keys_by_platform.values())
+            shared_release_keys = (
+                set.intersection(*complete_release_keys_by_platform.values())
+                if all_platforms_have_complete_artifact
+                else set()
+            )
             for platform, required_checks in required.items():
-                complete = platform_has_complete_evidence_artifact(entry, platform, required_checks)
-                if complete:
+                complete_release_keys = complete_release_keys_by_platform[platform]
+                if complete_release_keys and (
+                    shared_release_keys or not all_platforms_have_complete_artifact
+                ):
                     continue
                 evidence.append(
                     {

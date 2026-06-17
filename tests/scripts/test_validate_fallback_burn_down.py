@@ -848,6 +848,66 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
             ],
         )
 
+    def test_print_template_treats_mixed_platform_releases_as_incomplete(self) -> None:
+        """Template generation should require one shared release across platforms."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: mixed-template-evidence"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            checks = ["can-run-full-bootstrap", "release-notes"]
+            evidence = []
+            for platform, release, commit in (
+                ("windows", "v1.0.0", "a" * 40),
+                ("macos", "v1.0.1", "b" * 40),
+                ("linux", "v1.0.1", "b" * 40),
+            ):
+                evidence.append(
+                    {
+                        "platform": platform,
+                        "release": release,
+                        "url": f"https://example.invalid/releases/{release}/{platform}",
+                        "releaseNotes": f"https://example.invalid/releases/{release}/notes",
+                        "commit": commit,
+                        "signed": True,
+                        "checks": checks,
+                    }
+                )
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "mixed-template-evidence",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {"platform": platform, "checks": checks}
+                                    for platform in ("windows", "macos", "linux")
+                                ],
+                                "evidence": evidence,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root, "--print-template", "mixed-template-evidence")
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        template = json.loads(result.stdout)
+        self.assertEqual(
+            [item["platform"] for item in template["evidence"]],
+            ["windows", "macos", "linux"],
+        )
+
     def test_add_evidence_appends_signed_release_evidence(self) -> None:
         """Release operators can record signed evidence without hand-editing JSON."""
         with tempfile.TemporaryDirectory() as tmp:
