@@ -270,6 +270,9 @@ or repository subpaths that merely end with `/releases/tag/<tag>` cannot unlock 
 The manager-side gate now also rejects malformed evidence contracts instead of relying on map/set deduplication:
 duplicate or unknown required platforms, empty, invalid, or duplicate required checks, and undeclared or duplicate
 evidence checks cannot unlock `canRunFullBootstrap`.
+The Python fallback burn-down validator now rejects whitespace inside GitHub release tag URL segments, matching the Rust
+manager parser before signed evidence can be recorded. Release workflows now put a step-level timeout on bootstrap tool
+archive bundling, so transient download or cache hangs fail quickly instead of consuming the full release job timeout.
 
 **Evidence:**
 
@@ -416,6 +419,20 @@ evidence checks cannot unlock `canRunFullBootstrap`.
 - [Unix smoke run 27710885918](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27710885918) passed on head
   `33c840ae9e02b5136c554c1102fcd6836a81ef15`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   the Rust manager required/evidence contract checks were aligned with the Python validator.
+- [Unix smoke run 27711748457](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27711748457) passed on head
+  `02925563af1af67ea6dfa777c51034ccfdfe9462`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  the Python fallback burn-down validator was tightened to reject whitespace inside GitHub release tag URL segments.
+- Windows unsigned smoke runs
+  [27711748319](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27711748319) and
+  [27712784209](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27712784209) were cancelled after repeatedly
+  stalling in the bootstrap tool archive bundling step on head `02925563af1af67ea6dfa777c51034ccfdfe9462`; the release
+  workflows now cap that step with `timeout-minutes: 10`.
+- [Unsigned Windows smoke run 27713192682](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27713192682)
+  passed on head `ebeef5c5f24e6a11a10fe4839a7a0100b199fcc3`, revalidating fallback burn-down validation and Windows
+  packaged runtime lifecycle smoke after bootstrap tool archive bundling gained a step-level timeout.
+- [Unix smoke run 27713192658](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27713192658) passed on head
+  `ebeef5c5f24e6a11a10fe4839a7a0100b199fcc3`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  bootstrap tool archive bundling gained a step-level timeout in release workflows.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 - Local validator and manager tests now reject split evidence where a platform's required checks are spread across
@@ -453,6 +470,10 @@ evidence checks cannot unlock `canRunFullBootstrap`.
   signed release artifact, keeping recorded release notes immutable once attached.
 - Local manager tests now reject malformed required/evidence contracts that the Python validator would reject, keeping
   the Rust `canRunFullBootstrap` gate aligned when required platforms or check lists are duplicated or invalid.
+- Local validator tests now reject GitHub release tag URLs whose tag segment contains whitespace, matching the Rust
+  manager release URL parser before signed release evidence can be recorded.
+- Local workflow tests now require bootstrap tool archive bundling steps to carry `timeout-minutes: 10`, preventing
+  release smoke from hanging the full job when external archive/cache preparation stalls.
 
 **Completion standard:**
 
