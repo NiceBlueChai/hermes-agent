@@ -700,6 +700,73 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
             ],
         )
 
+    def test_add_evidence_can_record_all_required_checks_for_platform(self) -> None:
+        """Release operators can avoid hand-listing every required platform check."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: add-all-evidence"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "add-all-evidence",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "linux",
+                                        "checks": [
+                                            "can-run-full-bootstrap",
+                                            "packaged-native-bridge-smoke",
+                                            "release-notes",
+                                        ],
+                                    }
+                                ],
+                                "evidence": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(
+                registry,
+                root,
+                "--add-evidence",
+                "add-all-evidence",
+                "--platform",
+                "linux",
+                "--release",
+                "v1.0.0",
+                "--url",
+                "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                "--commit",
+                "d" * 40,
+                "--all-required-checks",
+            )
+
+            payload = json.loads(registry.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(
+            payload["entries"][0]["evidence"][0]["checks"],
+            [
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "release-notes",
+            ],
+        )
+
     def test_add_evidence_merges_existing_matching_release_evidence(self) -> None:
         """Repeated signed evidence updates should merge checks for the same release."""
         with tempfile.TemporaryDirectory() as tmp:

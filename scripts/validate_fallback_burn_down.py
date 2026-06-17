@@ -95,6 +95,7 @@ def add_signed_evidence(
     url: str,
     commit: str,
     checks: list[str],
+    all_required_checks: bool,
 ) -> None:
     """Record one signed release evidence item in the fallback registry."""
 
@@ -111,15 +112,16 @@ def add_signed_evidence(
     if target is None:
         raise RuntimeError(f"evidence entry not found: {entry_id}")
 
+    required = validate_required_evidence(target, entry_id)
+    resolved_checks = resolve_evidence_checks(required, platform, checks, all_required_checks)
     new_item = {
         "platform": platform,
         "release": release,
         "url": url,
         "commit": commit,
         "signed": True,
-        "checks": checks,
+        "checks": resolved_checks,
     }
-    required = validate_required_evidence(target, entry_id)
     validate_evidence({**target, "evidence": [new_item]}, entry_id, required)
 
     evidence = target.get("evidence")
@@ -130,10 +132,25 @@ def add_signed_evidence(
     if matching is None:
         evidence.append(new_item)
     else:
-        matching["checks"] = merge_checks(matching.get("checks"), checks)
+        matching["checks"] = merge_checks(matching.get("checks"), resolved_checks)
 
     validate_evidence(target, entry_id, required)
     registry_path.write_text(json.dumps(payload, indent=4) + "\n", encoding="utf-8")
+
+
+def resolve_evidence_checks(
+    required_evidence: dict[str, set[str]],
+    platform: str,
+    checks: list[str],
+    all_required_checks: bool,
+) -> list[str]:
+    """Resolve explicit and platform-wide evidence checks into one ordered list."""
+
+    resolved: list[str] = []
+    if all_required_checks:
+        resolved.extend(sorted(required_evidence.get(platform, set())))
+    resolved.extend(checks)
+    return merge_checks([], resolved)
 
 
 def find_matching_evidence(
@@ -433,6 +450,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=[],
         help="Evidence check to record. Repeat for multiple checks.",
     )
+    parser.add_argument(
+        "--all-required-checks",
+        action="store_true",
+        help="Record every required evidence check for the selected platform.",
+    )
     return parser.parse_args(argv)
 
 
@@ -449,10 +471,11 @@ def main(argv: list[str] | None = None) -> int:
                     ("--release", args.release),
                     ("--url", args.url),
                     ("--commit", args.commit),
-                    ("--check", args.checks),
                 )
                 if not value
             ]
+            if not args.checks and not args.all_required_checks:
+                missing.append("--check or --all-required-checks")
             if missing:
                 raise RuntimeError(f"--add-evidence requires {', '.join(missing)}")
             add_signed_evidence(
@@ -464,6 +487,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.url,
                 args.commit,
                 args.checks,
+                args.all_required_checks,
             )
             print(f"added evidence: {args.add_evidence} {args.platform}")
             return 0

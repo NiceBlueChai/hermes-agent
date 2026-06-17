@@ -251,11 +251,12 @@ also requires each evidence item to carry a 40-character release commit SHA and 
 platform evidence is present. Use `--print-template desktop-bootstrap-script-fallback` after the signed release smoke to
 generate the missing evidence skeleton instead of hand-authoring the JSON shape. Use
 `--add-evidence desktop-bootstrap-script-fallback --platform <platform> --release <tag> --url <https-release-url>
---commit <40-char-sha> --check <check>` to record signed release evidence; the command forces `signed: true`, validates
-the platform and checks against the registry contract, and merges checks for the same release artifact. Complete
-evidence is artifact-scoped: for each platform, one signed `release` + `url` + `commit` group must cover every required
-check, so multiple partial release artifacts cannot be combined to unlock `canRunFullBootstrap` or hide missing checks
-from `--print-template`.
+--commit <40-char-sha> --all-required-checks` to record complete signed release evidence for one platform without
+hand-listing checks; use repeated `--check <check>` only for deliberate partial evidence. The command forces
+`signed: true`, validates the platform and checks against the registry contract, and merges checks for the same release
+artifact. Complete evidence is artifact-scoped: for each platform, one signed `release` + `url` + `commit` group must
+cover every required check, so multiple partial release artifacts cannot be combined to unlock `canRunFullBootstrap` or
+hide missing checks from `--print-template`.
 
 **Evidence:**
 
@@ -318,6 +319,8 @@ from `--print-template`.
   multiple signed release artifacts; every platform needs one complete signed artifact group.
 - Local validator tests now prove `--print-template` reports a missing platform evidence skeleton when checks are split
   across multiple signed release artifacts.
+- Local validator tests now prove `--add-evidence --all-required-checks` records every required check for a platform
+  without hand-listing them.
 
 **Completion standard:**
 
