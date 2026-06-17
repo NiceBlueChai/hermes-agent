@@ -264,8 +264,8 @@ evidence from different signed releases cannot be stitched together to unlock th
 `releaseNotes` values must point at GitHub release tag pages for the same repository, matching the generated
 `--print-template` shape. Generated placeholders such as `OWNER/REPO` and `vX.Y.Z` must be replaced before evidence can
 be recorded or used by `canRunFullBootstrap`. The manager-side gate also requires the GitHub path to be exactly
-`owner/repo/releases/tag/<tag>` with non-empty owner, repository, and tag segments, so malformed paths or repository
-subpaths that merely end with `/releases/tag/<tag>` cannot unlock the native bootstrap gate.
+`owner/repo/releases/tag/<tag>` with non-empty, whitespace-free owner, repository, and tag segments, so malformed paths
+or repository subpaths that merely end with `/releases/tag/<tag>` cannot unlock the native bootstrap gate.
 
 **Evidence:**
 
@@ -425,6 +425,8 @@ subpaths that merely end with `/releases/tag/<tag>` cannot unlock the native boo
   keeping the Rust `canRunFullBootstrap` gate aligned with the stricter Python fallback burn-down validator.
 - Local manager tests now reject GitHub release URLs with empty owner, repository, or tag path segments before they can
   be counted as signed release evidence.
+- Local manager tests now reject GitHub release URLs whose owner, repository, or tag path segments contain whitespace,
+  matching the Python fallback burn-down validator's GitHub release URL shape.
 
 **Completion standard:**
 
