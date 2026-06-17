@@ -15,11 +15,11 @@ on:
                 required: false
                 type: string
             linux-python-runtime-archive:
-                description: Optional Linux Python runtime archive, in NAME=HTTPS_URL=SHA256 form.
+                description: Linux Python runtime archive required for signed builds, in NAME=HTTPS_URL=SHA256 form.
                 required: false
                 type: string
             macos-python-runtime-archive:
-                description: Optional macOS Python runtime archive, in NAME=HTTPS_URL=SHA256 form.
+                description: macOS Python runtime archive required for signed builds, in NAME=HTTPS_URL=SHA256 form.
                 required: false
                 type: string
             python-runtime-version:
@@ -115,6 +115,8 @@ jobs:
                   HERMES_RELEASE_TAG: ${{ inputs['release-tag'] }}
                   HERMES_RELEASE_NOTES_URL: ${{ inputs['release-notes-url'] }}
                   HERMES_PYTHON_RUNTIME_VERSION: ${{ inputs['python-runtime-version'] }}
+                  HERMES_LINUX_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['linux-python-runtime-archive'] }}
+                  HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['macos-python-runtime-archive'] }}
                   HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['linux-python-runtime-without-bytes'] }}
                   HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['macos-python-runtime-without-bytes'] }}
               run: |
@@ -128,9 +130,14 @@ jobs:
                   if [ -z "${HERMES_PYTHON_RUNTIME_VERSION}" ]; then
                       missing+=(HERMES_PYTHON_RUNTIME_VERSION)
                   fi
+                  python_runtime_archive="${HERMES_LINUX_PYTHON_RUNTIME_ARCHIVE}"
                   without_runtime_bytes="${HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES}"
                   if [ "${{ matrix.platform }}" = "macos" ]; then
+                      python_runtime_archive="${HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE}"
                       without_runtime_bytes="${HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES}"
+                  fi
+                  if [ -z "${python_runtime_archive}" ]; then
+                      missing+=(HERMES_${{ matrix.platform }}_PYTHON_RUNTIME_ARCHIVE)
                   fi
                   if [ -z "${without_runtime_bytes}" ]; then
                       missing+=(HERMES_${{ matrix.platform }}_PYTHON_RUNTIME_WITHOUT_BYTES)

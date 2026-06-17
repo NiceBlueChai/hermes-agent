@@ -296,6 +296,28 @@ class PreparePythonRuntimeTests(unittest.TestCase):
         self.assertIn("python-runtime-default-evidence-${{ matrix.platform }}.json", unix_workflow)
         self.assertIn("--print-evidence", unix_workflow)
 
+    def test_signed_release_workflows_require_audited_python_runtime_archives(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("HERMES_PYTHON_RUNTIME_ARCHIVE = $env:HERMES_PYTHON_RUNTIME_ARCHIVE", windows_workflow)
+        self.assertIn("HERMES_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['python-runtime-archive'] }}", windows_workflow)
+        self.assertIn("HERMES_LINUX_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['linux-python-runtime-archive'] }}",
+                      windows_workflow)
+        self.assertIn("HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['macos-python-runtime-archive'] }}",
+                      windows_workflow)
+        self.assertIn("missing+=(HERMES_${{ matrix.platform }}_PYTHON_RUNTIME_ARCHIVE)", windows_workflow)
+        self.assertIn("HERMES_LINUX_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['linux-python-runtime-archive'] }}",
+                      unix_workflow)
+        self.assertIn("HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['macos-python-runtime-archive'] }}",
+                      unix_workflow)
+        self.assertIn("missing+=(HERMES_${{ matrix.platform }}_PYTHON_RUNTIME_ARCHIVE)", unix_workflow)
+
     def test_python_runtime_default_gate_rejects_missing_release_decision_details(self):
         module = _load_default_gate_module()
         repo_root = Path(__file__).resolve().parents[2]

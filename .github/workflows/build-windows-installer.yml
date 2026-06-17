@@ -8,7 +8,15 @@ on:
         required: false
         type: string
       python-runtime-archive:
-        description: Optional audited Python runtime archive, in NAME=HTTPS_URL=SHA256 form.
+        description: Audited Windows Python runtime archive, required for signed builds, in NAME=HTTPS_URL=SHA256 form.
+        required: false
+        type: string
+      linux-python-runtime-archive:
+        description: Audited Linux Python runtime archive, required for signed builds, in NAME=HTTPS_URL=SHA256 form.
+        required: false
+        type: string
+      macos-python-runtime-archive:
+        description: Audited macOS Python runtime archive, required for signed builds, in NAME=HTTPS_URL=SHA256 form.
         required: false
         type: string
       python-runtime-version:
@@ -98,12 +106,14 @@ jobs:
         env:
           HERMES_RELEASE_TAG: ${{ inputs['release-tag'] }}
           HERMES_RELEASE_NOTES_URL: ${{ inputs['release-notes-url'] }}
+          HERMES_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['python-runtime-archive'] }}
           HERMES_PYTHON_RUNTIME_VERSION: ${{ inputs['python-runtime-version'] }}
           HERMES_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['python-runtime-without-bytes'] }}
         run: |
           $required = @{
             HERMES_RELEASE_TAG = $env:HERMES_RELEASE_TAG
             HERMES_RELEASE_NOTES_URL = $env:HERMES_RELEASE_NOTES_URL
+            HERMES_PYTHON_RUNTIME_ARCHIVE = $env:HERMES_PYTHON_RUNTIME_ARCHIVE
             HERMES_PYTHON_RUNTIME_VERSION = $env:HERMES_PYTHON_RUNTIME_VERSION
             HERMES_PYTHON_RUNTIME_WITHOUT_BYTES = $env:HERMES_PYTHON_RUNTIME_WITHOUT_BYTES
           }
@@ -594,6 +604,8 @@ jobs:
           HERMES_RELEASE_TAG: ${{ inputs['release-tag'] }}
           HERMES_RELEASE_NOTES_URL: ${{ inputs['release-notes-url'] }}
           HERMES_PYTHON_RUNTIME_VERSION: ${{ inputs['python-runtime-version'] }}
+          HERMES_LINUX_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['linux-python-runtime-archive'] }}
+          HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['macos-python-runtime-archive'] }}
           HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['linux-python-runtime-without-bytes'] }}
           HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['macos-python-runtime-without-bytes'] }}
         run: |
@@ -607,9 +619,14 @@ jobs:
           if [ -z "${HERMES_PYTHON_RUNTIME_VERSION}" ]; then
             missing+=(HERMES_PYTHON_RUNTIME_VERSION)
           fi
+          python_runtime_archive="${HERMES_LINUX_PYTHON_RUNTIME_ARCHIVE}"
           without_runtime_bytes="${HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES}"
           if [ "${{ matrix.platform }}" = "macos" ]; then
+            python_runtime_archive="${HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE}"
             without_runtime_bytes="${HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES}"
+          fi
+          if [ -z "${python_runtime_archive}" ]; then
+            missing+=(HERMES_${{ matrix.platform }}_PYTHON_RUNTIME_ARCHIVE)
           fi
           if [ -z "${without_runtime_bytes}" ]; then
             missing+=(HERMES_${{ matrix.platform }}_PYTHON_RUNTIME_WITHOUT_BYTES)
@@ -774,21 +791,37 @@ jobs:
           --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
 
       - name: Bundle Python runtime archive
+        env:
+          HERMES_LINUX_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['linux-python-runtime-archive'] }}
+          HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['macos-python-runtime-archive'] }}
         run: |
           set -euo pipefail
           runtime_arch="${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}"
           runtime_archive="dist/python-runtime/python-runtime-${{ matrix.platform }}-${runtime_arch}.tar.gz"
-          python scripts/build_python_runtime_archive.py \
-            --platform "${{ matrix.platform }}" \
-            --arch "${runtime_arch}" \
+          HERMES_PYTHON_RUNTIME_ARCHIVE=""
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            HERMES_PYTHON_RUNTIME_ARCHIVE="${HERMES_LINUX_PYTHON_RUNTIME_ARCHIVE}"
+          elif [ "${{ matrix.platform }}" = "macos" ]; then
+            HERMES_PYTHON_RUNTIME_ARCHIVE="${HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE}"
+          fi
+          args=(
+            scripts/prepare_python_runtime.py
+            --platform "${{ matrix.platform }}"
+            --arch "${runtime_arch}"
+            --python-tag cp311
             --force
-          python scripts/prepare_python_runtime.py \
-            --platform "${{ matrix.platform }}" \
-            --arch "${runtime_arch}" \
-            --python-tag cp311 \
-            --force \
-            --archive "${runtime_archive}" \
-            --source-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          )
+          if [ -n "${HERMES_PYTHON_RUNTIME_ARCHIVE}" ]; then
+            args+=(--audited-archive "${HERMES_PYTHON_RUNTIME_ARCHIVE}")
+          else
+            python scripts/build_python_runtime_archive.py \
+              --platform "${{ matrix.platform }}" \
+              --arch "${runtime_arch}" \
+              --force
+            args+=(--archive "${runtime_archive}")
+            args+=(--source-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}")
+          fi
+          python "${args[@]}"
 
       - name: Validate Python runtime archive
         run: >

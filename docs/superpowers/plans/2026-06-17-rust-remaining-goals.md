@@ -330,6 +330,10 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   and macOS workflow paths to upload `python-runtime-default-evidence-*.json` artifacts.
 - Local Python runtime tests now reject non-positive signed installer runtime size deltas, so default promotion evidence
   must prove the bundled runtime actually increases the measured signed artifact size.
+- Local Python runtime tests now require signed Windows, Linux, and macOS workflow paths to fail preflight unless the
+  Python runtime archive is supplied as an audited `NAME=HTTPS_URL=SHA256` input. Unsigned smoke remains allowed to
+  build temporary runtime archives in Actions, but those unsigned archives cannot satisfy the signed release evidence
+  gate.
 - A local CLI smoke generated runtime default evidence from a temporary manifest and artifact, parsed it with
   `python -m json.tool`, and validated it again with `validate_python_runtime_default_gate.py --evidence`.
 - [Unsigned Windows smoke run 27725143579](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27725143579)
