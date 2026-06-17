@@ -1032,26 +1032,33 @@ fn is_github_release_tag_url(url: &str, release: &str) -> bool {
     if release == "vX.Y.Z" {
         return false;
     }
-    let Some(path_start) = url.strip_prefix("https://github.com/") else {
+    let Some((owner, repo, tag)) = github_release_tag_parts(url) else {
         return false;
     };
-    let mut path_parts = path_start.split(['?', '#']);
-    let Some(path) = path_parts.next() else {
-        return false;
-    };
-    let marker = format!("/releases/tag/{release}");
-    path.ends_with(&marker)
-        && path.matches('/').count() >= 4
-        && github_release_repo(url).as_deref() != Some("OWNER/REPO")
+    tag == release && !(owner == "OWNER" && repo == "REPO")
 }
 
-fn github_release_repo(url: &str) -> Option<String> {
+fn github_release_tag_parts(url: &str) -> Option<(&str, &str, &str)> {
     let path_start = url.strip_prefix("https://github.com/")?;
-    let mut path_parts = path_start.split(['?', '#']);
-    let path = path_parts.next()?;
+    let path = path_start.split(['?', '#']).next()?;
     let mut segments = path.split('/');
     let owner = segments.next()?;
     let repo = segments.next()?;
+    if segments.next()? != "releases" {
+        return None;
+    }
+    if segments.next()? != "tag" {
+        return None;
+    }
+    let tag = segments.next()?;
+    if segments.next().is_some() {
+        return None;
+    }
+    Some((owner, repo, tag))
+}
+
+fn github_release_repo(url: &str) -> Option<String> {
+    let (owner, repo, _) = github_release_tag_parts(url)?;
     Some(format!("{owner}/{repo}"))
 }
 
@@ -3536,6 +3543,22 @@ mod tests {
                 "release-notes",
             ],
             "https://github.com/OWNER/REPO/releases/tag/v9.9.9/extra",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_github_release_url_with_extra_repo_path() {
+        let registry = full_bootstrap_registry_fixture_with_url(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            "https://github.com/NiceBlueChai/hermes-agent/extra/releases/tag/v9.9.9",
         );
 
         assert!(!can_run_full_bootstrap_from_registry_text(&registry));
