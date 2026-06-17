@@ -273,6 +273,8 @@ evidence checks cannot unlock `canRunFullBootstrap`.
 The Python fallback burn-down validator now rejects whitespace inside GitHub release tag URL segments, matching the Rust
 manager parser before signed evidence can be recorded. Release workflows now put a step-level timeout on bootstrap tool
 archive bundling, so transient download or cache hangs fail quickly instead of consuming the full release job timeout.
+The validator now also requires the `desktop-bootstrap-script-fallback` entry to declare Windows, macOS, and Linux
+required evidence before printing the full-bootstrap template, preventing incomplete signed evidence skeletons.
 
 **Evidence:**
 
@@ -433,6 +435,13 @@ archive bundling, so transient download or cache hangs fail quickly instead of c
 - [Unix smoke run 27713192658](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27713192658) passed on head
   `ebeef5c5f24e6a11a10fe4839a7a0100b199fcc3`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   bootstrap tool archive bundling gained a step-level timeout in release workflows.
+- [Unsigned Windows smoke run 27714218350](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27714218350)
+  passed on head `a2eef1e38ead29fac0108ddf5203c9ef25e6768e`, revalidating fallback burn-down validation and Windows
+  packaged runtime lifecycle smoke after the full-bootstrap required platform contract became mandatory before template
+  generation.
+- [Unix smoke run 27714218659](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27714218659) passed on head
+  `a2eef1e38ead29fac0108ddf5203c9ef25e6768e`, revalidating Linux and macOS packaged runtime lifecycle smoke after the
+  same validator hardening.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 - Local validator and manager tests now reject split evidence where a platform's required checks are spread across
@@ -474,6 +483,8 @@ archive bundling, so transient download or cache hangs fail quickly instead of c
   manager release URL parser before signed release evidence can be recorded.
 - Local workflow tests now require bootstrap tool archive bundling steps to carry `timeout-minutes: 10`, preventing
   release smoke from hanging the full job when external archive/cache preparation stalls.
+- Local validator tests now reject full-bootstrap evidence templates when `requiredEvidence` omits any supported release
+  platform, preventing incomplete signed evidence skeletons from being generated.
 
 **Completion standard:**
 
