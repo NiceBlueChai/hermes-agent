@@ -222,6 +222,10 @@ class PreparePythonRuntimeTests(unittest.TestCase):
             "HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['macos-python-runtime-archive'] }}",
             unix_workflow,
         )
+        self.assertIn("astral-sh/setup-uv@", unix_workflow)
+        self.assertIn("scripts/build_python_runtime_archive.py", unix_workflow)
+        self.assertIn("python-runtime-${{ matrix.platform }}-${runtime_arch}", unix_workflow)
+        self.assertIn('runtime_archive="${runtime_archive}.${extension}"', unix_workflow)
         self.assertIn("--audited-archive \"${HERMES_PYTHON_RUNTIME_ARCHIVE}\"", unix_workflow)
         self.assertIn("scripts/prepare_python_runtime.py", unix_workflow)
         self.assertIn(
@@ -229,6 +233,8 @@ class PreparePythonRuntimeTests(unittest.TestCase):
             "${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} --python-tag cp311",
             unix_workflow_flat,
         )
+        self.assertNotIn("inputs['linux-python-runtime-archive'] != ''", unix_workflow)
+        self.assertNotIn("inputs['macos-python-runtime-archive'] != ''", unix_workflow)
         self.assertIn("--self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime", unix_workflow)
         self.assertIn("--wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse", unix_workflow)
         self.assertIn("--wheelhouse-platform ${{ matrix.platform }}", unix_workflow)
