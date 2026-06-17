@@ -21,6 +21,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REGISTRY = REPO_ROOT / "docs" / "release" / "fallback-burn-down.json"
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+GITHUB_RELEASE_TAG_RE = re.compile(
+    r"^https://github\.com/[^/\s]+/[^/\s]+/releases/tag/([^/?#]+)(?:[?#].*)?$"
+)
 VALID_PLATFORMS = frozenset(("windows", "macos", "linux"))
 
 
@@ -300,6 +303,10 @@ def validate_evidence(
             raise RuntimeError(f"entry {entry_id} evidence url must be HTTPS: {url}")
         if release not in url:
             raise RuntimeError(f"entry {entry_id} evidence url must include release tag: {release}")
+        if not is_github_release_tag_url(url, release):
+            raise RuntimeError(
+                f"entry {entry_id} evidence url must be a GitHub release tag URL: {release}"
+            )
         commit = item.get("commit")
         if not isinstance(commit, str) or not COMMIT_RE.match(commit):
             raise RuntimeError(f"entry {entry_id} evidence commit must be a 40-character git SHA")
@@ -313,6 +320,10 @@ def validate_evidence(
             if release not in release_notes:
                 raise RuntimeError(
                     f"entry {entry_id} evidence releaseNotes must include release tag: {release}"
+                )
+            if not is_github_release_tag_url(release_notes, release):
+                raise RuntimeError(
+                    f"entry {entry_id} evidence releaseNotes must be a GitHub release tag URL: {release}"
                 )
             artifact = (platform, release, url, commit)
             existing_release_notes = release_notes_by_artifact.setdefault(artifact, release_notes)
@@ -387,6 +398,7 @@ def complete_evidence_release_keys(
             or not isinstance(url, str)
             or not url.startswith("https://")
             or release not in url
+            or not is_github_release_tag_url(url, release)
             or not isinstance(commit, str)
             or not COMMIT_RE.match(commit)
             or not isinstance(checks, list)
@@ -397,6 +409,8 @@ def complete_evidence_release_keys(
         ):
             continue
         if "release-notes" in checks and release not in release_notes:
+            continue
+        if "release-notes" in checks and not is_github_release_tag_url(release_notes, release):
             continue
         artifact = (release, url, commit)
         checks_by_artifact.setdefault(artifact, set()).update(
@@ -425,6 +439,13 @@ def collected_evidence_checks(
                 check for check in checks if isinstance(check, str)
             )
     return checks_by_platform
+
+
+def is_github_release_tag_url(url: str, release: str) -> bool:
+    """Return whether a URL points at the exact GitHub release tag."""
+
+    match = GITHUB_RELEASE_TAG_RE.match(url)
+    return bool(match and match.group(1) == release)
 
 
 def require_string(entry: dict[str, Any], key: str, index: int) -> str:

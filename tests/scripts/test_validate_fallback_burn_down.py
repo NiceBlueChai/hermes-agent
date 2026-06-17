@@ -231,7 +231,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": "windows",
                                         "release": "v1.0.0",
-                                        "url": "https://example.invalid/releases/tag/v1.0.0",
+                                        "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
                                         "commit": "a" * 40,
                                         "signed": True,
                                         "checks": ["unreviewed-check"],
@@ -280,7 +280,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": "windows",
                                         "release": "v1.0.0",
-                                        "url": "https://example.invalid/releases/tag/v1.0.0",
+                                        "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
                                         "commit": "a" * 40,
                                         "signed": False,
                                         "checks": ["packaged-native-bridge-smoke"],
@@ -329,7 +329,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": "windows",
                                         "release": "v1.0.0",
-                                        "url": "https://example.invalid/releases/tag/v1.0.0",
+                                        "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
                                         "signed": True,
                                         "checks": ["packaged-native-bridge-smoke"],
                                     }
@@ -377,7 +377,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": "windows",
                                         "release": "v1.0.0",
-                                        "url": "https://example.invalid/releases/tag/v1.0.0",
+                                        "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
                                         "commit": "a" * 40,
                                         "signed": True,
                                         "checks": ["release-notes"],
@@ -426,8 +426,8 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": "windows",
                                         "release": "v1.0.0",
-                                        "url": "https://example.invalid/releases/tag/v2.0.0",
-                                        "releaseNotes": "https://example.invalid/releases/tag/v2.0.0",
+                                        "url": "https://github.com/OWNER/REPO/releases/tag/v2.0.0",
+                                        "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/v2.0.0",
                                         "commit": "a" * 40,
                                         "signed": True,
                                         "checks": ["release-notes"],
@@ -444,6 +444,156 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("evidence url must include release tag: v1.0.0", result.stderr)
+
+    def test_evidence_url_must_be_github_release_tag_url(self) -> None:
+        """Release evidence must point at a GitHub release tag page."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: non-github-release-url"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "non-github-release-url",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": "windows",
+                                        "release": "v1.0.0",
+                                        "url": "https://example.invalid/releases/tag/v1.0.0",
+                                        "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                                        "commit": "a" * 40,
+                                        "signed": True,
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("evidence url must be a GitHub release tag URL", result.stderr)
+
+    def test_release_notes_url_must_be_github_release_tag_url(self) -> None:
+        """Release-note evidence must point at a GitHub release tag page."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: non-github-release-notes-url"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "non-github-release-notes-url",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": "windows",
+                                        "release": "v1.0.0",
+                                        "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                                        "releaseNotes": "https://example.invalid/releases/tag/v1.0.0",
+                                        "commit": "a" * 40,
+                                        "signed": True,
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("evidence releaseNotes must be a GitHub release tag URL", result.stderr)
+
+    def test_github_release_url_rejects_tag_subpath(self) -> None:
+        """Release evidence must point at the tag page, not a nested path below it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: release-tag-subpath"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "release-tag-subpath",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": "windows",
+                                        "release": "v1.0.0",
+                                        "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0/extra",
+                                        "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                                        "commit": "a" * 40,
+                                        "signed": True,
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("evidence url must be a GitHub release tag URL", result.stderr)
 
     def test_same_release_artifact_rejects_conflicting_release_notes(self) -> None:
         """One signed release artifact must point at one published release note URL."""
@@ -476,8 +626,8 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": "windows",
                                         "release": "v1.0.0",
-                                        "url": "https://example.invalid/releases/tag/v1.0.0",
-                                        "releaseNotes": "https://example.invalid/releases/tag/v1.0.0",
+                                        "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                                        "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
                                         "commit": "a" * 40,
                                         "signed": True,
                                         "checks": ["release-notes"],
@@ -485,8 +635,8 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": "windows",
                                         "release": "v1.0.0",
-                                        "url": "https://example.invalid/releases/tag/v1.0.0",
-                                        "releaseNotes": "https://example.invalid/releases/v1.0.0/notes",
+                                        "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                                        "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/v1.0.0#notes",
                                         "commit": "a" * 40,
                                         "signed": True,
                                         "checks": ["can-run-full-bootstrap"],
@@ -534,8 +684,8 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": platform,
                                         "release": "v1.0.0",
-                                        "url": f"https://example.invalid/releases/v1.0.0/{platform}",
-                                        "releaseNotes": f"https://example.invalid/releases/v1.0.0/{platform}",
+                                        "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                                        "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
                                         "commit": "a" * 40,
                                         "signed": True,
                                         "checks": checks,
@@ -584,8 +734,8 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": platform,
                                         "release": "v1.0.0",
-                                        "url": f"https://example.invalid/releases/v1.0.0/{platform}",
-                                        "releaseNotes": f"https://example.invalid/releases/v1.0.0/{platform}",
+                                        "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                                        "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
                                         "commit": "a" * 40,
                                         "signed": True,
                                         "checks": checks,
@@ -623,8 +773,8 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                     {
                         "platform": platform,
                         "release": release,
-                        "url": f"https://example.invalid/releases/{release}/{platform}",
-                        "releaseNotes": f"https://example.invalid/releases/{release}/notes",
+                        "url": f"https://github.com/OWNER/REPO/releases/tag/{release}",
+                        "releaseNotes": f"https://github.com/OWNER/REPO/releases/tag/{release}",
                         "commit": commit,
                         "signed": True,
                         "checks": checks,
@@ -690,7 +840,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": platform,
                                         "release": "v1.0.0",
-                                        "url": f"https://example.invalid/releases/v1.0.0/{platform}",
+                                        "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
                                         "commit": "a" * 40,
                                         "signed": True,
                                         "checks": ["can-run-full-bootstrap"],
@@ -701,8 +851,8 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": platform,
                                         "release": "v1.0.1",
-                                        "url": f"https://example.invalid/releases/v1.0.1/{platform}",
-                                        "releaseNotes": f"https://example.invalid/releases/v1.0.1/{platform}",
+                                        "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.1",
+                                        "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/v1.0.1",
                                         "commit": "b" * 40,
                                         "signed": True,
                                         "checks": ["release-notes"],
@@ -807,7 +957,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": "windows",
                                         "release": "v1.0.0",
-                                        "url": "https://example.invalid/releases/v1.0.0/windows",
+                                        "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
                                         "commit": "a" * 40,
                                         "signed": True,
                                         "checks": ["can-run-full-bootstrap"],
@@ -815,8 +965,8 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": "windows",
                                         "release": "v1.0.1",
-                                        "url": "https://example.invalid/releases/v1.0.1/windows",
-                                        "releaseNotes": "https://example.invalid/releases/v1.0.1/windows",
+                                        "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.1",
+                                        "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/v1.0.1",
                                         "commit": "b" * 40,
                                         "signed": True,
                                         "checks": ["release-notes"],
@@ -867,8 +1017,8 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                     {
                         "platform": platform,
                         "release": release,
-                        "url": f"https://example.invalid/releases/{release}/{platform}",
-                        "releaseNotes": f"https://example.invalid/releases/{release}/notes",
+                        "url": f"https://github.com/OWNER/REPO/releases/tag/{release}",
+                        "releaseNotes": f"https://github.com/OWNER/REPO/releases/tag/{release}",
                         "commit": commit,
                         "signed": True,
                         "checks": checks,

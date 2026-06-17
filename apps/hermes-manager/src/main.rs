@@ -964,6 +964,7 @@ fn complete_release_evidence_keys(
             || evidence.release.trim().is_empty()
             || !evidence.url.starts_with("https://")
             || !evidence.url.contains(&evidence.release)
+            || !is_github_release_tag_url(&evidence.url, &evidence.release)
             || release_notes_check_missing_link(evidence)
             || release_notes_link_invalid(evidence)
             || !is_git_commit_sha(&evidence.commit)
@@ -1009,14 +1010,26 @@ fn release_notes_check_missing_link(evidence: &FallbackEvidence) -> bool {
         && !evidence
             .release_notes
             .as_deref()
-            .is_some_and(|url| url.starts_with("https://") && url.contains(&evidence.release))
+            .is_some_and(|url| is_github_release_tag_url(url, &evidence.release))
 }
 
 fn release_notes_link_invalid(evidence: &FallbackEvidence) -> bool {
     evidence
         .release_notes
         .as_deref()
-        .is_some_and(|url| !url.starts_with("https://") || !url.contains(&evidence.release))
+        .is_some_and(|url| !is_github_release_tag_url(url, &evidence.release))
+}
+
+fn is_github_release_tag_url(url: &str, release: &str) -> bool {
+    let Some(path_start) = url.strip_prefix("https://github.com/") else {
+        return false;
+    };
+    let mut path_parts = path_start.split(['?', '#']);
+    let Some(path) = path_parts.next() else {
+        return false;
+    };
+    let marker = format!("/releases/tag/{release}");
+    path.ends_with(&marker) && path.matches('/').count() >= 4
 }
 
 fn is_git_commit_sha(value: &str) -> bool {
@@ -3474,6 +3487,38 @@ mod tests {
     }
 
     #[test]
+    fn full_bootstrap_gate_rejects_non_github_release_url() {
+        let registry = full_bootstrap_registry_fixture_with_url(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            "https://example.invalid/releases/tag/v9.9.9",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_github_release_tag_subpath() {
+        let registry = full_bootstrap_registry_fixture_with_url(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            "https://github.com/OWNER/REPO/releases/tag/v9.9.9/extra",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
     fn full_bootstrap_gate_rejects_conflicting_release_notes_for_same_artifact() {
         let required_platforms = ["windows", "macos", "linux"];
         let required_evidence = required_platforms
@@ -3633,7 +3678,7 @@ mod tests {
             checks,
             signed,
             commit,
-            "https://example.invalid/releases/tag/v9.9.9",
+            "https://github.com/OWNER/REPO/releases/tag/v9.9.9",
         )
     }
 
