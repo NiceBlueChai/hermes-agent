@@ -67,6 +67,11 @@ git diff --check
 
 ## Goal 3: Enforce Zero Unreasoned Script Stages In Packaged Bootstrap
 
+**Status:** Complete on branch. Verified with
+`cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml build_stage_plan -- --nocapture`,
+`cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml fallback_scripts_use -- --nocapture`, and
+`python -m unittest tests.scripts.test_prepare_bootstrap_tools`.
+
 **Completion standard:**
 
 - Every packaged bootstrap stage is classified as one of:
