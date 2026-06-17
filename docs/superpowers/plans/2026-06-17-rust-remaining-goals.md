@@ -101,9 +101,9 @@ bootstrap tool bundle/validate, wheelhouse bundle/validate, Python runtime bundl
 runtime lifecycle smoke, unsigned artifact validation, fallback registry validation, and runtime artifact upload.
 That `unsigned-smoke-only` mode skips signing and installer binary uploads and does not satisfy the signed-release
 completion standard. A later unsigned fork run
-`https://github.com/NiceBlueChai/hermes-agent/actions/runs/27682605571` also passed on head
-`aed8471f30ab002aeaafde94aba071329f05107e`, after `canRunFullBootstrap` became evidence-gated. Signed mode now has an
-explicit Azure signing configuration preflight so missing signing secrets and variables fail before installer build.
+`https://github.com/NiceBlueChai/hermes-agent/actions/runs/27683435614` also passed on head
+`7e148815877498e3ae17951878ed60700ef68f41`, after `canRunFullBootstrap` became evidence-gated and signed mode gained
+an Azure signing configuration preflight. Missing signing secrets and variables now fail before installer build.
 
 **Completion standard:**
 
@@ -237,9 +237,11 @@ publication.
 
 - Local manager and desktop tests prove the new gate remains `false` with the checked-in empty evidence registry and
   becomes `true` only when Windows, macOS, and Linux evidence cover every required check.
-- [Unsigned Windows smoke run 27682605571](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27682605571)
-  passed on head `aed8471f30ab002aeaafde94aba071329f05107e`, including built binary smoke, Python runtime resource
+- [Unsigned Windows smoke run 27683435614](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27683435614)
+  passed on head `7e148815877498e3ae17951878ed60700ef68f41`, including built binary smoke, Python runtime resource
   smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, and runtime artifact upload.
+- In that unsigned run, `Validate Azure signing configuration` was skipped as expected before `Setup Node.js`; signed
+  mode runs the same preflight before the expensive installer build.
 - [Unix smoke run 27682605513](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27682605513) passed on head
   `aed8471f30ab002aeaafde94aba071329f05107e`, including Linux and macOS packaged runtime lifecycle smoke and fallback
   burn-down validation.
