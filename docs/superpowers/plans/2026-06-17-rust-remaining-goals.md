@@ -105,7 +105,11 @@ completion standard. A later unsigned fork run
 `7e148815877498e3ae17951878ed60700ef68f41`, after `canRunFullBootstrap` became evidence-gated and signed mode gained
 an Azure signing configuration preflight. Missing signing secrets and variables now fail before installer build. The
 Python runtime default-inclusion note is now validated by `scripts/validate_python_runtime_default_gate.py`, and both
-Windows and Unix installer workflows run that gate before packaging proceeds past runtime validation.
+Windows and Unix installer workflows run that gate before packaging proceeds past runtime validation. Latest unsigned
+fork run `https://github.com/NiceBlueChai/hermes-agent/actions/runs/27684717379` passed on head
+`e64c1a3b8882baefd08031bb378740a4b54f86f9`, including the Python runtime default gate, runtime resource smoke,
+lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact upload, and source
+artifact validation.
 
 **Completion standard:**
 
@@ -154,6 +158,9 @@ Goal 9.
 - [Build Windows Installer run 27682605513](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27682605513)
   completed successfully on head `aed8471f30ab002aeaafde94aba071329f05107e`, revalidating Linux and macOS packaged
   runtime smoke after `canRunFullBootstrap` moved behind the release evidence gate.
+- [Build Windows Installer run 27684717355](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27684717355)
+  completed successfully on head `e64c1a3b8882baefd08031bb378740a4b54f86f9`, revalidating Linux and macOS packaged
+  runtime smoke with the Python runtime default gate active in both Unix matrix jobs.
 
 **Verification:**
 
@@ -256,6 +263,13 @@ directly and no longer requires `install.ps1` or `install.sh` just to discover t
   so missing release-signing configuration is reported directly before the expensive installer build.
 - Desktop runner tests prove a full-native gated bootstrap can complete from the native manifest even when no installer
   script or build stamp is available.
+- [Unsigned Windows smoke run 27684717379](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27684717379)
+  passed on head `e64c1a3b8882baefd08031bb378740a4b54f86f9`, including the Python runtime default gate before
+  packaging, built binary smoke, Python runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback
+  burn-down validation, runtime artifact upload, and source artifact validation.
+- [Unix smoke run 27684717355](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27684717355) passed on head
+  `e64c1a3b8882baefd08031bb378740a4b54f86f9`, including Linux and macOS packaged runtime lifecycle smoke with the
+  Python runtime default gate active.
 
 **Completion standard:**
 
