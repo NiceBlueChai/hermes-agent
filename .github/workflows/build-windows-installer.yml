@@ -568,9 +568,10 @@ jobs:
             test -n "${package_bin}"
             chmod +x "${package_bin}"
           else
+            find apps/bootstrap-installer/src-tauri/target/release/bundle -maxdepth 6 -print || true
             package_bin="$(
-              find apps/bootstrap-installer/src-tauri/target/release/bundle/macos \
-                -path '*/Contents/MacOS/Hermes' -type f -print -quit
+              find apps/bootstrap-installer/src-tauri/target/release/bundle \
+                -path '*/Contents/MacOS/*' -type f -print -quit
             )"
             test -n "${package_bin}"
           fi
