@@ -320,6 +320,12 @@ must also carry a HTTPS `releaseNotes` URL so the final gate points at the exact
 - [Unix smoke run 27691194903](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27691194903) passed on head
   `7e699c9d2c007771e39dbaa4b7c1635e6de2e1c8`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   `--all-required-checks` was added.
+- [Unsigned Windows smoke run 27692430261](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27692430261)
+  passed on head `ba0285c66272b38ca72114c2979d8f1166807231`, revalidating fallback burn-down validation after
+  `releaseNotes` evidence links became required.
+- [Unix smoke run 27692430316](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27692430316) passed on head
+  `ba0285c66272b38ca72114c2979d8f1166807231`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  `releaseNotes` evidence links became required.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 - Local validator and manager tests now reject split evidence where a platform's required checks are spread across
