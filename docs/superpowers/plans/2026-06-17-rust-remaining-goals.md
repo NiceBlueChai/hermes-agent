@@ -280,6 +280,11 @@ required evidence before printing the full-bootstrap template, preventing incomp
 Full-bootstrap signed evidence must now carry a platform signature type: `authenticode` for Windows,
 `developer-id-notarized` for macOS, and `sigstore` for Linux. The Python validator rejects missing or mismatched
 signature types, and the Rust `canRunFullBootstrap` gate ignores evidence without the expected platform signature.
+The Unix release paths now have a signed path instead of being unsigned-only: the standalone Unix workflow and the fork
+dispatchable Windows workflow's Unix smoke job both use `unsigned-smoke-only=true` to preserve fork smoke coverage, while
+signed mode validates Apple signing configuration, exports Tauri's Apple signing/notarization environment only for signed
+macOS jobs, verifies notarized macOS artifacts with `codesign`, `spctl`, and `stapler`, and signs Linux AppImages with
+Sigstore before uploading the Sigstore bundles.
 
 **Evidence:**
 
@@ -457,6 +462,9 @@ signature types, and the Rust `canRunFullBootstrap` gate ignores evidence withou
 - [Unix smoke run 27717579490](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27717579490) passed on head
   `8ea556a5fc4399c559473c1494cab2bb2acb70ee`, revalidating Linux and macOS packaged runtime lifecycle smoke after the
   same apt retry and timeout hardening.
+- Local workflow tests now require both Unix release entry points to support signed macOS and Linux release artifacts:
+  `unsigned-smoke-only` keeps fork smoke unsigned, signed macOS jobs require Apple signing/notarization configuration and
+  notarization verification, and signed Linux jobs use Sigstore and upload `*.sigstore.json` bundles.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 - Local validator and manager tests now reject split evidence where a platform's required checks are spread across

@@ -436,6 +436,9 @@ jobs:
     if: ${{ inputs['unix-smoke-only'] }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -501,6 +504,64 @@ jobs:
             libxdo-dev \
             patchelf \
             wget
+
+      - name: Report unsigned Unix smoke mode
+        if: ${{ inputs['unsigned-smoke-only'] }}
+        run: |
+          echo "Unsigned Unix smoke builds are not release artifacts;"
+          echo "macOS notarization and Linux Sigstore signing are skipped."
+
+      - name: Validate Apple signing configuration
+        if: ${{ matrix.platform == 'macos' && !inputs['unsigned-smoke-only'] }}
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_ID \
+            APPLE_PASSWORD \
+            APPLE_TEAM_ID
+          do
+            if [ -z "${!name:-}" ]; then
+              missing+=("${name}")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing Apple signing configuration: ${missing[*]}"
+            exit 1
+          fi
+          echo "Apple signing configuration is present."
+
+      - name: Export Apple signing environment
+        if: ${{ matrix.platform == 'macos' && !inputs['unsigned-smoke-only'] }}
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          {
+            echo "APPLE_CERTIFICATE<<HERMES_APPLE_CERTIFICATE"
+            echo "${APPLE_CERTIFICATE}"
+            echo "HERMES_APPLE_CERTIFICATE"
+            echo "APPLE_CERTIFICATE_PASSWORD<<HERMES_APPLE_CERTIFICATE_PASSWORD"
+            echo "${APPLE_CERTIFICATE_PASSWORD}"
+            echo "HERMES_APPLE_CERTIFICATE_PASSWORD"
+            echo "APPLE_ID=${APPLE_ID}"
+            echo "APPLE_PASSWORD<<HERMES_APPLE_PASSWORD"
+            echo "${APPLE_PASSWORD}"
+            echo "HERMES_APPLE_PASSWORD"
+            echo "APPLE_TEAM_ID=${APPLE_TEAM_ID}"
+          } >> "${GITHUB_ENV}"
 
       - name: Bundle bootstrap tool archives
         timeout-minutes: 10
@@ -651,6 +712,25 @@ jobs:
             --self-check-python-runtime-platform ${{ matrix.platform }} \
             --self-check-python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
 
+      - name: Verify notarized macOS artifacts
+        if: ${{ matrix.platform == 'macos' && !inputs['unsigned-smoke-only'] }}
+        run: |
+          set -euo pipefail
+          app_root="$(
+            find apps/bootstrap-installer/src-tauri/target/release/bundle/macos \
+              -maxdepth 1 -name '*.app' -type d -print -quit
+          )"
+          dmg="$(
+            find apps/bootstrap-installer/src-tauri/target/release/bundle/dmg \
+              -maxdepth 1 -name '*.dmg' -type f -print -quit
+          )"
+          test -n "${app_root}"
+          test -n "${dmg}"
+          codesign --verify --deep --strict --verbose=4 "${app_root}"
+          spctl -a -vvv -t install "${dmg}"
+          xcrun stapler validate "${app_root}"
+          xcrun stapler validate "${dmg}"
+
       - name: Validate Linux installer artifacts
         if: matrix.platform == 'linux'
         run: >
@@ -695,6 +775,23 @@ jobs:
       - name: Validate fallback burn-down registry
         run: python scripts/validate_fallback_burn_down.py
 
+      - name: Sign Linux installer with Sigstore
+        if: ${{ matrix.platform == 'linux' && !inputs['unsigned-smoke-only'] }}
+        uses: sigstore/gh-action-sigstore-python@04cffa1d795717b140764e8b640de88853c92acc  # v3.3.0
+        with:
+          inputs: >-
+            ./apps/bootstrap-installer/src-tauri/target/release/bundle/appimage/*.AppImage
+
+      - name: Verify Linux Sigstore bundles
+        if: ${{ matrix.platform == 'linux' && !inputs['unsigned-smoke-only'] }}
+        run: |
+          set -euo pipefail
+          bundle="$(
+            find apps/bootstrap-installer/src-tauri/target/release/bundle/appimage \
+              -maxdepth 1 -name '*.sigstore.json' -type f -print -quit
+          )"
+          test -n "${bundle}"
+
       - name: Upload Unix installer artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
@@ -723,4 +820,12 @@ jobs:
         with:
           name: ${{ matrix.artifact-name }}-python-runtime
           path: apps/bootstrap-installer/src-tauri/python-runtime/*
+          if-no-files-found: error
+
+      - name: Upload Linux Sigstore bundles
+        if: ${{ matrix.platform == 'linux' && !inputs['unsigned-smoke-only'] }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ matrix.artifact-name }}-sigstore
+          path: apps/bootstrap-installer/src-tauri/target/release/bundle/appimage/*.sigstore.json
           if-no-files-found: error

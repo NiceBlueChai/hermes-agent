@@ -1207,6 +1207,40 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         self.assertIn("Acquire::Retries=3", windows_step)
         self.assertIn("Acquire::Retries=3", unix_step)
 
+    def test_unix_release_workflow_supports_signed_release_artifacts(self):
+        """Unix release workflow should have signed macOS and Linux artifact paths."""
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+        windows_unix_job = windows_workflow.split("\n  unix-packaged-runtime-smoke:", 1)[1]
+
+        self.assertIn("unsigned-smoke-only:", unix_workflow)
+        self.assertIn("id-token: write", unix_workflow)
+        self.assertIn("unsigned-smoke-only:", windows_workflow)
+        self.assertIn("id-token: write", windows_workflow)
+        for workflow_text in (unix_workflow, windows_unix_job):
+            self.assertIn("Report unsigned Unix smoke mode", workflow_text)
+            self.assertIn("Validate Apple signing configuration", workflow_text)
+            self.assertIn("Export Apple signing environment", workflow_text)
+            self.assertIn("APPLE_CERTIFICATE", workflow_text)
+            self.assertIn("APPLE_CERTIFICATE_PASSWORD", workflow_text)
+            self.assertIn("APPLE_ID", workflow_text)
+            self.assertIn("APPLE_PASSWORD", workflow_text)
+            self.assertIn("APPLE_TEAM_ID", workflow_text)
+            self.assertIn("Verify notarized macOS artifacts", workflow_text)
+            self.assertIn("xcrun stapler validate", workflow_text)
+            self.assertIn("spctl -a -vvv", workflow_text)
+            self.assertIn("Sign Linux installer with Sigstore", workflow_text)
+            self.assertIn("sigstore/gh-action-sigstore-python@", workflow_text)
+            self.assertIn("*.AppImage", workflow_text)
+            self.assertIn("Verify Linux Sigstore bundles", workflow_text)
+            self.assertIn("Upload Linux Sigstore bundles", workflow_text)
+            self.assertIn("*.sigstore.json", workflow_text)
+
     def test_installer_workflows_accept_optional_audited_archives(self):
         repo_root = Path(__file__).resolve().parents[2]
         windows_workflow = (
