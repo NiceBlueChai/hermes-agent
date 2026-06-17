@@ -401,6 +401,12 @@ or repository subpaths that merely end with `/releases/tag/<tag>` cannot unlock 
 - [Unix smoke run 27706430156](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27706430156) passed on head
   `cf124c8cdd4ebe6b8fac721d82625793d54d41b2`, revalidating Linux and macOS packaged runtime lifecycle smoke after the
   Rust manager release URL parser was tightened to reject whitespace in owner, repository, and tag path segments.
+- [Unsigned Windows smoke run 27708129591](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27708129591)
+  passed on head `b5263f0631b1e79837e168dc5be5ba17f9181913`, revalidating fallback burn-down validation after
+  `--add-evidence` was changed to reject `releaseNotes` rewrites for an existing signed release artifact.
+- [Unix smoke run 27708129552](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27708129552) passed on head
+  `b5263f0631b1e79837e168dc5be5ba17f9181913`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  `--add-evidence` was changed to reject `releaseNotes` rewrites for an existing signed release artifact.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 - Local validator and manager tests now reject split evidence where a platform's required checks are spread across
