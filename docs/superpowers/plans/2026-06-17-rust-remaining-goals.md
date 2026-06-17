@@ -257,7 +257,8 @@ evidence. The command forces `signed: true`, validates the platform and checks a
 checks for the same release artifact. Complete evidence is artifact-scoped: for each platform, one signed `release` +
 `url` + `commit` group must cover every required check, so multiple partial release artifacts cannot be combined to
 unlock `canRunFullBootstrap` or hide missing checks from `--print-template`. Any evidence that claims `release-notes`
-must also carry a HTTPS `releaseNotes` URL so the final gate points at the exact published notes.
+must also carry a HTTPS `releaseNotes` URL so the final gate points at the exact published notes. The release URL and
+release-notes URL must both include the claimed `release` tag, preventing evidence for one tag from unlocking another.
 
 **Evidence:**
 
@@ -336,6 +337,8 @@ must also carry a HTTPS `releaseNotes` URL so the final gate points at the exact
   without hand-listing them.
 - Local validator and manager tests now reject `release-notes` evidence without a HTTPS `releaseNotes` URL, and
   `--print-template` includes the field for signed release operators.
+- Local validator and manager tests now reject evidence whose release URL or release-notes URL points at a different tag
+  than the claimed `release` value.
 
 **Completion standard:**
 

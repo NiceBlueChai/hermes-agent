@@ -279,10 +279,12 @@ def validate_evidence(
         platform = require_nested_string(item, "platform", entry_id, "evidence")
         if platform not in required_evidence:
             raise RuntimeError(f"entry {entry_id} has undeclared evidence platform: {platform}")
-        require_nested_string(item, "release", entry_id, "evidence")
+        release = require_nested_string(item, "release", entry_id, "evidence")
         url = require_nested_string(item, "url", entry_id, "evidence")
         if not url.startswith("https://"):
             raise RuntimeError(f"entry {entry_id} evidence url must be HTTPS: {url}")
+        if release not in url:
+            raise RuntimeError(f"entry {entry_id} evidence url must include release tag: {release}")
         commit = item.get("commit")
         if not isinstance(commit, str) or not COMMIT_RE.match(commit):
             raise RuntimeError(f"entry {entry_id} evidence commit must be a 40-character git SHA")
@@ -293,6 +295,10 @@ def validate_evidence(
             release_notes = item.get("releaseNotes")
             if not isinstance(release_notes, str) or not release_notes.startswith("https://"):
                 raise RuntimeError(f"entry {entry_id} evidence releaseNotes must be HTTPS")
+            if release not in release_notes:
+                raise RuntimeError(
+                    f"entry {entry_id} evidence releaseNotes must include release tag: {release}"
+                )
         allowed_checks = required_evidence[platform]
         for check in checks:
             if check not in allowed_checks:
@@ -339,6 +345,7 @@ def platform_has_complete_evidence_artifact(
             or not release.strip()
             or not isinstance(url, str)
             or not url.startswith("https://")
+            or release not in url
             or not isinstance(commit, str)
             or not COMMIT_RE.match(commit)
             or not isinstance(checks, list)
@@ -347,6 +354,8 @@ def platform_has_complete_evidence_artifact(
         if "release-notes" in checks and (
             not isinstance(release_notes, str) or not release_notes.startswith("https://")
         ):
+            continue
+        if "release-notes" in checks and release not in release_notes:
             continue
         artifact = (release, url, commit)
         checks_by_artifact.setdefault(artifact, set()).update(

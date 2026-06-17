@@ -948,6 +948,7 @@ fn platform_has_complete_release_evidence(
             || evidence.platform != platform
             || evidence.release.trim().is_empty()
             || !evidence.url.starts_with("https://")
+            || !evidence.url.contains(&evidence.release)
             || release_notes_check_missing_link(evidence)
             || !is_git_commit_sha(&evidence.commit)
         {
@@ -968,7 +969,7 @@ fn release_notes_check_missing_link(evidence: &FallbackEvidence) -> bool {
         && !evidence
             .release_notes
             .as_deref()
-            .is_some_and(|url| url.starts_with("https://"))
+            .is_some_and(|url| url.starts_with("https://") && url.contains(&evidence.release))
 }
 
 fn is_git_commit_sha(value: &str) -> bool {
@@ -3360,6 +3361,22 @@ mod tests {
     }
 
     #[test]
+    fn full_bootstrap_gate_rejects_release_url_for_different_tag() {
+        let registry = full_bootstrap_registry_fixture_with_url(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            "https://example.invalid/releases/tag/v8.8.8",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
     fn full_bootstrap_gate_rejects_platform_checks_split_across_releases() {
         let required_platforms = ["windows", "macos", "linux"];
         let required_evidence = required_platforms
@@ -3449,6 +3466,36 @@ mod tests {
         signed: bool,
         commit: String,
     ) -> String {
+        full_bootstrap_registry_fixture_with_signed_commit_and_url(
+            platforms,
+            checks,
+            signed,
+            commit,
+            "https://example.invalid/releases/tag/v9.9.9",
+        )
+    }
+
+    fn full_bootstrap_registry_fixture_with_url(
+        platforms: &[&str],
+        checks: &[&str],
+        url: &str,
+    ) -> String {
+        full_bootstrap_registry_fixture_with_signed_commit_and_url(
+            platforms,
+            checks,
+            true,
+            "a".repeat(40),
+            url,
+        )
+    }
+
+    fn full_bootstrap_registry_fixture_with_signed_commit_and_url(
+        platforms: &[&str],
+        checks: &[&str],
+        signed: bool,
+        commit: String,
+        url: &str,
+    ) -> String {
         let required_platforms = ["windows", "macos", "linux"];
         let required_evidence = required_platforms
             .iter()
@@ -3470,8 +3517,8 @@ mod tests {
                 serde_json::json!({
                     "platform": platform,
                     "release": "v9.9.9",
-                    "url": "https://example.invalid/releases/v9.9.9",
-                    "releaseNotes": "https://example.invalid/releases/v9.9.9",
+                    "url": url,
+                    "releaseNotes": url,
                     "commit": commit,
                     "signed": signed,
                     "checks": checks

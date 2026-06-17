@@ -231,7 +231,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": "windows",
                                         "release": "v1.0.0",
-                                        "url": "https://example.invalid/release",
+                                        "url": "https://example.invalid/releases/tag/v1.0.0",
                                         "commit": "a" * 40,
                                         "signed": True,
                                         "checks": ["unreviewed-check"],
@@ -280,7 +280,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": "windows",
                                         "release": "v1.0.0",
-                                        "url": "https://example.invalid/release",
+                                        "url": "https://example.invalid/releases/tag/v1.0.0",
                                         "commit": "a" * 40,
                                         "signed": False,
                                         "checks": ["packaged-native-bridge-smoke"],
@@ -329,7 +329,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": "windows",
                                         "release": "v1.0.0",
-                                        "url": "https://example.invalid/release",
+                                        "url": "https://example.invalid/releases/tag/v1.0.0",
                                         "signed": True,
                                         "checks": ["packaged-native-bridge-smoke"],
                                     }
@@ -377,7 +377,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                     {
                                         "platform": "windows",
                                         "release": "v1.0.0",
-                                        "url": "https://example.invalid/release",
+                                        "url": "https://example.invalid/releases/tag/v1.0.0",
                                         "commit": "a" * 40,
                                         "signed": True,
                                         "checks": ["release-notes"],
@@ -394,6 +394,56 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("releaseNotes must be HTTPS", result.stderr)
+
+    def test_evidence_urls_must_reference_release_tag(self) -> None:
+        """Release evidence URLs must point at the same release tag they claim."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: mismatched-release-url"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "mismatched-release-url",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": "windows",
+                                        "release": "v1.0.0",
+                                        "url": "https://example.invalid/releases/tag/v2.0.0",
+                                        "releaseNotes": "https://example.invalid/releases/tag/v2.0.0",
+                                        "commit": "a" * 40,
+                                        "signed": True,
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("evidence url must include release tag: v1.0.0", result.stderr)
 
     def test_require_complete_passes_when_signed_evidence_covers_all_checks(self) -> None:
         """Release fallback removal can require complete signed evidence for one entry."""
