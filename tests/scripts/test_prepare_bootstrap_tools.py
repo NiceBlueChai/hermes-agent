@@ -1538,6 +1538,42 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         self.assertIn("--bootstrap-tools-dir apps/bootstrap-installer/src-tauri/bootstrap-tools", workflow)
         self.assertIn("--wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse", workflow)
 
+    def test_signed_installer_workflows_print_fallback_evidence_commands(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+        windows_unix_job = windows_workflow.split("\n  unix-packaged-runtime-smoke:", 1)[1]
+        evidence_marker = "Record signed fallback burn-down evidence with:"
+
+        self.assertIn(evidence_marker, windows_workflow)
+        self.assertIn("--add-evidence desktop-bootstrap-script-fallback", windows_workflow)
+        self.assertIn("--platform windows", windows_workflow)
+        self.assertIn("--signature authenticode", windows_workflow)
+        self.assertLess(
+            windows_workflow.index("- name: Validate Python runtime artifacts"),
+            windows_workflow.index("- name: Print signed fallback evidence command"),
+        )
+        self.assertLess(
+            windows_workflow.index("- name: Print signed fallback evidence command"),
+            windows_workflow.index("- name: Upload NSIS installer"),
+        )
+
+        for workflow_text, platform, signature in (
+            (unix_workflow, "macos", "developer-id-notarized"),
+            (unix_workflow, "linux", "sigstore"),
+            (windows_unix_job, "macos", "developer-id-notarized"),
+            (windows_unix_job, "linux", "sigstore"),
+        ):
+            with self.subTest(platform=platform, signature=signature):
+                self.assertIn(evidence_marker, workflow_text)
+                self.assertIn("--add-evidence desktop-bootstrap-script-fallback", workflow_text)
+                self.assertIn(f"--platform {platform}", workflow_text)
+                self.assertIn(f"--signature {signature}", workflow_text)
+
     def test_tauri_bundle_declares_self_contained_resources(self):
         repo_root = Path(__file__).resolve().parents[2]
         config_path = repo_root / "apps" / "bootstrap-installer" / "src-tauri" / "tauri.conf.json"

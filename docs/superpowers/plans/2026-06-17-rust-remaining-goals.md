@@ -285,7 +285,9 @@ The Unix release paths now have a signed path instead of being unsigned-only: th
 dispatchable Windows workflow's Unix smoke job both use `unsigned-smoke-only=true` to preserve fork smoke coverage, while
 signed mode validates Apple signing configuration, exports Tauri's Apple signing/notarization environment only for signed
 macOS jobs, verifies notarized macOS artifacts with `codesign`, `spctl`, and `stapler`, and signs Linux AppImages with
-Sigstore before uploading the Sigstore bundles.
+Sigstore before uploading the Sigstore bundles. Signed Windows, macOS, and Linux workflow paths now print the exact
+`validate_fallback_burn_down.py --add-evidence` command with the required platform signature type after artifact
+validation and before upload, so release operators can record evidence without hand-authoring the registry shape.
 
 **Evidence:**
 
@@ -518,6 +520,8 @@ Sigstore before uploading the Sigstore bundles.
 - Local validator and manager tests now reject full-bootstrap signed evidence without the expected platform signature
   type, and `--print-template desktop-bootstrap-script-fallback` emits the required `signature` values for release
   operators.
+- Local workflow tests now require signed installer workflows to print the fallback burn-down evidence command for
+  Windows `authenticode`, macOS `developer-id-notarized`, and Linux `sigstore` after release artifact verification.
 
 **Completion standard:**
 

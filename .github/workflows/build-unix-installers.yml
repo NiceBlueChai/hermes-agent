@@ -529,6 +529,39 @@ jobs:
                   )"
                   test -n "${bundle}"
 
+            - name: Print signed fallback evidence command
+              if: ${{ !inputs['unsigned-smoke-only'] }}
+              run: |
+                  set -euo pipefail
+                  echo "Record signed fallback burn-down evidence with:"
+                  release_url="https://github.com/${{ github.repository }}/releases/tag/<release-tag>"
+                  if [ "${{ matrix.platform }}" = "macos" ]; then
+                      command=(
+                          python scripts/validate_fallback_burn_down.py
+                          --add-evidence desktop-bootstrap-script-fallback
+                          --platform macos
+                          --release "<release-tag>"
+                          --url "${release_url}"
+                          --release-notes "${release_url}"
+                          --commit "${{ github.sha }}"
+                          --all-required-checks
+                          --signature developer-id-notarized
+                      )
+                  else
+                      command=(
+                          python scripts/validate_fallback_burn_down.py
+                          --add-evidence desktop-bootstrap-script-fallback
+                          --platform linux
+                          --release "<release-tag>"
+                          --url "${release_url}"
+                          --release-notes "${release_url}"
+                          --commit "${{ github.sha }}"
+                          --all-required-checks
+                          --signature sigstore
+                      )
+                  fi
+                  echo "${command[*]}"
+
             - name: Upload installer artifacts
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
               with:
