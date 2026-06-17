@@ -109,7 +109,8 @@ Windows and Unix installer workflows run that gate before packaging proceeds pas
 fork run `https://github.com/NiceBlueChai/hermes-agent/actions/runs/27684717379` passed on head
 `e64c1a3b8882baefd08031bb378740a4b54f86f9`, including the Python runtime default gate, runtime resource smoke,
 lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact upload, and source
-artifact validation.
+artifact validation. Local tests now prove the default gate rejects release notes that omit the manifest audit fields,
+the signed installer size comparison, the Python runtime archive source, or the Python security-update rebuild policy.
 
 **Completion standard:**
 

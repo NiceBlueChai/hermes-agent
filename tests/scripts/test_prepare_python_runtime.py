@@ -278,6 +278,38 @@ class PreparePythonRuntimeTests(unittest.TestCase):
         self.assertIn("python scripts/validate_python_runtime_default_gate.py", windows_workflow)
         self.assertIn("python scripts/validate_python_runtime_default_gate.py", unix_workflow)
 
+    def test_python_runtime_default_gate_rejects_missing_release_decision_details(self):
+        module = _load_default_gate_module()
+        repo_root = Path(__file__).resolve().parents[2]
+        doc_text = (repo_root / "docs" / "release" / "python-runtime-default-gate.md").read_text(encoding="utf-8")
+        mutations = {
+            "release manifest audit": doc_text.replace(
+                "actual `python-runtime-manifest.json` size, SHA-256, Python tag, platform, and arch",
+                "runtime manifest summary",
+            ),
+            "signed installer size comparison": doc_text.replace(
+                "compare the signed installer size with and without the runtime bundle",
+                "record installer size notes",
+            ),
+            "security rebuild policy": doc_text.replace(
+                "must be rebuilt when the bundled Python patch release receives a security update",
+                "must be reviewed when the bundled Python patch release receives a security update",
+            ),
+            "release notes runtime source": doc_text.replace(
+                "identify the Python runtime version and the archive source used for the signed build",
+                "mention the bundled runtime",
+            ),
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for expected_label, mutated_text in mutations.items():
+                doc_path = Path(tmp) / f"{expected_label.replace(' ', '-')}.md"
+                doc_path.write_text(mutated_text, encoding="utf-8")
+
+                with self.subTest(expected_label=expected_label):
+                    with self.assertRaisesRegex(RuntimeError, expected_label):
+                        module.validate_default_gate_doc(doc_path)
+
 
 if __name__ == "__main__":
     unittest.main()
