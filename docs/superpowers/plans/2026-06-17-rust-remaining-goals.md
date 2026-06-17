@@ -567,6 +567,15 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   passed on head `823268a8ebee9cdbab0d3b7f14a7bedc3c8eef20`, revalidating Windows built binary smoke, Python runtime
   resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact upload,
   and Python runtime artifact validation after the signed fallback evidence command artifact step was added.
+- [Unix smoke run 27724315888](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27724315888) passed on head
+  `e30fcf2acbc48105e03a8734cbba6d776f02e372`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  the signed fallback evidence JSON artifact was added. The JSON generation/upload step was parsed by GitHub and
+  skipped in unsigned smoke mode.
+- [Unsigned Windows smoke run 27724317636](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27724317636)
+  passed on head `e30fcf2acbc48105e03a8734cbba6d776f02e372`, revalidating Windows built binary smoke, Python runtime
+  resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact upload,
+  and Python runtime artifact validation after the signed fallback evidence JSON artifact was added. The JSON
+  generation/upload step was parsed by GitHub and skipped in unsigned smoke mode.
 
 **Completion standard:**
 
