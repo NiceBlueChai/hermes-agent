@@ -30,6 +30,8 @@ validators, GitHub Actions packaging workflows, PowerShell/POSIX installer fallb
 
 ## Goal 1: Document Remaining Goals In Repository
 
+**Status:** Complete on branch. Added by `85ea59e73 docs(rust): 记录剩余目标验收标准`.
+
 **Completion standard:**
 
 - This file exists and lists all remaining release goals with concrete completion standards.
@@ -43,6 +45,9 @@ git diff --check
 ```
 
 ## Goal 2: Lock Windows Release Artifact Validation Order
+
+**Status:** Complete on branch. Verified with
+`python -m unittest tests.scripts.test_prepare_bootstrap_tools tests.scripts.test_validate_installer_artifacts`.
 
 **Completion standard:**
 
