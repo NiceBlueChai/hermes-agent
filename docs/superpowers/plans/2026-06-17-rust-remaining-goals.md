@@ -254,7 +254,8 @@ generate the missing evidence skeleton instead of hand-authoring the JSON shape.
 --commit <40-char-sha> --check <check>` to record signed release evidence; the command forces `signed: true`, validates
 the platform and checks against the registry contract, and merges checks for the same release artifact. Complete
 evidence is artifact-scoped: for each platform, one signed `release` + `url` + `commit` group must cover every required
-check, so multiple partial release artifacts cannot be combined to unlock `canRunFullBootstrap`.
+check, so multiple partial release artifacts cannot be combined to unlock `canRunFullBootstrap` or hide missing checks
+from `--print-template`.
 
 **Evidence:**
 
@@ -309,6 +310,8 @@ check, so multiple partial release artifacts cannot be combined to unlock `canRu
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 - Local validator and manager tests now reject split evidence where a platform's required checks are spread across
   multiple signed release artifacts; every platform needs one complete signed artifact group.
+- Local validator tests now prove `--print-template` reports a missing platform evidence skeleton when checks are split
+  across multiple signed release artifacts.
 
 **Completion standard:**
 

@@ -67,11 +67,10 @@ def evidence_template(registry_path: Path, entry_id: str) -> dict[str, Any]:
     for entry in payload.get("entries", []):
         if isinstance(entry, dict) and entry.get("id") == entry_id:
             required = validate_required_evidence(entry, entry_id)
-            checks_by_platform = collected_evidence_checks(entry, required)
             evidence = []
             for platform, required_checks in required.items():
-                missing = sorted(required_checks - checks_by_platform.get(platform, set()))
-                if not missing:
+                complete = platform_has_complete_evidence_artifact(entry, platform, required_checks)
+                if complete:
                     continue
                 evidence.append(
                     {
@@ -80,7 +79,7 @@ def evidence_template(registry_path: Path, entry_id: str) -> dict[str, Any]:
                         "url": "https://github.com/OWNER/REPO/releases/tag/vX.Y.Z",
                         "commit": "<40-character-git-sha>",
                         "signed": True,
-                        "checks": missing,
+                        "checks": sorted(required_checks),
                     }
                 )
             return {"entryId": entry_id, "evidence": evidence}

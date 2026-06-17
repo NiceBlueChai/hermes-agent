@@ -558,6 +558,76 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
             ],
         )
 
+    def test_print_template_treats_split_release_evidence_as_incomplete(self) -> None:
+        """Template generation should not let split release evidence hide missing checks."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: split-template-evidence"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "split-template-evidence",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["can-run-full-bootstrap", "release-notes"],
+                                    }
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": "windows",
+                                        "release": "v1.0.0",
+                                        "url": "https://example.invalid/releases/v1.0.0/windows",
+                                        "commit": "a" * 40,
+                                        "signed": True,
+                                        "checks": ["can-run-full-bootstrap"],
+                                    },
+                                    {
+                                        "platform": "windows",
+                                        "release": "v1.0.1",
+                                        "url": "https://example.invalid/releases/v1.0.1/windows",
+                                        "commit": "b" * 40,
+                                        "signed": True,
+                                        "checks": ["release-notes"],
+                                    },
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root, "--print-template", "split-template-evidence")
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        template = json.loads(result.stdout)
+        self.assertEqual(
+            template["evidence"],
+            [
+                {
+                    "platform": "windows",
+                    "release": "vX.Y.Z",
+                    "url": "https://github.com/OWNER/REPO/releases/tag/vX.Y.Z",
+                    "commit": "<40-character-git-sha>",
+                    "signed": True,
+                    "checks": ["can-run-full-bootstrap", "release-notes"],
+                }
+            ],
+        )
+
     def test_add_evidence_appends_signed_release_evidence(self) -> None:
         """Release operators can record signed evidence without hand-editing JSON."""
         with tempfile.TemporaryDirectory() as tmp:
