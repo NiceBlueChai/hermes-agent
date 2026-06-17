@@ -254,11 +254,12 @@ generate the missing evidence skeleton instead of hand-authoring the JSON shape.
 --release-notes <https-release-notes-url> --commit <40-char-sha> --all-required-checks` to record complete signed release
 evidence for one platform without hand-listing checks; use repeated `--check <check>` only for deliberate partial
 evidence. The command forces `signed: true`, validates the platform and checks against the registry contract, and merges
-checks for the same release artifact. Complete evidence is artifact-scoped: for each platform, one signed `release` +
-`url` + `commit` group must cover every required check, so multiple partial release artifacts cannot be combined to
-unlock `canRunFullBootstrap` or hide missing checks from `--print-template`. Any evidence that claims `release-notes`
-must also carry a HTTPS `releaseNotes` URL so the final gate points at the exact published notes. The release URL and
-release-notes URL must both include the claimed `release` tag, preventing evidence for one tag from unlocking another.
+checks for the same release artifact, but refuses to silently rewrite an existing `releaseNotes` URL for that artifact.
+Complete evidence is artifact-scoped: for each platform, one signed `release` + `url` + `commit` group must cover every
+required check, so multiple partial release artifacts cannot be combined to unlock `canRunFullBootstrap` or hide missing
+checks from `--print-template`. Any evidence that claims `release-notes` must also carry a HTTPS `releaseNotes` URL so
+the final gate points at the exact published notes. The release URL and release-notes URL must both include the claimed
+`release` tag, preventing evidence for one tag from unlocking another.
 Complete Windows, macOS, and Linux evidence must also share the same `release` tag and `commit` SHA, so platform
 evidence from different signed releases cannot be stitched together to unlock the final gate. Evidence `url` and
 `releaseNotes` values must point at GitHub release tag pages for the same repository, matching the generated
@@ -433,6 +434,8 @@ or repository subpaths that merely end with `/releases/tag/<tag>` cannot unlock 
   be counted as signed release evidence.
 - Local manager tests now reject GitHub release URLs whose owner, repository, or tag path segments contain whitespace,
   matching the Python fallback burn-down validator's GitHub release URL shape.
+- Local validator tests now reject `--add-evidence` updates that would rewrite the `releaseNotes` URL for an existing
+  signed release artifact, keeping recorded release notes immutable once attached.
 
 **Completion standard:**
 

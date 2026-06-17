@@ -153,9 +153,17 @@ def add_signed_evidence(
     if matching is None:
         evidence.append(new_item)
     else:
-        matching["checks"] = merge_checks(matching.get("checks"), resolved_checks)
         if "releaseNotes" in new_item:
+            existing_release_notes = matching.get("releaseNotes")
+            if (
+                isinstance(existing_release_notes, str)
+                and existing_release_notes != new_item["releaseNotes"]
+            ):
+                raise RuntimeError(
+                    f"entry {entry_id} has conflicting releaseNotes for release artifact: {release}"
+                )
             matching["releaseNotes"] = new_item["releaseNotes"]
+        matching["checks"] = merge_checks(matching.get("checks"), resolved_checks)
 
     validate_evidence(target, entry_id, required)
     registry_path.write_text(json.dumps(payload, indent=4) + "\n", encoding="utf-8")

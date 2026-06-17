@@ -1482,6 +1482,72 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
             ["can-run-full-bootstrap", "release-notes"],
         )
 
+    def test_add_evidence_rejects_conflicting_release_notes_without_mutating_registry(self) -> None:
+        """Repeated signed evidence updates must not silently rewrite release notes."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: conflicting-add-release-notes"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            original = {
+                "schemaVersion": 1,
+                "entries": [
+                    {
+                        "id": "conflicting-add-release-notes",
+                        "owner": "desktop",
+                        "file": "src/entry.js",
+                        "marker": marker,
+                        "fallback": "Fallback description.",
+                        "removalGate": "Release evidence gate.",
+                        "requiredEvidence": [
+                            {
+                                "platform": "linux",
+                                "checks": ["can-run-full-bootstrap", "release-notes"],
+                            }
+                        ],
+                        "evidence": [
+                            {
+                                "platform": "linux",
+                                "release": "v1.0.0",
+                                "url": VALID_RELEASE_V1_URL,
+                                "releaseNotes": VALID_RELEASE_V1_URL,
+                                "commit": "b" * 40,
+                                "signed": True,
+                                "checks": ["can-run-full-bootstrap"],
+                            }
+                        ],
+                    }
+                ],
+            }
+            registry.write_text(json.dumps(original), encoding="utf-8")
+
+            result = run_validator(
+                registry,
+                root,
+                "--add-evidence",
+                "conflicting-add-release-notes",
+                "--platform",
+                "linux",
+                "--release",
+                "v1.0.0",
+                "--url",
+                VALID_RELEASE_V1_URL,
+                "--release-notes",
+                f"{VALID_RELEASE_V1_URL}?notes=changed",
+                "--commit",
+                "b" * 40,
+                "--check",
+                "release-notes",
+            )
+
+            payload = json.loads(registry.read_text(encoding="utf-8"))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("conflicting releaseNotes for release artifact", result.stderr)
+        self.assertEqual(payload, original)
+
     def test_add_evidence_rejects_undeclared_check_without_mutating_registry(self) -> None:
         """Evidence recording should fail before writing undeclared checks."""
         with tempfile.TemporaryDirectory() as tmp:
