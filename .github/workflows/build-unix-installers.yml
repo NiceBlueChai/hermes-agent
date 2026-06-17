@@ -114,8 +114,15 @@ jobs:
                       echo "::error::Missing signed release evidence metadata: ${missing[*]}"
                       exit 1
                   fi
-                  if [[ "${HERMES_RELEASE_NOTES_URL}" != *"${HERMES_RELEASE_TAG}"* ]]; then
-                      echo "::error::release-notes-url must include release-tag for fallback evidence validation."
+                  case "${HERMES_RELEASE_TAG}" in
+                      *[[:space:]/]*)
+                          echo "::error::release-tag must be a single GitHub tag segment."
+                          exit 1
+                          ;;
+                  esac
+                  expected_release_url="https://github.com/${{ github.repository }}/releases/tag/${HERMES_RELEASE_TAG}"
+                  if [ "${HERMES_RELEASE_NOTES_URL}" != "${expected_release_url}" ]; then
+                      echo "::error::release-notes-url must equal GitHub release tag URL: ${expected_release_url}"
                       exit 1
                   fi
                   echo "Signed release evidence metadata is present."

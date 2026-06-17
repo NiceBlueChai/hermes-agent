@@ -96,8 +96,13 @@ jobs:
             Write-Error "Missing signed release evidence metadata: $($missing -join ', ')"
             exit 1
           }
-          if (-not $env:HERMES_RELEASE_NOTES_URL.Contains($env:HERMES_RELEASE_TAG)) {
-            Write-Error "release-notes-url must include release-tag for fallback evidence validation."
+          if ($env:HERMES_RELEASE_TAG -match "[\s/]") {
+            Write-Error "release-tag must be a single GitHub tag segment."
+            exit 1
+          }
+          $expectedReleaseUrl = "https://github.com/${{ github.repository }}/releases/tag/$env:HERMES_RELEASE_TAG"
+          if ($env:HERMES_RELEASE_NOTES_URL -ne $expectedReleaseUrl) {
+            Write-Error "release-notes-url must equal GitHub release tag URL: $expectedReleaseUrl"
             exit 1
           }
           Write-Host "Signed release evidence metadata is present."
@@ -529,8 +534,15 @@ jobs:
             echo "::error::Missing signed release evidence metadata: ${missing[*]}"
             exit 1
           fi
-          if [[ "${HERMES_RELEASE_NOTES_URL}" != *"${HERMES_RELEASE_TAG}"* ]]; then
-            echo "::error::release-notes-url must include release-tag for fallback evidence validation."
+          case "${HERMES_RELEASE_TAG}" in
+            *[[:space:]/]*)
+              echo "::error::release-tag must be a single GitHub tag segment."
+              exit 1
+              ;;
+          esac
+          expected_release_url="https://github.com/${{ github.repository }}/releases/tag/${HERMES_RELEASE_TAG}"
+          if [ "${HERMES_RELEASE_NOTES_URL}" != "${expected_release_url}" ]; then
+            echo "::error::release-notes-url must equal GitHub release tag URL: ${expected_release_url}"
             exit 1
           fi
           echo "Signed release evidence metadata is present."
