@@ -15,6 +15,11 @@ on:
         description: Optional audited Hermes source archive, in NAME=HTTPS_URL=SHA256 form.
         required: false
         type: string
+      unsigned-smoke-only:
+        description: Run build, self-checks, and validators without signing or uploading installer binaries.
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -180,7 +185,14 @@ jobs:
         run: npm run tauri:build
         working-directory: apps/bootstrap-installer
 
+      - name: Report unsigned smoke mode
+        if: ${{ inputs['unsigned-smoke-only'] }}
+        run: >
+          echo "Unsigned smoke builds are not release artifacts;
+          signing and installer binary uploads are skipped."
+
       - name: Azure login (OIDC)
+        if: ${{ !inputs['unsigned-smoke-only'] }}
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -188,6 +200,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign Hermes-Setup.exe with Azure Artifact Signing
+        if: ${{ !inputs['unsigned-smoke-only'] }}
         uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82  # v2
         with:
           endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
@@ -202,6 +215,7 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Verify signed installer artifacts
+        if: ${{ !inputs['unsigned-smoke-only'] }}
         run: |
           $artifacts = @(
             Get-Item "apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup.exe"
@@ -301,6 +315,7 @@ jobs:
           --max-archive-bytes 268435456
 
       - name: Upload NSIS installer
+        if: ${{ !inputs['unsigned-smoke-only'] }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: Hermes-Setup-installer
@@ -308,6 +323,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload raw exe
+        if: ${{ !inputs['unsigned-smoke-only'] }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: Hermes-Setup-exe

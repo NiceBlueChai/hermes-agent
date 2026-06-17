@@ -1354,6 +1354,30 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             workflow.index("- name: Smoke built installer binary"),
         )
 
+    def test_windows_installer_workflow_has_explicit_unsigned_smoke_mode(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("unsigned-smoke-only:", workflow)
+        self.assertIn("${{ !inputs['unsigned-smoke-only'] }}", workflow)
+        self.assertIn("Unsigned smoke builds are not release artifacts", workflow)
+
+        for step_name in (
+            "Azure login (OIDC)",
+            "Sign Hermes-Setup.exe with Azure Artifact Signing",
+            "Verify signed installer artifacts",
+            "Upload NSIS installer",
+            "Upload raw exe",
+        ):
+            step = next(
+                section
+                for section in workflow.split("\n      - name: ")
+                if section.startswith(step_name)
+            )
+            self.assertIn("if: ${{ !inputs['unsigned-smoke-only'] }}", step)
+
     def test_windows_installer_workflow_validates_signed_outputs_before_upload(self):
         repo_root = Path(__file__).resolve().parents[2]
         workflow = (

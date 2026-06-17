@@ -92,8 +92,12 @@ git diff --check
 
 **Status:** In progress. Windows workflow now builds a Python runtime archive by default, keeps external audited archive
 override support, has a Python runtime lifecycle smoke, and `--self-check-lifecycle` extracts a manifest-owned runtime
-archive into a temporary directory. Full completion still requires a signed Windows x64 CI run proving runtime,
-wheelhouse, venv, and dependency stages together.
+archive into a temporary directory. Fork run
+`https://github.com/NiceBlueChai/hermes-agent/actions/runs/27672497098` proved bootstrap tool bundle/validate,
+wheelhouse bundle/validate, Python runtime bundle/validate, and installer build. It failed at Azure OIDC login because
+the fork signing environment did not provide the Azure client and tenant values, so signed smoke evidence is still
+missing. The workflow also has an explicit `unsigned-smoke-only` dispatch mode for fork/runtime evidence; that mode
+skips signing and installer binary uploads and does not satisfy the signed-release completion standard.
 
 **Completion standard:**
 
@@ -113,6 +117,12 @@ git diff --check
 ```
 
 ## Goal 5: Extend Bundled Python Runtime Proof To macOS And Linux
+
+**Status:** In progress. Unix installer workflow now installs `uv`, builds Linux/macOS Python runtime archives by
+default when no external audited archive is supplied, validates the runtime manifest, includes runtime checks in built
+binary and packaged AppImage/.app smoke, and uploads the runtime bundle. GitHub could not manually dispatch
+`build-unix-installers.yml` from this branch because that workflow file is not present on the fork's default branch;
+CI proof still requires the workflow to exist on the default branch or to run through an existing dispatchable wrapper.
 
 **Completion standard:**
 
