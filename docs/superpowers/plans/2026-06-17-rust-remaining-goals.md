@@ -345,6 +345,9 @@ release-notes URL must both include the claimed `release` tag, preventing eviden
   `--print-template` includes the field for signed release operators.
 - Local validator and manager tests now reject evidence whose release URL or release-notes URL points at a different tag
   than the claimed `release` value.
+- Local validator tests now fail fast when `--add-evidence --all-required-checks` would record `release-notes` without
+  an explicit `--release-notes` URL, so signed release operators do not need to infer the missing flag from the generic
+  registry validation error.
 
 **Completion standard:**
 

@@ -116,6 +116,8 @@ def add_signed_evidence(
 
     required = validate_required_evidence(target, entry_id)
     resolved_checks = resolve_evidence_checks(required, platform, checks, all_required_checks)
+    if "release-notes" in resolved_checks and not release_notes:
+        raise RuntimeError("--add-evidence requires --release-notes when recording release-notes")
     new_item = {
         "platform": platform,
         "release": release,
