@@ -6669,6 +6669,9 @@ mod tests {
         header.set_size(0);
         header.set_mode(0o755);
         header.set_entry_type(entry_type);
+        if entry_type.is_symlink() || entry_type.is_hard_link() {
+            header.set_link_name("target").unwrap();
+        }
         header.set_cksum();
         archive.append(&header, std::io::empty()).unwrap();
         archive.finish().unwrap();
@@ -9848,6 +9851,70 @@ mod tests {
         assert!(!install_dir.with_extension("extracting").exists());
         assert!(!install_dir.exists());
         assert!(!root.join("escape.txt").exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn install_bundled_python_runtime_archive_rejects_tar_symlinks() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-python-runtime-symlink-tar-{}",
+            std::process::id()
+        ));
+        let archive = root.join("python-runtime.tar.gz");
+        let install_dir = root.join("home").join("python");
+        let source = PythonRuntimeArchiveSource {
+            path: archive.clone(),
+            name: "python-runtime.tar.gz".to_string(),
+            python_tag: "cp311".to_string(),
+        };
+        let plan = PythonRuntimeStagePlan {
+            uv: root.join("uv.exe"),
+            uv_cache_dir: root.join("uv-cache"),
+            python_install_dir: install_dir.clone(),
+            python_bin_dir: root.join("home").join("bin"),
+            runtime_archive: Some(source.clone()),
+        };
+        std::fs::create_dir_all(&root).unwrap();
+        write_test_tar_gz_special_entry(&archive, "cpython/python", tar::EntryType::Symlink);
+
+        let err = install_bundled_python_runtime_archive(&plan, &source).unwrap_err();
+
+        assert!(err.to_string().contains("unsupported link entry"));
+        assert!(!install_dir.with_extension("extracting").exists());
+        assert!(!install_dir.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn install_bundled_python_runtime_archive_rejects_non_regular_tar_entries() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-python-runtime-special-tar-{}",
+            std::process::id()
+        ));
+        let archive = root.join("python-runtime.tar.gz");
+        let install_dir = root.join("home").join("python");
+        let source = PythonRuntimeArchiveSource {
+            path: archive.clone(),
+            name: "python-runtime.tar.gz".to_string(),
+            python_tag: "cp311".to_string(),
+        };
+        let plan = PythonRuntimeStagePlan {
+            uv: root.join("uv.exe"),
+            uv_cache_dir: root.join("uv-cache"),
+            python_install_dir: install_dir.clone(),
+            python_bin_dir: root.join("home").join("bin"),
+            runtime_archive: Some(source.clone()),
+        };
+        std::fs::create_dir_all(&root).unwrap();
+        write_test_tar_gz_special_entry(&archive, "cpython/python", tar::EntryType::Fifo);
+
+        let err = install_bundled_python_runtime_archive(&plan, &source).unwrap_err();
+
+        assert!(err.to_string().contains("unsupported special entry"));
+        assert!(!install_dir.with_extension("extracting").exists());
+        assert!(!install_dir.exists());
 
         let _ = std::fs::remove_dir_all(&root);
     }

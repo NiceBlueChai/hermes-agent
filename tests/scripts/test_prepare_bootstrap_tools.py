@@ -1320,6 +1320,7 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         signature_validation = workflow.index("- name: Verify signed installer artifacts")
         raw_smoke = workflow.index("- name: Smoke built installer binary")
         lifecycle_smoke = workflow.index("- name: Smoke built installer lifecycle")
+        runtime_lifecycle_smoke = workflow.index("- name: Smoke built installer Python runtime lifecycle")
         artifact_validation = workflow.index("- name: Validate installer artifacts")
         runtime_validation = workflow.index("- name: Validate Python runtime artifacts")
         first_upload = workflow.index("- name: Upload NSIS installer")
@@ -1328,10 +1329,13 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         self.assertLess(signature_validation, raw_smoke)
         self.assertLess(raw_smoke, lifecycle_smoke)
         self.assertLess(lifecycle_smoke, artifact_validation)
+        self.assertLess(lifecycle_smoke, runtime_lifecycle_smoke)
+        self.assertLess(runtime_lifecycle_smoke, runtime_validation)
         self.assertLess(artifact_validation, first_upload)
         self.assertLess(runtime_validation, first_upload)
         self.assertIn("Hermes-Setup.exe --self-check", workflow)
         self.assertIn("Hermes-Setup.exe --self-check-lifecycle", workflow)
+        self.assertIn("--self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime", workflow)
         self.assertIn('"apps/bootstrap-installer/src-tauri/target/release/bundle/nsis/*.exe"', workflow)
         self.assertIn("--bootstrap-tools-dir apps/bootstrap-installer/src-tauri/bootstrap-tools", workflow)
         self.assertIn("--wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse", workflow)
@@ -1345,6 +1349,7 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
 
         self.assertIn("bootstrap-tools/", resources)
         self.assertIn("wheelhouse/", resources)
+        self.assertIn("python-runtime/", resources)
 
     def test_lifecycle_workflow_smokes_bootstrap_release_binary(self):
         repo_root = Path(__file__).resolve().parents[2]

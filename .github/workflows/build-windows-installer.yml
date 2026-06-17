@@ -241,6 +241,21 @@ jobs:
           --self-check-wheelhouse-platform windows
           --self-check-wheelhouse-arch x64
 
+      - name: Smoke built installer Python runtime lifecycle
+        if: ${{ inputs['python-runtime-archive'] != '' }}
+        run: >
+          .\apps\bootstrap-installer\src-tauri\target\release\Hermes-Setup.exe --self-check-lifecycle
+          --self-check-expect-commit "${{ github.sha }}"
+          --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
+          --self-check-bootstrap-tools-platform windows
+          --self-check-bootstrap-tools-arch x64
+          --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse
+          --self-check-wheelhouse-platform windows
+          --self-check-wheelhouse-arch x64
+          --self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime
+          --self-check-python-runtime-platform windows
+          --self-check-python-runtime-arch x64
+
       - name: Validate installer artifacts
         run: >
           python scripts/validate_installer_artifacts.py
