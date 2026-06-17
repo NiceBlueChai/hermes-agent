@@ -259,6 +259,8 @@ checks for the same release artifact. Complete evidence is artifact-scoped: for 
 unlock `canRunFullBootstrap` or hide missing checks from `--print-template`. Any evidence that claims `release-notes`
 must also carry a HTTPS `releaseNotes` URL so the final gate points at the exact published notes. The release URL and
 release-notes URL must both include the claimed `release` tag, preventing evidence for one tag from unlocking another.
+Complete Windows, macOS, and Linux evidence must also share the same `release` tag and `commit` SHA, so platform
+evidence from different signed releases cannot be stitched together to unlock the final gate.
 
 **Evidence:**
 
@@ -362,6 +364,8 @@ release-notes URL must both include the claimed `release` tag, preventing eviden
   registry validation error.
 - Local validator and manager tests now reject one signed release artifact carrying conflicting `releaseNotes` URLs, so
   the final `canRunFullBootstrap` gate points at one unambiguous published release-note target.
+- Local validator and manager tests now reject cross-platform evidence assembled from different signed release tags or
+  commits, so the final gate requires one shared signed release across Windows, macOS, and Linux.
 
 **Completion standard:**
 

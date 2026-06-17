@@ -604,6 +604,62 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing complete evidence for linux", result.stderr)
 
+    def test_require_complete_rejects_platforms_from_different_releases(self) -> None:
+        """All required platforms must be proven by one shared signed release."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: mixed-release-evidence"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            checks = ["can-run-full-bootstrap", "release-notes"]
+            evidence = []
+            for platform, release, commit in (
+                ("windows", "v1.0.0", "a" * 40),
+                ("macos", "v1.0.1", "b" * 40),
+                ("linux", "v1.0.1", "b" * 40),
+            ):
+                evidence.append(
+                    {
+                        "platform": platform,
+                        "release": release,
+                        "url": f"https://example.invalid/releases/{release}/{platform}",
+                        "releaseNotes": f"https://example.invalid/releases/{release}/notes",
+                        "commit": commit,
+                        "signed": True,
+                        "checks": checks,
+                    }
+                )
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "mixed-release-evidence",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {"platform": platform, "checks": checks}
+                                    for platform in ("windows", "macos", "linux")
+                                ],
+                                "evidence": evidence,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root, "--require-complete", "mixed-release-evidence")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing shared complete signed release evidence", result.stderr)
+
     def test_require_complete_rejects_platform_checks_split_across_releases(self) -> None:
         """Each platform must have one signed release artifact covering all checks."""
         with tempfile.TemporaryDirectory() as tmp:

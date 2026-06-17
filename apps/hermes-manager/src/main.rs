@@ -914,12 +914,25 @@ fn full_bootstrap_release_evidence_complete(entry: &FallbackBurnDownEntry) -> bo
         return false;
     }
 
-    FULL_BOOTSTRAP_RELEASE_PLATFORMS.iter().all(|platform| {
-        let Some(required_checks) = required.get(*platform) else {
+    let mut shared_release_keys: Option<BTreeSet<(String, String)>> = None;
+    for platform in FULL_BOOTSTRAP_RELEASE_PLATFORMS {
+        let Some(required_checks) = required.get(platform) else {
             return false;
         };
-        platform_has_complete_release_evidence(entry, platform, required_checks)
-    })
+        let release_keys = complete_release_evidence_keys(entry, platform, required_checks);
+        if release_keys.is_empty() {
+            return false;
+        }
+        shared_release_keys = Some(match shared_release_keys {
+            Some(existing_keys) => existing_keys
+                .intersection(&release_keys)
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            None => release_keys,
+        });
+    }
+
+    shared_release_keys.is_some_and(|release_keys| !release_keys.is_empty())
 }
 
 fn required_full_bootstrap_checks_by_platform(
@@ -937,11 +950,11 @@ fn required_full_bootstrap_checks_by_platform(
         .collect()
 }
 
-fn platform_has_complete_release_evidence(
+fn complete_release_evidence_keys(
     entry: &FallbackBurnDownEntry,
     platform: &str,
     required_checks: &BTreeSet<String>,
-) -> bool {
+) -> BTreeSet<(String, String)> {
     let mut checks_by_artifact: BTreeMap<(&str, &str, &str), BTreeSet<String>> = BTreeMap::new();
     let mut release_notes_by_artifact: BTreeMap<(&str, &str, &str), &str> = BTreeMap::new();
     let mut conflicted_artifacts: BTreeSet<(&str, &str, &str)> = BTreeSet::new();
@@ -979,9 +992,16 @@ fn platform_has_complete_release_evidence(
     }
     checks_by_artifact
         .iter()
-        .any(|(artifact, evidence_checks)| {
-            !conflicted_artifacts.contains(artifact) && required_checks.is_subset(evidence_checks)
+        .filter_map(|(artifact, evidence_checks)| {
+            if conflicted_artifacts.contains(artifact)
+                || !required_checks.is_subset(evidence_checks)
+            {
+                return None;
+            }
+            let (release, _url, commit) = *artifact;
+            Some((release.to_owned(), commit.to_owned()))
         })
+        .collect()
 }
 
 fn release_notes_check_missing_link(evidence: &FallbackEvidence) -> bool {
@@ -3306,6 +3326,56 @@ mod tests {
                 "repair-uninstall-native-resources",
             ],
         );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_platforms_from_different_releases() {
+        let required_platforms = ["windows", "macos", "linux"];
+        let required_evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "checks": ["can-run-full-bootstrap", "release-notes"]
+                })
+            })
+            .collect::<Vec<_>>();
+        let evidence = [
+            ("windows", "v9.9.9", "a".repeat(40)),
+            ("macos", "v9.9.10", "b".repeat(40)),
+            ("linux", "v9.9.10", "b".repeat(40)),
+        ]
+        .into_iter()
+        .map(|(platform, release, commit)| {
+            serde_json::json!({
+                "platform": platform,
+                "release": release,
+                "url": format!("https://example.invalid/releases/{release}/{platform}"),
+                "releaseNotes": format!("https://example.invalid/releases/{release}/notes"),
+                "commit": commit,
+                "signed": true,
+                "checks": ["can-run-full-bootstrap", "release-notes"]
+            })
+        })
+        .collect::<Vec<_>>();
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": required_evidence,
+                    "evidence": evidence
+                }
+            ]
+        })
+        .to_string();
 
         assert!(!can_run_full_bootstrap_from_registry_text(&registry));
     }
