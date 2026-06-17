@@ -103,7 +103,9 @@ That `unsigned-smoke-only` mode skips signing and installer binary uploads and d
 completion standard. A later unsigned fork run
 `https://github.com/NiceBlueChai/hermes-agent/actions/runs/27683435614` also passed on head
 `7e148815877498e3ae17951878ed60700ef68f41`, after `canRunFullBootstrap` became evidence-gated and signed mode gained
-an Azure signing configuration preflight. Missing signing secrets and variables now fail before installer build.
+an Azure signing configuration preflight. Missing signing secrets and variables now fail before installer build. The
+Python runtime default-inclusion note is now validated by `scripts/validate_python_runtime_default_gate.py`, and both
+Windows and Unix installer workflows run that gate before packaging proceeds past runtime validation.
 
 **Completion standard:**
 
@@ -118,6 +120,8 @@ an Azure signing configuration preflight. Missing signing secrets and variables 
 
 ```powershell
 python -m unittest tests.scripts.test_validate_installer_artifacts tests.scripts.test_prepare_bootstrap_tools
+python -m unittest tests.scripts.test_prepare_python_runtime
+python scripts/validate_python_runtime_default_gate.py
 cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml self_check_validates -- --nocapture
 git diff --check
 ```

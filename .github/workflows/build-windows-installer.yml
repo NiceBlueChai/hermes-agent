@@ -194,6 +194,9 @@ jobs:
           --arch x64
           --python-tag cp311
 
+      - name: Validate Python runtime default gate
+        run: python scripts/validate_python_runtime_default_gate.py
+
       - name: Bundle Hermes source archive
         if: ${{ inputs['source-archive'] != '' }}
         env:
@@ -549,6 +552,9 @@ jobs:
           --platform ${{ matrix.platform }}
           --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
           --python-tag cp311
+
+      - name: Validate Python runtime default gate
+        run: python scripts/validate_python_runtime_default_gate.py
 
       - name: Build installer
         env:

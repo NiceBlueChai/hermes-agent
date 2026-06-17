@@ -216,6 +216,9 @@ jobs:
                   --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
                   --python-tag cp311
 
+            - name: Validate Python runtime default gate
+              run: python scripts/validate_python_runtime_default_gate.py
+
             - name: Bundle Hermes source archive
               if: >-
                   ${{

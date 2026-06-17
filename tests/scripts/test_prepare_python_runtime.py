@@ -22,6 +22,17 @@ def _load_script_module():
     return module
 
 
+def _load_default_gate_module():
+    repo_root = Path(__file__).resolve().parents[2]
+    script_path = repo_root / "scripts" / "validate_python_runtime_default_gate.py"
+    spec = importlib.util.spec_from_file_location("_validate_python_runtime_default_gate", script_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 class PreparePythonRuntimeTests(unittest.TestCase):
     """Validate Python runtime manifest generation and release checks."""
 
@@ -252,6 +263,20 @@ class PreparePythonRuntimeTests(unittest.TestCase):
         self.assertIn("--wheelhouse-platform ${{ matrix.platform }}", unix_workflow)
         self.assertIn("--python-runtime-dir apps/bootstrap-installer/src-tauri/python-runtime", unix_workflow)
         self.assertIn("apps/bootstrap-installer/src-tauri/python-runtime/*", unix_workflow)
+
+    def test_python_runtime_default_gate_is_validated_in_release_workflows(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+        module = _load_default_gate_module()
+
+        module.validate_default_gate_doc(repo_root / "docs" / "release" / "python-runtime-default-gate.md")
+        self.assertIn("python scripts/validate_python_runtime_default_gate.py", windows_workflow)
+        self.assertIn("python scripts/validate_python_runtime_default_gate.py", unix_workflow)
 
 
 if __name__ == "__main__":
