@@ -126,6 +126,11 @@ jobs:
             Write-Error "Missing signed release evidence metadata: $($missing -join ', ')"
             exit 1
           }
+          $archivePattern = '^[^=\s]+=https://[^=\s]+=[0-9a-fA-F]{64}$'
+          if ($env:HERMES_PYTHON_RUNTIME_ARCHIVE -notmatch $archivePattern) {
+            Write-Error "python-runtime-archive must use NAME=HTTPS_URL=SHA256."
+            exit 1
+          }
           if ($env:HERMES_RELEASE_TAG -match "[\s/]") {
             Write-Error "release-tag must be a single GitHub tag segment."
             exit 1
@@ -633,6 +638,11 @@ jobs:
           fi
           if [ "${#missing[@]}" -gt 0 ]; then
             echo "::error::Missing signed release evidence metadata: ${missing[*]}"
+            exit 1
+          fi
+          archive_pattern='^[^=[:space:]]+=https://[^=[:space:]]+=[0-9a-fA-F]{64}$'
+          if ! [[ "${python_runtime_archive}" =~ ${archive_pattern} ]]; then
+            echo "::error::python runtime archive must use NAME=HTTPS_URL=SHA256."
             exit 1
           fi
           case "${HERMES_RELEASE_TAG}" in

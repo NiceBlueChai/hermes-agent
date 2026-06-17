@@ -146,6 +146,11 @@ jobs:
                       echo "::error::Missing signed release evidence metadata: ${missing[*]}"
                       exit 1
                   fi
+                  archive_pattern='^[^=[:space:]]+=https://[^=[:space:]]+=[0-9a-fA-F]{64}$'
+                  if ! [[ "${python_runtime_archive}" =~ ${archive_pattern} ]]; then
+                      echo "::error::python runtime archive must use NAME=HTTPS_URL=SHA256."
+                      exit 1
+                  fi
                   case "${HERMES_RELEASE_TAG}" in
                       *[[:space:]/]*)
                           echo "::error::release-tag must be a single GitHub tag segment."

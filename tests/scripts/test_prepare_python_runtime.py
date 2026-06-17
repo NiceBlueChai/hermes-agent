@@ -318,6 +318,24 @@ class PreparePythonRuntimeTests(unittest.TestCase):
                       unix_workflow)
         self.assertIn("missing+=(HERMES_${{ matrix.platform }}_PYTHON_RUNTIME_ARCHIVE)", unix_workflow)
 
+    def test_signed_release_workflows_validate_audited_python_runtime_archive_shape(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("$archivePattern = '^[^=\\s]+=https://[^=\\s]+=[0-9a-fA-F]{64}$'", windows_workflow)
+        self.assertIn("python-runtime-archive must use NAME=HTTPS_URL=SHA256.", windows_workflow)
+        self.assertIn("archive_pattern='^[^=[:space:]]+=https://[^=[:space:]]+=[0-9a-fA-F]{64}$'",
+                      windows_workflow)
+        self.assertIn("python runtime archive must use NAME=HTTPS_URL=SHA256.", windows_workflow)
+        self.assertIn("archive_pattern='^[^=[:space:]]+=https://[^=[:space:]]+=[0-9a-fA-F]{64}$'",
+                      unix_workflow)
+        self.assertIn("python runtime archive must use NAME=HTTPS_URL=SHA256.", unix_workflow)
+
     def test_python_runtime_default_gate_rejects_missing_release_decision_details(self):
         module = _load_default_gate_module()
         repo_root = Path(__file__).resolve().parents[2]
