@@ -445,6 +445,65 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("evidence url must include release tag: v1.0.0", result.stderr)
 
+    def test_same_release_artifact_rejects_conflicting_release_notes(self) -> None:
+        """One signed release artifact must point at one published release note URL."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: conflicting-release-notes"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "conflicting-release-notes",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["can-run-full-bootstrap", "release-notes"],
+                                    }
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": "windows",
+                                        "release": "v1.0.0",
+                                        "url": "https://example.invalid/releases/tag/v1.0.0",
+                                        "releaseNotes": "https://example.invalid/releases/tag/v1.0.0",
+                                        "commit": "a" * 40,
+                                        "signed": True,
+                                        "checks": ["release-notes"],
+                                    },
+                                    {
+                                        "platform": "windows",
+                                        "release": "v1.0.0",
+                                        "url": "https://example.invalid/releases/tag/v1.0.0",
+                                        "releaseNotes": "https://example.invalid/releases/v1.0.0/notes",
+                                        "commit": "a" * 40,
+                                        "signed": True,
+                                        "checks": ["can-run-full-bootstrap"],
+                                    },
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("conflicting releaseNotes for release artifact", result.stderr)
+
     def test_require_complete_passes_when_signed_evidence_covers_all_checks(self) -> None:
         """Release fallback removal can require complete signed evidence for one entry."""
         with tempfile.TemporaryDirectory() as tmp:

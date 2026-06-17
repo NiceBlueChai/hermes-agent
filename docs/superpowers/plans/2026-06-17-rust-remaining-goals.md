@@ -354,6 +354,8 @@ release-notes URL must both include the claimed `release` tag, preventing eviden
 - Local validator tests now fail fast when `--add-evidence --all-required-checks` would record `release-notes` without
   an explicit `--release-notes` URL, so signed release operators do not need to infer the missing flag from the generic
   registry validation error.
+- Local validator and manager tests now reject one signed release artifact carrying conflicting `releaseNotes` URLs, so
+  the final `canRunFullBootstrap` gate points at one unambiguous published release-note target.
 
 **Completion standard:**
 

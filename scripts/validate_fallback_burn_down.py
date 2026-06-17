@@ -275,6 +275,7 @@ def validate_evidence(
     if not isinstance(evidence, list):
         raise RuntimeError(f"entry {entry_id} evidence must be a list")
 
+    release_notes_by_artifact: dict[tuple[str, str, str, str], str] = {}
     for index, item in enumerate(evidence):
         if not isinstance(item, dict):
             raise RuntimeError(f"entry {entry_id} evidence {index} must be an object")
@@ -293,14 +294,22 @@ def validate_evidence(
         if item.get("signed") is not True:
             raise RuntimeError(f"entry {entry_id} evidence signed must be true")
         checks = require_string_list(item, "checks", entry_id, "evidence")
-        if "release-notes" in checks:
-            release_notes = item.get("releaseNotes")
+        release_notes = item.get("releaseNotes")
+        if release_notes is not None:
             if not isinstance(release_notes, str) or not release_notes.startswith("https://"):
                 raise RuntimeError(f"entry {entry_id} evidence releaseNotes must be HTTPS")
             if release not in release_notes:
                 raise RuntimeError(
                     f"entry {entry_id} evidence releaseNotes must include release tag: {release}"
                 )
+            artifact = (platform, release, url, commit)
+            existing_release_notes = release_notes_by_artifact.setdefault(artifact, release_notes)
+            if existing_release_notes != release_notes:
+                raise RuntimeError(
+                    f"entry {entry_id} has conflicting releaseNotes for release artifact: {release}"
+                )
+        if "release-notes" in checks and release_notes is None:
+            raise RuntimeError(f"entry {entry_id} evidence releaseNotes must be HTTPS")
         allowed_checks = required_evidence[platform]
         for check in checks:
             if check not in allowed_checks:

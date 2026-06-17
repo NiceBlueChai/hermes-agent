@@ -943,6 +943,8 @@ fn platform_has_complete_release_evidence(
     required_checks: &BTreeSet<String>,
 ) -> bool {
     let mut checks_by_artifact: BTreeMap<(&str, &str, &str), BTreeSet<String>> = BTreeMap::new();
+    let mut release_notes_by_artifact: BTreeMap<(&str, &str, &str), &str> = BTreeMap::new();
+    let mut conflicted_artifacts: BTreeSet<(&str, &str, &str)> = BTreeSet::new();
     for evidence in &entry.evidence {
         if !evidence.signed
             || evidence.platform != platform
@@ -950,18 +952,36 @@ fn platform_has_complete_release_evidence(
             || !evidence.url.starts_with("https://")
             || !evidence.url.contains(&evidence.release)
             || release_notes_check_missing_link(evidence)
+            || release_notes_link_invalid(evidence)
             || !is_git_commit_sha(&evidence.commit)
         {
             continue;
         }
+        let artifact = (
+            evidence.release.as_str(),
+            evidence.url.as_str(),
+            evidence.commit.as_str(),
+        );
+        if let Some(release_notes) = evidence.release_notes.as_deref() {
+            if let Some(existing_release_notes) = release_notes_by_artifact.get(&artifact) {
+                if *existing_release_notes != release_notes {
+                    conflicted_artifacts.insert(artifact);
+                    continue;
+                }
+            } else {
+                release_notes_by_artifact.insert(artifact, release_notes);
+            }
+        }
         checks_by_artifact
-            .entry((&evidence.release, &evidence.url, &evidence.commit))
+            .entry(artifact)
             .or_default()
             .extend(evidence.checks.iter().cloned());
     }
     checks_by_artifact
-        .values()
-        .any(|evidence_checks| required_checks.is_subset(evidence_checks))
+        .iter()
+        .any(|(artifact, evidence_checks)| {
+            !conflicted_artifacts.contains(artifact) && required_checks.is_subset(evidence_checks)
+        })
 }
 
 fn release_notes_check_missing_link(evidence: &FallbackEvidence) -> bool {
@@ -970,6 +990,13 @@ fn release_notes_check_missing_link(evidence: &FallbackEvidence) -> bool {
             .release_notes
             .as_deref()
             .is_some_and(|url| url.starts_with("https://") && url.contains(&evidence.release))
+}
+
+fn release_notes_link_invalid(evidence: &FallbackEvidence) -> bool {
+    evidence
+        .release_notes
+        .as_deref()
+        .is_some_and(|url| !url.starts_with("https://") || !url.contains(&evidence.release))
 }
 
 fn is_git_commit_sha(value: &str) -> bool {
@@ -3372,6 +3399,71 @@ mod tests {
             ],
             "https://example.invalid/releases/tag/v8.8.8",
         );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_conflicting_release_notes_for_same_artifact() {
+        let required_platforms = ["windows", "macos", "linux"];
+        let required_evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "checks": ["can-run-full-bootstrap", "release-notes"]
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut evidence = Vec::new();
+        for platform in required_platforms {
+            if platform == "windows" {
+                evidence.push(serde_json::json!({
+                    "platform": platform,
+                    "release": "v9.9.9",
+                    "url": "https://example.invalid/releases/v9.9.9",
+                    "releaseNotes": "https://example.invalid/releases/tag/v9.9.9",
+                    "commit": "a".repeat(40),
+                    "signed": true,
+                    "checks": ["release-notes"]
+                }));
+                evidence.push(serde_json::json!({
+                    "platform": platform,
+                    "release": "v9.9.9",
+                    "url": "https://example.invalid/releases/v9.9.9",
+                    "releaseNotes": "https://example.invalid/releases/v9.9.9/notes",
+                    "commit": "a".repeat(40),
+                    "signed": true,
+                    "checks": ["can-run-full-bootstrap"]
+                }));
+            } else {
+                evidence.push(serde_json::json!({
+                    "platform": platform,
+                    "release": "v9.9.9",
+                    "url": "https://example.invalid/releases/v9.9.9",
+                    "releaseNotes": "https://example.invalid/releases/tag/v9.9.9",
+                    "commit": "a".repeat(40),
+                    "signed": true,
+                    "checks": ["can-run-full-bootstrap", "release-notes"]
+                }));
+            }
+        }
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": required_evidence,
+                    "evidence": evidence
+                }
+            ]
+        })
+        .to_string();
 
         assert!(!can_run_full_bootstrap_from_registry_text(&registry));
     }
