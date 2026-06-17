@@ -30,6 +30,14 @@ on:
                 description: Optional macOS source archive, in NAME=HTTPS_URL=SHA256 form.
                 required: false
                 type: string
+            release-tag:
+                description: Signed release tag used when printing fallback evidence commands.
+                required: false
+                type: string
+            release-notes-url:
+                description: Signed release notes URL used when printing fallback evidence commands.
+                required: false
+                type: string
             unsigned-smoke-only:
                 description: Run build, self-checks, and validators without signing release artifacts.
                 required: false
@@ -88,6 +96,29 @@ jobs:
         steps:
             - name: Checkout code
               uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+            - name: Validate signed release evidence metadata
+              if: ${{ !inputs['unsigned-smoke-only'] }}
+              env:
+                  HERMES_RELEASE_TAG: ${{ inputs['release-tag'] }}
+                  HERMES_RELEASE_NOTES_URL: ${{ inputs['release-notes-url'] }}
+              run: |
+                  set -euo pipefail
+                  missing=()
+                  for name in HERMES_RELEASE_TAG HERMES_RELEASE_NOTES_URL; do
+                      if [ -z "${!name:-}" ]; then
+                          missing+=("${name}")
+                      fi
+                  done
+                  if [ "${#missing[@]}" -gt 0 ]; then
+                      echo "::error::Missing signed release evidence metadata: ${missing[*]}"
+                      exit 1
+                  fi
+                  if [[ "${HERMES_RELEASE_NOTES_URL}" != *"${HERMES_RELEASE_TAG}"* ]]; then
+                      echo "::error::release-notes-url must include release-tag for fallback evidence validation."
+                      exit 1
+                  fi
+                  echo "Signed release evidence metadata is present."
 
             - name: Setup Node.js
               uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
@@ -531,18 +562,21 @@ jobs:
 
             - name: Print signed fallback evidence command
               if: ${{ !inputs['unsigned-smoke-only'] }}
+              env:
+                  HERMES_RELEASE_TAG: ${{ inputs['release-tag'] }}
+                  HERMES_RELEASE_NOTES_URL: ${{ inputs['release-notes-url'] }}
               run: |
                   set -euo pipefail
                   echo "Record signed fallback burn-down evidence with:"
-                  release_url="https://github.com/${{ github.repository }}/releases/tag/<release-tag>"
+                  release_url="https://github.com/${{ github.repository }}/releases/tag/${HERMES_RELEASE_TAG}"
                   if [ "${{ matrix.platform }}" = "macos" ]; then
                       command=(
                           python scripts/validate_fallback_burn_down.py
                           --add-evidence desktop-bootstrap-script-fallback
                           --platform macos
-                          --release "<release-tag>"
+                          --release "${HERMES_RELEASE_TAG}"
                           --url "${release_url}"
-                          --release-notes "${release_url}"
+                          --release-notes "${HERMES_RELEASE_NOTES_URL}"
                           --commit "${{ github.sha }}"
                           --all-required-checks
                           --signature developer-id-notarized
@@ -552,9 +586,9 @@ jobs:
                           python scripts/validate_fallback_burn_down.py
                           --add-evidence desktop-bootstrap-script-fallback
                           --platform linux
-                          --release "<release-tag>"
+                          --release "${HERMES_RELEASE_TAG}"
                           --url "${release_url}"
-                          --release-notes "${release_url}"
+                          --release-notes "${HERMES_RELEASE_NOTES_URL}"
                           --commit "${{ github.sha }}"
                           --all-required-checks
                           --signature sigstore

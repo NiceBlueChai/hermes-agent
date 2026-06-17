@@ -287,7 +287,9 @@ signed mode validates Apple signing configuration, exports Tauri's Apple signing
 macOS jobs, verifies notarized macOS artifacts with `codesign`, `spctl`, and `stapler`, and signs Linux AppImages with
 Sigstore before uploading the Sigstore bundles. Signed Windows, macOS, and Linux workflow paths now print the exact
 `validate_fallback_burn_down.py --add-evidence` command with the required platform signature type after artifact
-validation and before upload, so release operators can record evidence without hand-authoring the registry shape.
+validation and before upload, so release operators can record evidence without hand-authoring the registry shape. Signed
+workflow mode now requires explicit `release-tag` and `release-notes-url` inputs before signing proceeds, and uses those
+inputs in the printed evidence command instead of placeholder release metadata.
 
 **Evidence:**
 
@@ -526,6 +528,8 @@ validation and before upload, so release operators can record evidence without h
   operators.
 - Local workflow tests now require signed installer workflows to print the fallback burn-down evidence command for
   Windows `authenticode`, macOS `developer-id-notarized`, and Linux `sigstore` after release artifact verification.
+- Local workflow tests now require signed installer workflows to validate `release-tag` and `release-notes-url` inputs,
+  use them in the evidence command, and avoid printing placeholder release metadata.
 
 **Completion standard:**
 

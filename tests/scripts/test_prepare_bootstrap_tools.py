@@ -1549,6 +1549,15 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         windows_unix_job = windows_workflow.split("\n  unix-packaged-runtime-smoke:", 1)[1]
         evidence_marker = "Record signed fallback burn-down evidence with:"
 
+        for workflow_text in (windows_workflow, unix_workflow):
+            self.assertIn("release-tag:", workflow_text)
+            self.assertIn("release-notes-url:", workflow_text)
+            self.assertIn("Validate signed release evidence metadata", workflow_text)
+            self.assertIn("Missing signed release evidence metadata", workflow_text)
+            self.assertIn("inputs['release-tag']", workflow_text)
+            self.assertIn("inputs['release-notes-url']", workflow_text)
+            self.assertNotIn("<release-tag>", workflow_text)
+
         self.assertIn(evidence_marker, windows_workflow)
         self.assertIn("--add-evidence desktop-bootstrap-script-fallback", windows_workflow)
         self.assertIn("--platform windows", windows_workflow)
