@@ -96,8 +96,11 @@ archive into a temporary directory. Fork run
 `https://github.com/NiceBlueChai/hermes-agent/actions/runs/27672497098` proved bootstrap tool bundle/validate,
 wheelhouse bundle/validate, Python runtime bundle/validate, and installer build. It failed at Azure OIDC login because
 the fork signing environment did not provide the Azure client and tenant values, so signed smoke evidence is still
-missing. The workflow also has an explicit `unsigned-smoke-only` dispatch mode for fork/runtime evidence; that mode
-skips signing and installer binary uploads and does not satisfy the signed-release completion standard.
+missing. Unsigned fork run `https://github.com/NiceBlueChai/hermes-agent/actions/runs/27674401930` passed build,
+bootstrap tool bundle/validate, wheelhouse bundle/validate, Python runtime bundle/validate, runtime resource smoke,
+runtime lifecycle smoke, unsigned artifact validation, fallback registry validation, and runtime artifact upload.
+That `unsigned-smoke-only` mode skips signing and installer binary uploads and does not satisfy the signed-release
+completion standard.
 
 **Completion standard:**
 
