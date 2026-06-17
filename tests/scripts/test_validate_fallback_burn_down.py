@@ -499,6 +499,56 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("evidence url must be a GitHub release tag URL", result.stderr)
 
+    def test_evidence_url_rejects_release_tag_with_whitespace(self) -> None:
+        """Release evidence must not accept whitespace inside the GitHub tag segment."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: release-tag-whitespace"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "release-tag-whitespace",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": "windows",
+                                        "release": "v1.0.0 beta",
+                                        "url": f"{VALID_RELEASE_BASE}/v1.0.0 beta",
+                                        "releaseNotes": f"{VALID_RELEASE_BASE}/v1.0.0 beta",
+                                        "commit": "a" * 40,
+                                        "signed": True,
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("evidence url must be a GitHub release tag URL", result.stderr)
+
     def test_release_notes_url_must_be_github_release_tag_url(self) -> None:
         """Release-note evidence must point at a GitHub release tag page."""
         with tempfile.TemporaryDirectory() as tmp:
