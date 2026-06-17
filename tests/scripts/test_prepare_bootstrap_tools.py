@@ -1180,6 +1180,33 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         self.assertIn("timeout-minutes: 10", windows_step)
         self.assertIn("timeout-minutes: 10", unix_step)
 
+    def test_installer_workflows_timeout_linux_tauri_dependency_install(self):
+        """Linux release smoke should fail a stuck Tauri dependency install quickly."""
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+        windows_step = next(
+            section
+            for section in windows_workflow.split("\n      - name: ")
+            if section.startswith("Install Linux Tauri dependencies")
+        )
+        unix_step = next(
+            section
+            for section in unix_workflow.split("\n            - name: ")
+            if section.startswith("Install Linux Tauri dependencies")
+        )
+
+        self.assertIn("timeout-minutes: 20", windows_step)
+        self.assertIn("timeout-minutes: 20", unix_step)
+        self.assertIn("--no-install-recommends", windows_step)
+        self.assertIn("--no-install-recommends", unix_step)
+        self.assertIn("Acquire::Retries=3", windows_step)
+        self.assertIn("Acquire::Retries=3", unix_step)
+
     def test_installer_workflows_accept_optional_audited_archives(self):
         repo_root = Path(__file__).resolve().parents[2]
         windows_workflow = (

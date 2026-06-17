@@ -271,8 +271,10 @@ The manager-side gate now also rejects malformed evidence contracts instead of r
 duplicate or unknown required platforms, empty, invalid, or duplicate required checks, and undeclared or duplicate
 evidence checks cannot unlock `canRunFullBootstrap`.
 The Python fallback burn-down validator now rejects whitespace inside GitHub release tag URL segments, matching the Rust
-manager parser before signed evidence can be recorded. Release workflows now put a step-level timeout on bootstrap tool
-archive bundling, so transient download or cache hangs fail quickly instead of consuming the full release job timeout.
+manager parser before signed evidence can be recorded. Release workflows now put step-level timeouts on Linux Tauri
+dependency installation and bootstrap tool archive bundling, and the Linux dependency install uses apt retries,
+download timeouts, and `--no-install-recommends`, so transient apt, download, or cache hangs fail quickly instead of
+consuming the full release job timeout.
 The validator now also requires the `desktop-bootstrap-script-fallback` entry to declare Windows, macOS, and Linux
 required evidence before printing the full-bootstrap template, preventing incomplete signed evidence skeletons.
 Full-bootstrap signed evidence must now carry a platform signature type: `authenticode` for Windows,
@@ -486,6 +488,9 @@ signature types, and the Rust `canRunFullBootstrap` gate ignores evidence withou
   manager release URL parser before signed release evidence can be recorded.
 - Local workflow tests now require bootstrap tool archive bundling steps to carry `timeout-minutes: 10`, preventing
   release smoke from hanging the full job when external archive/cache preparation stalls.
+- Local workflow tests now require Linux Tauri dependency installation steps to carry `timeout-minutes: 20`,
+  `--no-install-recommends`, and apt retry options, preventing apt-level stalls from consuming the full Unix release
+  smoke job timeout while keeping enough time for slow hosted-runner mirrors.
 - Local validator tests now reject full-bootstrap evidence templates when `requiredEvidence` omits any supported release
   platform, preventing incomplete signed evidence skeletons from being generated.
 - Local validator and manager tests now reject full-bootstrap signed evidence without the expected platform signature

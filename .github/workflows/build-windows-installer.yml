@@ -482,10 +482,15 @@ jobs:
           workspaces: apps/bootstrap-installer/src-tauri
 
       - name: Install Linux Tauri dependencies
+        timeout-minutes: 20
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            install -y --no-install-recommends \
             build-essential \
             curl \
             file \
