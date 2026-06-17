@@ -414,8 +414,8 @@ duplicating inference across JavaScript and Rust.
   Playwright browser cache, and falls back if browser-engine parity cannot be proven.
 - Windows `repository` can clone the official HTTPS repository with managed or PATH Git, detach to a pinned commit,
   fetch a stale checkout to the pinned commit, and verify HEAD before falling back to the script.
-- Windows `platform-sdks` verifies configured messaging SDK imports in the venv and attempts targeted pip recovery
-  before returning a fallback category.
+- Windows `platform-sdks` verifies configured messaging SDK imports in the venv, prefers a bundled wheelhouse for
+  targeted pip recovery, and falls back to normal pip before returning a script fallback category.
 - Windows `path`, `config-templates`, `bootstrap-marker`, `install-metadata`, `configure`, and `gateway` are native
   handled, native probed, or native skipped with structured stage output.
 - Windows `venv` is now a real native stage: it uses managed or PATH `uv`, creates `venv` with Python 3.11, verifies the

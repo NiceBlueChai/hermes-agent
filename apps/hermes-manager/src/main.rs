@@ -1965,20 +1965,7 @@ fn run_native_platform_sdks_stage(
     }
     ensure_python_pip(&python)?;
     for sdk in &missing {
-        let status = ProcessCommand::new(&python)
-            .args(["-m", "pip", "install", sdk.pip_spec])
-            .status()
-            .map_err(|err| ("fallback-to-script", err.to_string()))?;
-        if !status.success() {
-            return Err((
-                "fallback-to-script",
-                format!(
-                    "pip install {} failed with exit {:?}; script recovers platform SDKs",
-                    sdk.pip_spec,
-                    status.code()
-                ),
-            ));
-        }
+        install_platform_sdk(&python, options.wheelhouse_dir.as_deref(), sdk)?;
     }
     let still_missing: Vec<&str> = missing
         .iter()
@@ -2000,6 +1987,39 @@ fn run_native_platform_sdks_stage(
         format!(
             "platform SDK imports still missing after pip install: {}",
             still_missing.join(", ")
+        ),
+    ))
+}
+
+fn install_platform_sdk(
+    python: &std::path::Path,
+    wheelhouse_dir: Option<&std::path::Path>,
+    sdk: &PlatformSdk,
+) -> std::result::Result<(), (&'static str, String)> {
+    if let Some(wheelhouse) = wheelhouse_dir.filter(|path| wheelhouse_has_wheels(path)) {
+        let status = ProcessCommand::new(python)
+            .args(["-m", "pip", "install", "--no-index", "--find-links"])
+            .arg(wheelhouse)
+            .arg(sdk.pip_spec)
+            .status()
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+        if status.success() {
+            return Ok(());
+        }
+    }
+    let status = ProcessCommand::new(python)
+        .args(["-m", "pip", "install", sdk.pip_spec])
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if status.success() {
+        return Ok(());
+    }
+    Err((
+        "fallback-to-script",
+        format!(
+            "pip install {} failed with exit {:?}; script recovers platform SDKs",
+            sdk.pip_spec,
+            status.code()
         ),
     ))
 }
