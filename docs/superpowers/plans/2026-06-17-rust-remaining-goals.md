@@ -220,6 +220,13 @@ git diff --check
 
 ## Goal 9: Flip canRunFullBootstrap Only With Release Evidence
 
+**Status:** In progress. `hermes-manager bootstrap-capabilities` now derives `canRunFullBootstrap` from the
+`desktop-bootstrap-script-fallback` evidence in `docs/release/fallback-burn-down.json` instead of a hard-coded release
+flag. The checked-in registry still has no signed release evidence, so the reported value remains `false` until
+Windows, macOS, and Linux evidence each cover every required check. Release-note draft text is recorded in
+`docs/release/native-bootstrap-release-notes.md` and must be reconciled with the actual signed release artifacts before
+publication.
+
 **Completion standard:**
 
 - One signed Windows release reports `canRunFullBootstrap=true`.
@@ -233,6 +240,7 @@ git diff --check
 
 ```powershell
 python scripts/validate_fallback_burn_down.py
+cargo test --manifest-path apps/hermes-manager/Cargo.toml full_bootstrap -- --nocapture
 node --test apps/desktop/electron/bootstrap-runner.test.cjs apps/desktop/electron/bootstrap-platform.test.cjs
 cargo test --manifest-path apps/hermes-manager/Cargo.toml -- --nocapture
 git diff --check

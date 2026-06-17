@@ -1,5 +1,6 @@
 //! Command-line entrypoint for the Hermes install manager.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::time::Instant;
@@ -269,6 +270,40 @@ struct BootstrapToolsManifestArchive {
     sha256: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct FallbackBurnDownRegistry {
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    entries: Vec<FallbackBurnDownEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FallbackBurnDownEntry {
+    id: String,
+    #[serde(rename = "requiredEvidence")]
+    required_evidence: Vec<FallbackEvidenceRequirement>,
+    evidence: Vec<FallbackEvidence>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FallbackEvidenceRequirement {
+    platform: String,
+    checks: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FallbackEvidence {
+    platform: String,
+    release: String,
+    url: String,
+    checks: Vec<String>,
+}
+
+const FALLBACK_BURN_DOWN_REGISTRY: &str =
+    include_str!("../../../docs/release/fallback-burn-down.json");
+const FULL_BOOTSTRAP_FALLBACK_ID: &str = "desktop-bootstrap-script-fallback";
+const FULL_BOOTSTRAP_RELEASE_PLATFORMS: [&str; 3] = ["windows", "macos", "linux"];
+
 const BASE_NATIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
     BootstrapStageDescriptor {
         name: "install-metadata",
@@ -529,7 +564,7 @@ fn run() -> hermes_manager::Result<()> {
                 ok: true,
                 command: "bootstrap-capabilities",
                 schema_version: 1,
-                can_run_full_bootstrap: false,
+                can_run_full_bootstrap: can_run_full_bootstrap(),
                 supported_stages: native_bootstrap_stage_names(),
             };
             if cli.json {
@@ -846,6 +881,76 @@ fn native_bootstrap_stage_names() -> Vec<&'static str> {
         .into_iter()
         .map(|stage| stage.name)
         .collect()
+}
+
+fn can_run_full_bootstrap() -> bool {
+    can_run_full_bootstrap_from_registry_text(FALLBACK_BURN_DOWN_REGISTRY)
+}
+
+fn can_run_full_bootstrap_from_registry_text(registry_text: &str) -> bool {
+    let Ok(registry) = serde_json::from_str::<FallbackBurnDownRegistry>(registry_text) else {
+        return false;
+    };
+    if registry.schema_version != 1 {
+        return false;
+    }
+    registry
+        .entries
+        .iter()
+        .find(|entry| entry.id == FULL_BOOTSTRAP_FALLBACK_ID)
+        .is_some_and(full_bootstrap_release_evidence_complete)
+}
+
+fn full_bootstrap_release_evidence_complete(entry: &FallbackBurnDownEntry) -> bool {
+    let required = required_full_bootstrap_checks_by_platform(entry);
+    if !FULL_BOOTSTRAP_RELEASE_PLATFORMS
+        .iter()
+        .all(|platform| required.contains_key(*platform))
+    {
+        return false;
+    }
+
+    let evidence = release_evidence_checks_by_platform(entry);
+    FULL_BOOTSTRAP_RELEASE_PLATFORMS.iter().all(|platform| {
+        let Some(required_checks) = required.get(*platform) else {
+            return false;
+        };
+        let Some(evidence_checks) = evidence.get(*platform) else {
+            return false;
+        };
+        required_checks.is_subset(evidence_checks)
+    })
+}
+
+fn required_full_bootstrap_checks_by_platform(
+    entry: &FallbackBurnDownEntry,
+) -> BTreeMap<String, BTreeSet<String>> {
+    entry
+        .required_evidence
+        .iter()
+        .map(|requirement| {
+            (
+                requirement.platform.clone(),
+                requirement.checks.iter().cloned().collect::<BTreeSet<_>>(),
+            )
+        })
+        .collect()
+}
+
+fn release_evidence_checks_by_platform(
+    entry: &FallbackBurnDownEntry,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut checks_by_platform: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for evidence in &entry.evidence {
+        if evidence.release.trim().is_empty() || !evidence.url.starts_with("https://") {
+            continue;
+        }
+        checks_by_platform
+            .entry(evidence.platform.clone())
+            .or_default()
+            .extend(evidence.checks.iter().cloned());
+    }
+    checks_by_platform
 }
 
 struct NativeBootstrapStageOptions<'a> {
@@ -3116,5 +3221,85 @@ mod tests {
         assert_eq!(value["dryRun"], true);
         assert_eq!(value["applied"], false);
         assert_eq!(value["shortcuts"][0], "C:/Users/example/Desktop/Hermes.lnk");
+    }
+
+    #[test]
+    fn checked_in_registry_keeps_full_bootstrap_disabled_without_release_evidence() {
+        assert!(!can_run_full_bootstrap());
+    }
+
+    #[test]
+    fn full_bootstrap_gate_requires_all_release_platforms() {
+        let registry = full_bootstrap_registry_fixture(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+        );
+
+        assert!(can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_partial_release_evidence() {
+        let registry = full_bootstrap_registry_fixture(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+            ],
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    fn full_bootstrap_registry_fixture(platforms: &[&str], checks: &[&str]) -> String {
+        let required_platforms = ["windows", "macos", "linux"];
+        let required_evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "checks": [
+                        "can-run-full-bootstrap",
+                        "packaged-native-bridge-smoke",
+                        "repair-uninstall-native-resources",
+                        "release-notes"
+                    ]
+                })
+            })
+            .collect::<Vec<_>>();
+        let evidence = platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "release": "v9.9.9",
+                    "url": "https://example.invalid/releases/v9.9.9",
+                    "checks": checks
+                })
+            })
+            .collect::<Vec<_>>();
+
+        serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": required_evidence,
+                    "evidence": evidence
+                }
+            ]
+        })
+        .to_string()
     }
 }
