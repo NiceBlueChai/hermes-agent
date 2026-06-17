@@ -130,6 +130,10 @@ git diff --check
 
 ## Goal 6: Finish No-Git Normal Packaged Install And Update Proof
 
+**Status:** Complete on branch. Verified with
+`cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml archive -- --nocapture` and
+`cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml update -- --nocapture`.
+
 **Completion standard:**
 
 - Fresh packaged installs prefer manifest-verified source archive or bundled source snapshot on Windows, macOS, and
