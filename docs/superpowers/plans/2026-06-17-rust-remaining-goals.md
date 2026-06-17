@@ -121,24 +121,36 @@ git diff --check
 
 ## Goal 5: Extend Bundled Python Runtime Proof To macOS And Linux
 
-**Status:** In progress. Unix installer workflow now installs `uv`, builds Linux/macOS Python runtime archives by
-default when no external audited archive is supplied, validates the runtime manifest, includes runtime checks in built
-binary and packaged AppImage/.app smoke, and uploads the runtime bundle. GitHub could not manually dispatch
-`build-unix-installers.yml` from this branch because that workflow file is not present on the fork's default branch;
-CI proof still requires the workflow to exist on the default branch or to run through an existing dispatchable wrapper.
+**Status:** Complete on branch for unsigned fork smoke. The dispatchable Windows workflow now has a
+`unix-smoke-only` path that skips Windows signing/build, builds Linux/macOS runtime archives by default, validates
+runtime manifests, runs built-binary and packaged AppImage/.app lifecycle smoke, validates artifacts, validates the
+fallback burn-down registry, and uploads installer/runtime artifacts. Signed release evidence is still deferred to
+Goal 9.
 
 **Completion standard:**
 
-- macOS `.app/Contents/MacOS/Hermes` packaged smoke validates runtime manifest, runtime extraction, wheelhouse Python tag,
-  and lifecycle self-check.
+- macOS `.app` packaged smoke validates the `CFBundleExecutable` entry point, runtime manifest, runtime extraction,
+  wheelhouse Python tag, and lifecycle self-check.
 - Linux AppImage packaged smoke validates the same runtime and wheelhouse path.
 - Runtime fallback behavior remains intact on all three supported desktop platforms.
+
+**Evidence:**
+
+- [Build Windows Installer run 27681501026](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27681501026)
+  completed successfully on head `326ca5e45fffd5f8ffe3e920bd98629bece0d97c`.
+- `Unix packaged runtime smoke (linux)` passed: bootstrap tools bundle/validate, wheelhouse bundle/validate, Python
+  runtime bundle/validate, built binary smoke, built lifecycle smoke, packaged AppImage lifecycle smoke, Linux artifact
+  validation, fallback burn-down validation, and artifact uploads.
+- `Unix packaged runtime smoke (macos)` passed: bootstrap tools bundle/validate, wheelhouse bundle/validate, Python
+  runtime bundle/validate, built binary smoke, built lifecycle smoke, packaged `.app` lifecycle smoke, macOS artifact
+  validation using `CFBundleExecutable`, fallback burn-down validation, and artifact uploads.
 
 **Verification:**
 
 ```powershell
-python -m unittest tests.scripts.test_validate_installer_artifacts tests.scripts.test_prepare_bootstrap_tools
-cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml self_check_validates -- --nocapture
+python -m unittest tests.scripts.test_prepare_python_runtime tests.scripts.test_build_python_runtime_archive tests.scripts.test_prepare_bootstrap_tools tests.scripts.test_validate_installer_artifacts
+cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml symlink -- --nocapture
+cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml python_runtime -- --nocapture
 git diff --check
 ```
 
