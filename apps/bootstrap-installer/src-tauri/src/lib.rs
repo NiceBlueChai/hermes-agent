@@ -985,6 +985,29 @@ fn lifecycle_self_check_report(
         }
         report
     });
+    let python_runtime_lifecycle =
+        self_check_python_runtime_dir(args).as_deref().map(|dir| {
+            match orchestrator::python_runtime_archive_lifecycle_self_check(dir) {
+                Ok(Some(details)) => serde_json::json!({
+                    "ok": true,
+                    "skipped": false,
+                    "details": details,
+                    "errors": [],
+                }),
+                Ok(None) => serde_json::json!({
+                    "ok": true,
+                    "skipped": true,
+                    "details": null,
+                    "errors": [],
+                }),
+                Err(err) => serde_json::json!({
+                    "ok": false,
+                    "skipped": false,
+                    "details": null,
+                    "errors": [format!("{err:#}")],
+                }),
+            }
+        });
     let lifecycle = match repo_archive::archive_lifecycle_self_check() {
         Ok(details) => serde_json::json!({
             "ok": true,
@@ -1011,10 +1034,25 @@ fn lifecycle_self_check_report(
                 .map(str::to_string),
         );
     }
+    if let Some(runtime) = &python_runtime_lifecycle {
+        if let Some(items) = runtime["errors"].as_array() {
+            errors.extend(
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str())
+                    .map(str::to_string),
+            );
+        }
+    }
+    let python_runtime_ok = python_runtime_lifecycle
+        .as_ref()
+        .and_then(|runtime| runtime["ok"].as_bool())
+        .unwrap_or(true);
     serde_json::json!({
-        "ok": resource_ok && lifecycle_ok,
+        "ok": resource_ok && lifecycle_ok && python_runtime_ok,
         "details": {
             "resources": resource_report,
+            "pythonRuntime": python_runtime_lifecycle,
             "lifecycle": lifecycle["details"].clone(),
         },
         "errors": errors,
@@ -1180,7 +1218,9 @@ mod tests {
         validate_python_runtime_for_self_check, validate_tauri_bundle_resources_config_for_self_check,
         wheel_name_is_plain_file, AppMode, TAURI_CONFIG_JSON,
     };
+    use std::io::Write;
     use std::path::PathBuf;
+    use zip::write::SimpleFileOptions;
 
     fn unique_tmp_dir(tag: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
@@ -1189,6 +1229,34 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    fn current_self_check_platform() -> &'static str {
+        match std::env::consts::OS {
+            "windows" => "windows",
+            "linux" => "linux",
+            "macos" => "macos",
+            _ => "unsupported",
+        }
+    }
+
+    fn current_self_check_arch() -> &'static str {
+        match std::env::consts::ARCH {
+            "x86_64" => "x64",
+            "aarch64" | "arm64" => "arm64",
+            "x86" | "i686" => "x86",
+            _ => "unsupported",
+        }
+    }
+
+    fn write_test_zip(path: &std::path::Path, entries: &[(&str, &[u8])]) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        for (name, bytes) in entries {
+            zip.start_file(*name, SimpleFileOptions::default()).unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap();
     }
 
     #[test]
@@ -1574,6 +1642,63 @@ mod tests {
         }));
         assert!(report["details"]["resources"].is_object());
         assert!(report["details"]["lifecycle"].is_object());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn lifecycle_self_check_extracts_python_runtime_archive() {
+        let root = unique_tmp_dir("lifecycle-python-runtime");
+        let runtime = root.join("python-runtime");
+        let archive = runtime.join("python-runtime.zip");
+        std::fs::create_dir_all(&runtime).unwrap();
+        write_test_zip(&archive, &[("cpython/python.exe", b"python")]);
+        let archive_bytes = std::fs::read(&archive).unwrap();
+        std::fs::write(
+            runtime.join("python-runtime-manifest.json"),
+            format!(
+                r#"{{
+  "schemaVersion": 1,
+  "platform": "{}",
+  "arch": "{}",
+  "pythonTag": "cp311",
+  "files": [
+    {{
+      "name": "python-runtime.zip",
+      "url": "https://example.invalid/python-runtime.zip",
+      "sizeBytes": {},
+      "sha256": "{}"
+    }}
+  ]
+}}
+"#,
+                current_self_check_platform(),
+                current_self_check_arch(),
+                archive_bytes.len(),
+                crate::artifact::sha256_hex(&archive_bytes)
+            ),
+        )
+        .unwrap();
+        let args = vec![
+            "--self-check-lifecycle".to_string(),
+            "--self-check-expect-commit".to_string(),
+            "abcdef1234567890".to_string(),
+            "--self-check-python-runtime".to_string(),
+            runtime.display().to_string(),
+            "--self-check-python-runtime-platform".to_string(),
+            current_self_check_platform().to_string(),
+            "--self-check-python-runtime-arch".to_string(),
+            current_self_check_arch().to_string(),
+        ];
+
+        let report = lifecycle_self_check_report(&args, Some("abcdef1234567890"), Some("main"));
+
+        assert_eq!(report["details"]["pythonRuntime"]["ok"], true);
+        assert_eq!(report["details"]["pythonRuntime"]["skipped"], false);
+        assert_eq!(
+            report["details"]["pythonRuntime"]["details"]["archive"],
+            archive.display().to_string()
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

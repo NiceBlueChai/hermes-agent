@@ -1548,6 +1548,41 @@ fn install_bundled_python_runtime_archive(
     Ok(())
 }
 
+/// Verify that a manifest-owned Python runtime archive can be safely extracted.
+pub(crate) fn python_runtime_archive_lifecycle_self_check(
+    runtime_dir: &Path,
+) -> Result<Option<serde_json::Value>> {
+    let Some(source) = resolve_python_runtime_archive(runtime_dir) else {
+        return Ok(None);
+    };
+    let root = std::env::temp_dir().join(format!(
+        "hermes-python-runtime-lifecycle-{}-{}",
+        std::process::id(),
+        Utc::now().timestamp_millis()
+    ));
+    let plan = PythonRuntimeStagePlan {
+        uv: root.join("uv"),
+        uv_cache_dir: root.join("uv-cache"),
+        python_install_dir: root.join("python"),
+        python_bin_dir: root.join("bin"),
+        runtime_archive: Some(source.clone()),
+    };
+    let result: Result<serde_json::Value> = (|| {
+        fs::create_dir_all(&root)
+            .with_context(|| format!("creating {}", root.display()))?;
+        install_bundled_python_runtime_archive(&plan, &source)?;
+        Ok(serde_json::json!({
+            "archive": source.path,
+            "pythonTag": source.python_tag,
+            "installDir": plan.python_install_dir,
+        }))
+    })();
+    let cleanup = remove_path_if_exists(&root);
+    let details = result?;
+    cleanup?;
+    Ok(Some(details))
+}
+
 /// Build a Windows Node runtime plan from the Node.js latest-v22.x index.
 pub fn windows_node_runtime_stage_plan_from_index(
     hermes_home: &Path,
