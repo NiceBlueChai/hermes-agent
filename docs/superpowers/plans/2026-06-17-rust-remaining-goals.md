@@ -282,6 +282,9 @@ the platform and checks against the registry contract, and merges checks for the
 - [Unsigned Windows smoke run 27686664164](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27686664164)
   passed on head `102f95e84a662de7aba94bb6ab8c0f8c9ed565e4`, revalidating fallback burn-down validation after release
   evidence was required to include an exact 40-character commit SHA.
+- [Unsigned Windows smoke run 27687996094](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27687996094)
+  passed on head `d5889597e2279e897e4726d9da9141d28f387b60`, revalidating fallback burn-down validation after the
+  signed evidence recording command was added.
 - [Unix smoke run 27684717355](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27684717355) passed on head
   `e64c1a3b8882baefd08031bb378740a4b54f86f9`, including Linux and macOS packaged runtime lifecycle smoke with the
   Python runtime default gate active.
@@ -291,6 +294,9 @@ the platform and checks against the registry contract, and merges checks for the
 - [Unix smoke run 27686664189](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27686664189) passed on head
   `102f95e84a662de7aba94bb6ab8c0f8c9ed565e4`, revalidating Linux and macOS packaged runtime lifecycle smoke after the
   exact-commit evidence gate was added.
+- [Unix smoke run 27687996129](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27687996129) passed on head
+  `d5889597e2279e897e4726d9da9141d28f387b60`, revalidating Linux and macOS packaged runtime lifecycle smoke after the
+  signed evidence recording command was added.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 
