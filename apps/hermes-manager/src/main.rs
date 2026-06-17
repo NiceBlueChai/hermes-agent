@@ -1044,6 +1044,9 @@ fn github_release_tag_parts(url: &str) -> Option<(&str, &str, &str)> {
     let mut segments = path.split('/');
     let owner = segments.next()?;
     let repo = segments.next()?;
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
     if segments.next()? != "releases" {
         return None;
     }
@@ -1051,6 +1054,9 @@ fn github_release_tag_parts(url: &str) -> Option<(&str, &str, &str)> {
         return None;
     }
     let tag = segments.next()?;
+    if tag.is_empty() {
+        return None;
+    }
     if segments.next().is_some() {
         return None;
     }
@@ -3559,6 +3565,22 @@ mod tests {
                 "release-notes",
             ],
             "https://github.com/NiceBlueChai/hermes-agent/extra/releases/tag/v9.9.9",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_github_release_url_with_empty_repo_segment() {
+        let registry = full_bootstrap_registry_fixture_with_url(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            "https://github.com/NiceBlueChai//releases/tag/v9.9.9",
         );
 
         assert!(!can_run_full_bootstrap_from_registry_text(&registry));
