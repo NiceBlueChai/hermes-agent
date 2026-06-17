@@ -296,6 +296,8 @@ struct FallbackEvidence {
     platform: String,
     release: String,
     url: String,
+    #[serde(rename = "releaseNotes")]
+    release_notes: Option<String>,
     commit: String,
     signed: bool,
     checks: Vec<String>,
@@ -946,6 +948,7 @@ fn platform_has_complete_release_evidence(
             || evidence.platform != platform
             || evidence.release.trim().is_empty()
             || !evidence.url.starts_with("https://")
+            || release_notes_check_missing_link(evidence)
             || !is_git_commit_sha(&evidence.commit)
         {
             continue;
@@ -958,6 +961,14 @@ fn platform_has_complete_release_evidence(
     checks_by_artifact
         .values()
         .any(|evidence_checks| required_checks.is_subset(evidence_checks))
+}
+
+fn release_notes_check_missing_link(evidence: &FallbackEvidence) -> bool {
+    evidence.checks.iter().any(|check| check == "release-notes")
+        && !evidence
+            .release_notes
+            .as_deref()
+            .is_some_and(|url| url.starts_with("https://"))
 }
 
 fn is_git_commit_sha(value: &str) -> bool {
@@ -3304,6 +3315,51 @@ mod tests {
     }
 
     #[test]
+    fn full_bootstrap_gate_rejects_release_notes_check_without_link() {
+        let required_platforms = ["windows", "macos", "linux"];
+        let required_evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "checks": ["can-run-full-bootstrap", "release-notes"]
+                })
+            })
+            .collect::<Vec<_>>();
+        let evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "release": "v9.9.9",
+                    "url": "https://example.invalid/releases/v9.9.9",
+                    "commit": "a".repeat(40),
+                    "signed": true,
+                    "checks": ["can-run-full-bootstrap", "release-notes"]
+                })
+            })
+            .collect::<Vec<_>>();
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": required_evidence,
+                    "evidence": evidence
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
     fn full_bootstrap_gate_rejects_platform_checks_split_across_releases() {
         let required_platforms = ["windows", "macos", "linux"];
         let required_evidence = required_platforms
@@ -3415,6 +3471,7 @@ mod tests {
                     "platform": platform,
                     "release": "v9.9.9",
                     "url": "https://example.invalid/releases/v9.9.9",
+                    "releaseNotes": "https://example.invalid/releases/v9.9.9",
                     "commit": commit,
                     "signed": signed,
                     "checks": checks

@@ -346,6 +346,55 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("evidence commit must be a 40-character git SHA", result.stderr)
 
+    def test_release_notes_check_requires_release_notes_url(self) -> None:
+        """Release-note evidence must link to the exact published release notes."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: missing-release-notes-url"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "missing-release-notes-url",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": "windows",
+                                        "release": "v1.0.0",
+                                        "url": "https://example.invalid/release",
+                                        "commit": "a" * 40,
+                                        "signed": True,
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("releaseNotes must be HTTPS", result.stderr)
+
     def test_require_complete_passes_when_signed_evidence_covers_all_checks(self) -> None:
         """Release fallback removal can require complete signed evidence for one entry."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -377,6 +426,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                         "platform": platform,
                                         "release": "v1.0.0",
                                         "url": f"https://example.invalid/releases/v1.0.0/{platform}",
+                                        "releaseNotes": f"https://example.invalid/releases/v1.0.0/{platform}",
                                         "commit": "a" * 40,
                                         "signed": True,
                                         "checks": checks,
@@ -426,6 +476,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                         "platform": platform,
                                         "release": "v1.0.0",
                                         "url": f"https://example.invalid/releases/v1.0.0/{platform}",
+                                        "releaseNotes": f"https://example.invalid/releases/v1.0.0/{platform}",
                                         "commit": "a" * 40,
                                         "signed": True,
                                         "checks": checks,
@@ -486,6 +537,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                         "platform": platform,
                                         "release": "v1.0.1",
                                         "url": f"https://example.invalid/releases/v1.0.1/{platform}",
+                                        "releaseNotes": f"https://example.invalid/releases/v1.0.1/{platform}",
                                         "commit": "b" * 40,
                                         "signed": True,
                                         "checks": ["release-notes"],
@@ -551,6 +603,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                     "platform": "windows",
                     "release": "vX.Y.Z",
                     "url": "https://github.com/OWNER/REPO/releases/tag/vX.Y.Z",
+                    "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/vX.Y.Z",
                     "commit": "<40-character-git-sha>",
                     "signed": True,
                     "checks": ["can-run-full-bootstrap", "release-notes"],
@@ -598,6 +651,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                                         "platform": "windows",
                                         "release": "v1.0.1",
                                         "url": "https://example.invalid/releases/v1.0.1/windows",
+                                        "releaseNotes": "https://example.invalid/releases/v1.0.1/windows",
                                         "commit": "b" * 40,
                                         "signed": True,
                                         "checks": ["release-notes"],
@@ -621,6 +675,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                     "platform": "windows",
                     "release": "vX.Y.Z",
                     "url": "https://github.com/OWNER/REPO/releases/tag/vX.Y.Z",
+                    "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/vX.Y.Z",
                     "commit": "<40-character-git-sha>",
                     "signed": True,
                     "checks": ["can-run-full-bootstrap", "release-notes"],
@@ -674,6 +729,8 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                 "v1.0.0",
                 "--url",
                 "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                "--release-notes",
+                "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
                 "--commit",
                 "a" * 40,
                 "--check",
@@ -693,6 +750,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                     "platform": "windows",
                     "release": "v1.0.0",
                     "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                    "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
                     "commit": "a" * 40,
                     "signed": True,
                     "checks": ["can-run-full-bootstrap", "release-notes"],
@@ -749,6 +807,8 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                 "--release",
                 "v1.0.0",
                 "--url",
+                "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                "--release-notes",
                 "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
                 "--commit",
                 "d" * 40,
@@ -822,6 +882,8 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
                 "--release",
                 "v1.0.0",
                 "--url",
+                url,
+                "--release-notes",
                 url,
                 "--commit",
                 "b" * 40,

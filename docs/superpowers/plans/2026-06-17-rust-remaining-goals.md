@@ -251,12 +251,13 @@ also requires each evidence item to carry a 40-character release commit SHA and 
 platform evidence is present. Use `--print-template desktop-bootstrap-script-fallback` after the signed release smoke to
 generate the missing evidence skeleton instead of hand-authoring the JSON shape. Use
 `--add-evidence desktop-bootstrap-script-fallback --platform <platform> --release <tag> --url <https-release-url>
---commit <40-char-sha> --all-required-checks` to record complete signed release evidence for one platform without
-hand-listing checks; use repeated `--check <check>` only for deliberate partial evidence. The command forces
-`signed: true`, validates the platform and checks against the registry contract, and merges checks for the same release
-artifact. Complete evidence is artifact-scoped: for each platform, one signed `release` + `url` + `commit` group must
-cover every required check, so multiple partial release artifacts cannot be combined to unlock `canRunFullBootstrap` or
-hide missing checks from `--print-template`.
+--release-notes <https-release-notes-url> --commit <40-char-sha> --all-required-checks` to record complete signed release
+evidence for one platform without hand-listing checks; use repeated `--check <check>` only for deliberate partial
+evidence. The command forces `signed: true`, validates the platform and checks against the registry contract, and merges
+checks for the same release artifact. Complete evidence is artifact-scoped: for each platform, one signed `release` +
+`url` + `commit` group must cover every required check, so multiple partial release artifacts cannot be combined to
+unlock `canRunFullBootstrap` or hide missing checks from `--print-template`. Any evidence that claims `release-notes`
+must also carry a HTTPS `releaseNotes` URL so the final gate points at the exact published notes.
 
 **Evidence:**
 
@@ -327,6 +328,8 @@ hide missing checks from `--print-template`.
   across multiple signed release artifacts.
 - Local validator tests now prove `--add-evidence --all-required-checks` records every required check for a platform
   without hand-listing them.
+- Local validator and manager tests now reject `release-notes` evidence without a HTTPS `releaseNotes` URL, and
+  `--print-template` includes the field for signed release operators.
 
 **Completion standard:**
 

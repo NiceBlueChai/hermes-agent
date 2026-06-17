@@ -77,6 +77,7 @@ def evidence_template(registry_path: Path, entry_id: str) -> dict[str, Any]:
                         "platform": platform,
                         "release": "vX.Y.Z",
                         "url": "https://github.com/OWNER/REPO/releases/tag/vX.Y.Z",
+                        "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/vX.Y.Z",
                         "commit": "<40-character-git-sha>",
                         "signed": True,
                         "checks": sorted(required_checks),
@@ -93,6 +94,7 @@ def add_signed_evidence(
     platform: str,
     release: str,
     url: str,
+    release_notes: str | None,
     commit: str,
     checks: list[str],
     all_required_checks: bool,
@@ -122,6 +124,8 @@ def add_signed_evidence(
         "signed": True,
         "checks": resolved_checks,
     }
+    if release_notes is not None:
+        new_item["releaseNotes"] = release_notes
     validate_evidence({**target, "evidence": [new_item]}, entry_id, required)
 
     evidence = target.get("evidence")
@@ -133,6 +137,8 @@ def add_signed_evidence(
         evidence.append(new_item)
     else:
         matching["checks"] = merge_checks(matching.get("checks"), resolved_checks)
+        if "releaseNotes" in new_item:
+            matching["releaseNotes"] = new_item["releaseNotes"]
 
     validate_evidence(target, entry_id, required)
     registry_path.write_text(json.dumps(payload, indent=4) + "\n", encoding="utf-8")
@@ -283,6 +289,10 @@ def validate_evidence(
         if item.get("signed") is not True:
             raise RuntimeError(f"entry {entry_id} evidence signed must be true")
         checks = require_string_list(item, "checks", entry_id, "evidence")
+        if "release-notes" in checks:
+            release_notes = item.get("releaseNotes")
+            if not isinstance(release_notes, str) or not release_notes.startswith("https://"):
+                raise RuntimeError(f"entry {entry_id} evidence releaseNotes must be HTTPS")
         allowed_checks = required_evidence[platform]
         for check in checks:
             if check not in allowed_checks:
@@ -323,6 +333,7 @@ def platform_has_complete_evidence_artifact(
         url = item.get("url")
         commit = item.get("commit")
         checks = item.get("checks")
+        release_notes = item.get("releaseNotes")
         if (
             not isinstance(release, str)
             or not release.strip()
@@ -331,6 +342,10 @@ def platform_has_complete_evidence_artifact(
             or not isinstance(commit, str)
             or not COMMIT_RE.match(commit)
             or not isinstance(checks, list)
+        ):
+            continue
+        if "release-notes" in checks and (
+            not isinstance(release_notes, str) or not release_notes.startswith("https://")
         ):
             continue
         artifact = (release, url, commit)
@@ -442,6 +457,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--platform", choices=sorted(VALID_PLATFORMS), default=None)
     parser.add_argument("--release", default=None)
     parser.add_argument("--url", default=None)
+    parser.add_argument(
+        "--release-notes",
+        default=None,
+        help="HTTPS URL for the published release notes when recording the release-notes check.",
+    )
     parser.add_argument("--commit", default=None)
     parser.add_argument(
         "--check",
@@ -485,6 +505,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.platform,
                 args.release,
                 args.url,
+                args.release_notes,
                 args.commit,
                 args.checks,
                 args.all_required_checks,
