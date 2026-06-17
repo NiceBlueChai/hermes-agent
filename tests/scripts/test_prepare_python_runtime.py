@@ -278,6 +278,24 @@ class PreparePythonRuntimeTests(unittest.TestCase):
         self.assertIn("python scripts/validate_python_runtime_default_gate.py", windows_workflow)
         self.assertIn("python scripts/validate_python_runtime_default_gate.py", unix_workflow)
 
+    def test_signed_release_workflows_upload_python_runtime_default_evidence(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Print signed Python runtime default evidence", windows_workflow)
+        self.assertIn("Upload signed Python runtime default evidence", windows_workflow)
+        self.assertIn("python-runtime-default-evidence-windows.json", windows_workflow)
+        self.assertIn("--print-evidence", windows_workflow)
+        self.assertIn("Print signed Python runtime default evidence", unix_workflow)
+        self.assertIn("Upload signed Python runtime default evidence", unix_workflow)
+        self.assertIn("python-runtime-default-evidence-${{ matrix.platform }}.json", unix_workflow)
+        self.assertIn("--print-evidence", unix_workflow)
+
     def test_python_runtime_default_gate_rejects_missing_release_decision_details(self):
         module = _load_default_gate_module()
         repo_root = Path(__file__).resolve().parents[2]
@@ -346,6 +364,41 @@ class PreparePythonRuntimeTests(unittest.TestCase):
             evidence_path = Path(tmp) / "evidence.json"
             evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
 
+            module.validate_release_evidence(evidence_path)
+
+    def test_python_runtime_default_gate_builds_structured_release_evidence_from_manifest(self):
+        module = _load_default_gate_module()
+        manifest = {
+            "schemaVersion": 1,
+            "platform": "windows",
+            "arch": "x64",
+            "pythonTag": "cp311",
+            "files": [
+                {
+                    "name": "python-runtime-windows-x64.zip",
+                    "url": "https://example.invalid/python-runtime-windows-x64.zip",
+                    "sizeBytes": 100,
+                    "sha256": "a" * 64,
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = module.build_release_evidence(
+                manifest,
+                python_version="3.11.9",
+                security_update_policy=(
+                    "Runtime archive must be rebuilt when the bundled Python patch release receives a security update."
+                ),
+                with_runtime_bytes=400,
+                without_runtime_bytes=250,
+            )
+            evidence_path = Path(tmp) / "runtime-evidence.json"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+            self.assertEqual(evidence["pythonRuntime"]["sourceUrl"], manifest["files"][0]["url"])
+            self.assertEqual(evidence["pythonRuntime"]["archiveSha256"], manifest["files"][0]["sha256"])
+            self.assertEqual(evidence["signedInstaller"]["sizeDeltaBytes"], 150)
             module.validate_release_evidence(evidence_path)
 
     def test_python_runtime_default_gate_rejects_incomplete_structured_release_evidence(self):

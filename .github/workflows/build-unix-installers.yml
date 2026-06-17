@@ -22,6 +22,18 @@ on:
                 description: Optional macOS Python runtime archive, in NAME=HTTPS_URL=SHA256 form.
                 required: false
                 type: string
+            python-runtime-version:
+                description: Python patch version recorded in signed runtime default evidence.
+                required: false
+                type: string
+            linux-python-runtime-without-bytes:
+                description: Signed Linux installer size in bytes from the matching build without the runtime bundle.
+                required: false
+                type: string
+            macos-python-runtime-without-bytes:
+                description: Signed macOS installer size in bytes from the matching build without the runtime bundle.
+                required: false
+                type: string
             linux-source-archive:
                 description: Optional Linux source archive, in NAME=HTTPS_URL=SHA256 form.
                 required: false
@@ -102,6 +114,9 @@ jobs:
               env:
                   HERMES_RELEASE_TAG: ${{ inputs['release-tag'] }}
                   HERMES_RELEASE_NOTES_URL: ${{ inputs['release-notes-url'] }}
+                  HERMES_PYTHON_RUNTIME_VERSION: ${{ inputs['python-runtime-version'] }}
+                  HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['linux-python-runtime-without-bytes'] }}
+                  HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['macos-python-runtime-without-bytes'] }}
               run: |
                   set -euo pipefail
                   missing=()
@@ -110,6 +125,16 @@ jobs:
                           missing+=("${name}")
                       fi
                   done
+                  if [ -z "${HERMES_PYTHON_RUNTIME_VERSION}" ]; then
+                      missing+=(HERMES_PYTHON_RUNTIME_VERSION)
+                  fi
+                  without_runtime_bytes="${HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES}"
+                  if [ "${{ matrix.platform }}" = "macos" ]; then
+                      without_runtime_bytes="${HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES}"
+                  fi
+                  if [ -z "${without_runtime_bytes}" ]; then
+                      missing+=(HERMES_${{ matrix.platform }}_PYTHON_RUNTIME_WITHOUT_BYTES)
+                  fi
                   if [ "${#missing[@]}" -gt 0 ]; then
                       echo "::error::Missing signed release evidence metadata: ${missing[*]}"
                       exit 1
@@ -123,6 +148,10 @@ jobs:
                   expected_release_url="https://github.com/${{ github.repository }}/releases/tag/${HERMES_RELEASE_TAG}"
                   if [ "${HERMES_RELEASE_NOTES_URL}" != "${expected_release_url}" ]; then
                       echo "::error::release-notes-url must equal GitHub release tag URL: ${expected_release_url}"
+                      exit 1
+                  fi
+                  if ! [[ "${without_runtime_bytes}" =~ ^[1-9][0-9]*$ ]]; then
+                      echo "::error::python runtime without-runtime byte size must be a positive integer."
                       exit 1
                   fi
                   echo "Signed release evidence metadata is present."
@@ -566,6 +595,37 @@ jobs:
                           -maxdepth 1 -name '*.sigstore.json' -type f -print -quit
                   )"
                   test -n "${bundle}"
+
+            - name: Print signed Python runtime default evidence
+              if: ${{ !inputs['unsigned-smoke-only'] }}
+              env:
+                  HERMES_PYTHON_RUNTIME_VERSION: ${{ inputs['python-runtime-version'] }}
+                  HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['linux-python-runtime-without-bytes'] }}
+                  HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['macos-python-runtime-without-bytes'] }}
+              run: |
+                  set -euo pipefail
+                  without_runtime_bytes="${HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES}"
+                  with_runtime_artifact="apps/bootstrap-installer/src-tauri/target/release/bundle/appimage/*.AppImage"
+                  if [ "${{ matrix.platform }}" = "macos" ]; then
+                      without_runtime_bytes="${HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES}"
+                      with_runtime_artifact="apps/bootstrap-installer/src-tauri/target/release/bundle/dmg/*.dmg"
+                  fi
+                  mkdir -p .release-evidence
+                  python scripts/validate_python_runtime_default_gate.py \
+                      --print-evidence \
+                      --manifest apps/bootstrap-installer/src-tauri/python-runtime/python-runtime-manifest.json \
+                      --python-version "${HERMES_PYTHON_RUNTIME_VERSION}" \
+                      --with-runtime-artifact "${with_runtime_artifact}" \
+                      --without-runtime-bytes "${without_runtime_bytes}" \
+                      > ".release-evidence/python-runtime-default-evidence-${{ matrix.platform }}.json"
+
+            - name: Upload signed Python runtime default evidence
+              if: ${{ !inputs['unsigned-smoke-only'] }}
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+              with:
+                  name: ${{ matrix.artifact-name }}-python-runtime-default-evidence
+                  path: .release-evidence/python-runtime-default-evidence-${{ matrix.platform }}.json
+                  if-no-files-found: error
 
             - name: Print signed fallback evidence command
               if: ${{ !inputs['unsigned-smoke-only'] }}

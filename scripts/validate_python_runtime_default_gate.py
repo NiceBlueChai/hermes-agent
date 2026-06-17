@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import re
 from pathlib import Path
@@ -29,9 +30,16 @@ REQUIRED_MARKERS = {
     "lifecycle self-check": "--self-check-lifecycle",
     "artifact validator": "scripts/validate_installer_artifacts.py",
     "structured release evidence": "python scripts/validate_python_runtime_default_gate.py --evidence",
+    "generated release evidence": "--print-evidence",
 }
 
 HEX_SHA256_RE = re.compile(r"[0-9a-fA-F]{64}")
+DEFAULT_RUNTIME_MANIFEST = Path(
+    "apps/bootstrap-installer/src-tauri/python-runtime/python-runtime-manifest.json"
+)
+DEFAULT_SECURITY_UPDATE_POLICY = (
+    "Runtime archive must be rebuilt when the bundled Python patch release receives a security update."
+)
 
 
 def validate_default_gate_doc(path: Path) -> None:
@@ -64,9 +72,8 @@ def require_positive_int(value: object, label: str) -> int:
     return value
 
 
-def validate_release_evidence(path: Path) -> None:
+def validate_release_evidence_payload(payload: object) -> None:
     """Validate structured evidence before the bundled Python runtime can become default."""
-    payload = json.loads(path.read_text(encoding="utf-8"))
     root = require_mapping(payload, "root")
     runtime = require_mapping(root.get("pythonRuntime"), "pythonRuntime")
     installer = require_mapping(root.get("signedInstaller"), "signedInstaller")
@@ -137,6 +144,73 @@ def validate_release_evidence(path: Path) -> None:
         )
 
 
+def validate_release_evidence(path: Path) -> None:
+    """Validate structured release evidence read from a JSON file."""
+    validate_release_evidence_payload(json.loads(path.read_text(encoding="utf-8")))
+
+
+def build_release_evidence(
+    manifest: dict,
+    python_version: str,
+    security_update_policy: str,
+    with_runtime_bytes: int,
+    without_runtime_bytes: int,
+) -> dict:
+    """Build validated structured evidence from a runtime manifest and installer sizes."""
+    files = manifest.get("files")
+    if not isinstance(files, list) or not files:
+        raise RuntimeError("python runtime manifest files must contain at least one archive")
+    first_file = require_mapping(files[0], "pythonRuntime.manifest.files[0]")
+    evidence = {
+        "pythonRuntime": {
+            "version": python_version,
+            "sourceUrl": first_file.get("url"),
+            "archiveSha256": first_file.get("sha256"),
+            "securityUpdatePolicy": security_update_policy,
+            "manifest": manifest,
+        },
+        "signedInstaller": {
+            "withRuntimeBytes": with_runtime_bytes,
+            "withoutRuntimeBytes": without_runtime_bytes,
+            "sizeDeltaBytes": with_runtime_bytes - without_runtime_bytes,
+        },
+    }
+    validate_release_evidence_payload(evidence)
+    return evidence
+
+
+def resolve_single_artifact(pattern: str) -> Path:
+    """Resolve a literal or glob artifact pattern to exactly one file."""
+    matches = [Path(match) for match in glob.glob(pattern)]
+    if not matches and Path(pattern).is_file():
+        matches = [Path(pattern)]
+    files = [path for path in matches if path.is_file()]
+    if len(files) != 1:
+        raise RuntimeError(f"expected exactly one signed installer artifact for pattern: {pattern}")
+    return files[0]
+
+
+def print_release_evidence(args: argparse.Namespace) -> None:
+    """Print generated Python runtime default evidence JSON to stdout."""
+    if not args.python_version:
+        raise RuntimeError("--python-version is required with --print-evidence")
+    if args.with_runtime_artifact is None:
+        raise RuntimeError("--with-runtime-artifact is required with --print-evidence")
+    if args.without_runtime_bytes is None:
+        raise RuntimeError("--without-runtime-bytes is required with --print-evidence")
+
+    manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+    artifact = resolve_single_artifact(args.with_runtime_artifact)
+    evidence = build_release_evidence(
+        manifest,
+        python_version=args.python_version,
+        security_update_policy=args.security_update_policy,
+        with_runtime_bytes=artifact.stat().st_size,
+        without_runtime_bytes=args.without_runtime_bytes,
+    )
+    print(json.dumps(evidence, indent=2, sort_keys=True))
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for the Python runtime default gate validator."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -145,6 +219,38 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("docs/release/python-runtime-default-gate.md"),
         help="Path to the Python runtime default gate document.",
+    )
+    parser.add_argument(
+        "--print-evidence",
+        action="store_true",
+        help="Print structured signed-release evidence JSON from the runtime manifest.",
+    )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=DEFAULT_RUNTIME_MANIFEST,
+        help="Path to the Python runtime manifest used by --print-evidence.",
+    )
+    parser.add_argument(
+        "--python-version",
+        default="",
+        help="Python patch version used by --print-evidence, for example 3.11.9.",
+    )
+    parser.add_argument(
+        "--security-update-policy",
+        default=DEFAULT_SECURITY_UPDATE_POLICY,
+        help="Security update policy recorded in generated evidence.",
+    )
+    parser.add_argument(
+        "--with-runtime-artifact",
+        default=None,
+        help="Signed installer artifact path or glob with the bundled Python runtime.",
+    )
+    parser.add_argument(
+        "--without-runtime-bytes",
+        type=int,
+        default=None,
+        help="Signed installer size in bytes from the matching build without the runtime bundle.",
     )
     parser.add_argument(
         "--evidence",
@@ -159,6 +265,9 @@ def main() -> int:
     """Validate the configured Python runtime default gate document."""
     args = parse_args()
     validate_default_gate_doc(args.doc)
+    if args.print_evidence:
+        print_release_evidence(args)
+        return 0
     if args.evidence is not None:
         validate_release_evidence(args.evidence)
     print(f"validated Python runtime default gate: {args.doc}")

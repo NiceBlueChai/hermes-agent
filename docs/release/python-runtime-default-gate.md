@@ -49,6 +49,18 @@ with:
 python scripts/validate_python_runtime_default_gate.py --evidence <signed-runtime-evidence.json>
 ```
 
+Signed installer workflows generate this evidence instead of requiring release operators to hand-author it:
+
+```powershell
+python scripts/validate_python_runtime_default_gate.py `
+  --print-evidence `
+  --manifest apps/bootstrap-installer/src-tauri/python-runtime/python-runtime-manifest.json `
+  --python-version <python-patch-version> `
+  --with-runtime-artifact <signed-installer-with-runtime> `
+  --without-runtime-bytes <signed-installer-size-without-runtime> `
+  > signed-runtime-evidence.json
+```
+
 The evidence file must include:
 
 - `pythonRuntime.version`, `sourceUrl`, `archiveSha256`, `securityUpdatePolicy`, and the actual

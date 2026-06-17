@@ -113,7 +113,9 @@ artifact validation. Local tests now prove the default gate rejects release note
 the signed installer size comparison, the Python runtime archive source, or the Python security-update rebuild policy.
 The same gate now accepts optional structured release evidence JSON and validates the actual Python runtime manifest,
 archive source URL, archive SHA-256, security-update rebuild policy, signed installer sizes, and signed installer size
-delta before default inclusion can be claimed.
+delta before default inclusion can be claimed. Signed Windows, Linux, and macOS workflow paths now generate that JSON
+with `--print-evidence` from the runtime manifest, the signed installer artifact size, and a required without-runtime
+baseline size input, then upload it as a signed-only runtime default evidence artifact.
 
 **Completion standard:**
 
@@ -323,6 +325,11 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
 - Local Python runtime tests now require `validate_python_runtime_default_gate.py --evidence` to validate structured
   signed-release evidence for the runtime manifest, archive source, SHA-256, security-update rebuild policy, signed
   installer sizes, and exact size delta.
+- Local Python runtime tests now require `validate_python_runtime_default_gate.py --print-evidence` to build structured
+  signed-release evidence from `python-runtime-manifest.json` and installer sizes, and require signed Windows, Linux,
+  and macOS workflow paths to upload `python-runtime-default-evidence-*.json` artifacts.
+- A local CLI smoke generated runtime default evidence from a temporary manifest and artifact, parsed it with
+  `python -m json.tool`, and validated it again with `validate_python_runtime_default_gate.py --evidence`.
 - [Unsigned Windows smoke run 27722259009](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27722259009)
   passed on head `d973e23bbf6e032ba61f2c7bd6f6f9f2fba9488b`, revalidating the Python runtime default gate on a Windows
   runner after structured signed-release evidence validation was added, then passing built binary smoke, Python runtime
