@@ -236,6 +236,9 @@ git diff --check
 
 ## Goal 11: Defer Or Approve Larger Rust Candidates
 
+**Status:** Complete on branch. Candidate decisions are recorded in
+`docs/release/rust-candidate-decisions.md`.
+
 **Completion standard:**
 
 - Each deeper Rust candidate has a short candidate note covering exact parity tests, measurable dependency or reliability
