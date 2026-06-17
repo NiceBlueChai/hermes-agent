@@ -374,6 +374,12 @@ be recorded or used by `canRunFullBootstrap`.
 - [Unix smoke run 27701222464](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27701222464) passed on head
   `2b388bdbb1bcb155945de1e19015cafc4ee754b1`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   release-note evidence was required to point at the same GitHub repository as the release artifact.
+- [Unsigned Windows smoke run 27703353433](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27703353433)
+  passed on head `13b45f8d32c38f71f4cfd5f8491c82758121d6d7`, revalidating fallback burn-down validation after
+  generated `OWNER/REPO` and `vX.Y.Z` placeholders were rejected as real release evidence.
+- [Unix smoke run 27703355862](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27703355862) passed on head
+  `13b45f8d32c38f71f4cfd5f8491c82758121d6d7`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  generated `OWNER/REPO` and `vX.Y.Z` placeholders were rejected as real release evidence.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 - Local validator and manager tests now reject split evidence where a platform's required checks are spread across
