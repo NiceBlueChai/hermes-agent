@@ -246,8 +246,9 @@ publication. When the gate eventually reports `true`, the desktop bootstrap runn
 directly and no longer requires `install.ps1` or `install.sh` just to discover the first-launch stage list. Fallback
 burn-down evidence must now carry `signed: true`; `scripts/validate_fallback_burn_down.py` rejects unsigned evidence and
 `hermes-manager bootstrap-capabilities` ignores unsigned evidence when computing `canRunFullBootstrap`. The validator
-also supports `--require-complete desktop-bootstrap-script-fallback` so the final fallback removal can fail fast until
-all signed platform evidence is present.
+also requires each evidence item to carry a 40-character release commit SHA and supports
+`--require-complete desktop-bootstrap-script-fallback` so the final fallback removal can fail fast until all signed
+platform evidence is present.
 
 **Evidence:**
 

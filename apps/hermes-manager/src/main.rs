@@ -296,6 +296,7 @@ struct FallbackEvidence {
     platform: String,
     release: String,
     url: String,
+    commit: String,
     signed: bool,
     checks: Vec<String>,
 }
@@ -946,6 +947,7 @@ fn release_evidence_checks_by_platform(
         if !evidence.signed
             || evidence.release.trim().is_empty()
             || !evidence.url.starts_with("https://")
+            || !is_git_commit_sha(&evidence.commit)
         {
             continue;
         }
@@ -955,6 +957,13 @@ fn release_evidence_checks_by_platform(
             .extend(evidence.checks.iter().cloned());
     }
     checks_by_platform
+}
+
+fn is_git_commit_sha(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || ('a'..='f').contains(&ch))
 }
 
 struct NativeBootstrapStageOptions<'a> {
@@ -3277,6 +3286,22 @@ mod tests {
         assert!(!can_run_full_bootstrap_from_registry_text(&registry));
     }
 
+    #[test]
+    fn full_bootstrap_gate_rejects_release_evidence_without_commit() {
+        let registry = full_bootstrap_registry_fixture_with_commit(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            "not-a-sha",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
     fn full_bootstrap_registry_fixture(platforms: &[&str], checks: &[&str]) -> String {
         full_bootstrap_registry_fixture_with_signed(platforms, checks, true)
     }
@@ -3285,6 +3310,33 @@ mod tests {
         platforms: &[&str],
         checks: &[&str],
         signed: bool,
+    ) -> String {
+        full_bootstrap_registry_fixture_with_signed_and_commit(
+            platforms,
+            checks,
+            signed,
+            "a".repeat(40),
+        )
+    }
+
+    fn full_bootstrap_registry_fixture_with_commit(
+        platforms: &[&str],
+        checks: &[&str],
+        commit: &str,
+    ) -> String {
+        full_bootstrap_registry_fixture_with_signed_and_commit(
+            platforms,
+            checks,
+            true,
+            commit.to_string(),
+        )
+    }
+
+    fn full_bootstrap_registry_fixture_with_signed_and_commit(
+        platforms: &[&str],
+        checks: &[&str],
+        signed: bool,
+        commit: String,
     ) -> String {
         let required_platforms = ["windows", "macos", "linux"];
         let required_evidence = required_platforms
@@ -3308,6 +3360,7 @@ mod tests {
                     "platform": platform,
                     "release": "v9.9.9",
                     "url": "https://example.invalid/releases/v9.9.9",
+                    "commit": commit,
                     "signed": signed,
                     "checks": checks
                 })

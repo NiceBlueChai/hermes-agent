@@ -20,6 +20,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REGISTRY = REPO_ROOT / "docs" / "release" / "fallback-burn-down.json"
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 VALID_PLATFORMS = frozenset(("windows", "macos", "linux"))
 
 
@@ -144,6 +145,9 @@ def validate_evidence(
         url = require_nested_string(item, "url", entry_id, "evidence")
         if not url.startswith("https://"):
             raise RuntimeError(f"entry {entry_id} evidence url must be HTTPS: {url}")
+        commit = item.get("commit")
+        if not isinstance(commit, str) or not COMMIT_RE.match(commit):
+            raise RuntimeError(f"entry {entry_id} evidence commit must be a 40-character git SHA")
         if item.get("signed") is not True:
             raise RuntimeError(f"entry {entry_id} evidence signed must be true")
         checks = require_string_list(item, "checks", entry_id, "evidence")
