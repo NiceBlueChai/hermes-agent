@@ -465,6 +465,32 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             output_dir.rmdir()
             root.rmdir()
 
+    def test_install_playwright_chromium_uses_resolved_npx_wrapper(self):
+        module = _load_script_module()
+        original_run = module.subprocess.run
+        original_which = module.shutil.which
+        calls = []
+
+        def fake_which(command):
+            if command == "npx":
+                return "C:/node/bin/npx.CMD"
+            return None
+
+        def fake_run(args, **kwargs):
+            calls.append(list(args))
+            return SimpleNamespace(stdout="")
+
+        module.shutil.which = fake_which
+        module.subprocess.run = fake_run
+        try:
+            module.install_playwright_chromium(Path("browser-cache"), Path.cwd())
+
+            self.assertEqual(calls[0][0], "C:/node/bin/npx.CMD")
+            self.assertEqual(calls[0][1:], ["--yes", "playwright", "install", "chromium"])
+        finally:
+            module.subprocess.run = original_run
+            module.shutil.which = original_which
+
     def test_populate_npm_cache_reuses_existing_npm_cache(self):
         module = _load_script_module()
         root = Path("tmp-bootstrap-tools-npm-cache-reuse-test")
@@ -474,15 +500,23 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         cached_file.parent.mkdir(parents=True, exist_ok=True)
         cached_file.write_bytes(b"cached package")
         original_run = module.subprocess.run
+        original_which = module.shutil.which
+        expected_npm = "C:/node/bin/npm.CMD"
         calls = []
+
+        def fake_which(command):
+            if command == "npm":
+                return expected_npm
+            return None
 
         def fake_run(args, **kwargs):
             calls.append(list(args))
-            if list(args) == ["npm", "config", "get", "cache"]:
+            if list(args) == [expected_npm, "config", "get", "cache"]:
                 return SimpleNamespace(stdout=f"{source_cache}\n")
             raise AssertionError(f"unexpected npm install command: {args!r}")
 
         module.subprocess.run = fake_run
+        module.shutil.which = fake_which
         try:
             module.populate_npm_cache(target_cache, Path.cwd())
 
@@ -490,9 +524,10 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                 (target_cache / "_cacache" / "content-v2" / "sha512" / "aa" / "bb").read_bytes(),
                 b"cached package",
             )
-            self.assertEqual(calls, [["npm", "config", "get", "cache"]])
+            self.assertEqual(calls, [[expected_npm, "config", "get", "cache"]])
         finally:
             module.subprocess.run = original_run
+            module.shutil.which = original_which
             if root.exists():
                 shutil.rmtree(root)
 
@@ -503,14 +538,21 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         target_cache = root / "target-cache"
         source_cache.mkdir(parents=True, exist_ok=True)
         original_run = module.subprocess.run
+        original_which = module.shutil.which
+        expected_npm = "C:/node/bin/npm.CMD"
         calls = []
+
+        def fake_which(command):
+            if command == "npm":
+                return expected_npm
+            return None
 
         def fake_run(args, **kwargs):
             args_list = list(args)
             calls.append(args_list)
-            if args_list == ["npm", "config", "get", "cache"]:
+            if args_list == [expected_npm, "config", "get", "cache"]:
                 return SimpleNamespace(stdout=f"{source_cache}\n")
-            self.assertEqual(args_list[:2], ["npm", "ci"])
+            self.assertEqual(args_list[:2], [expected_npm, "ci"])
             self.assertEqual(Path(kwargs["env"]["npm_config_cache"]), target_cache)
             cached_file = target_cache / "_cacache" / "content-v2" / "sha512" / "aa" / "bb"
             cached_file.parent.mkdir(parents=True, exist_ok=True)
@@ -518,6 +560,7 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             return SimpleNamespace(stdout="")
 
         module.subprocess.run = fake_run
+        module.shutil.which = fake_which
         try:
             module.populate_npm_cache(target_cache, Path.cwd())
 
@@ -525,10 +568,11 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                 (target_cache / "_cacache" / "content-v2" / "sha512" / "aa" / "bb").read_bytes(),
                 b"fresh cached package",
             )
-            self.assertEqual(calls[0], ["npm", "config", "get", "cache"])
-            self.assertEqual(calls[1][:2], ["npm", "ci"])
+            self.assertEqual(calls[0], [expected_npm, "config", "get", "cache"])
+            self.assertEqual(calls[1][:2], [expected_npm, "ci"])
         finally:
             module.subprocess.run = original_run
+            module.shutil.which = original_which
             if root.exists():
                 shutil.rmtree(root)
 

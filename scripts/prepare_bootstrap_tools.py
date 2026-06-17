@@ -468,13 +468,19 @@ def default_playwright_browser_source_url() -> str:
     return "https://github.com/NousResearch/Hermes-Agent"
 
 
+def resolve_command(command: str) -> str:
+    """Return the executable path for a command, including Windows .cmd wrappers."""
+
+    return shutil.which(command) or command
+
+
 def install_playwright_chromium(cache_dir: Path, cwd: Path) -> None:
     """Install Playwright Chromium into the supplied browser cache directory."""
 
     env = os.environ.copy()
     env["PLAYWRIGHT_BROWSERS_PATH"] = str(cache_dir)
     subprocess.run(
-        ["npx", "--yes", "playwright", "install", "chromium"],
+        [resolve_command("npx"), "--yes", "playwright", "install", "chromium"],
         cwd=cwd,
         env=env,
         check=True,
@@ -704,7 +710,7 @@ def populate_npm_cache(cache_dir: Path, cwd: Path) -> None:
     env = os.environ.copy()
     env["npm_config_cache"] = str(cache_dir)
     subprocess.run(
-        ["npm", "ci", "--cache", str(cache_dir), "--prefer-offline", "--no-audit", "--fund=false"],
+        [resolve_command("npm"), "ci", "--cache", str(cache_dir), "--prefer-offline", "--no-audit", "--fund=false"],
         cwd=cwd,
         env=env,
         check=True,
@@ -716,7 +722,7 @@ def npm_config_cache_dir(cwd: Path) -> Path | None:
 
     try:
         result = subprocess.run(
-            ["npm", "config", "get", "cache"],
+            [resolve_command("npm"), "config", "get", "cache"],
             cwd=cwd,
             check=True,
             capture_output=True,
