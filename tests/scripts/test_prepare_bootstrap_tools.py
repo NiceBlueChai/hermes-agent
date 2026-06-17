@@ -1368,6 +1368,7 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             "Azure login (OIDC)",
             "Sign Hermes-Setup.exe with Azure Artifact Signing",
             "Verify signed installer artifacts",
+            "Validate installer artifacts",
             "Upload NSIS installer",
             "Upload raw exe",
         ):
@@ -1377,6 +1378,14 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                 if section.startswith(step_name)
             )
             self.assertIn("if: ${{ !inputs['unsigned-smoke-only'] }}", step)
+        unsigned_validation = next(
+            section
+            for section in workflow.split("\n      - name: ")
+            if section.startswith("Validate unsigned smoke artifacts")
+        )
+        self.assertIn("if: ${{ inputs['unsigned-smoke-only'] }}", unsigned_validation)
+        self.assertNotIn("bundle/nsis/*.exe", unsigned_validation)
+        self.assertIn("python-runtime-manifest.json", unsigned_validation)
 
     def test_windows_installer_workflow_validates_signed_outputs_before_upload(self):
         repo_root = Path(__file__).resolve().parents[2]
