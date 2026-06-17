@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import plistlib
 import sys
 from pathlib import Path
 
@@ -232,9 +233,27 @@ def artifact_size_bytes(path: Path) -> int:
 def validate_macos_app_artifact(path: Path) -> None:
     """Validate the executable entry point inside a macOS app bundle."""
 
-    executable = path / "Contents" / "MacOS" / "Hermes"
+    executable_name = macos_bundle_executable_name(path)
+    executable = path / "Contents" / "MacOS" / executable_name
     if not executable.is_file() or executable.stat().st_size <= 0:
         raise RuntimeError(f"missing macOS app executable: {executable}")
+
+
+def macos_bundle_executable_name(path: Path) -> str:
+    """Return the executable name declared by a macOS app bundle."""
+
+    info_plist = path / "Contents" / "Info.plist"
+    if not info_plist.is_file():
+        return "Hermes"
+    with info_plist.open("rb") as handle:
+        data = plistlib.load(handle)
+    executable_name = data.get("CFBundleExecutable")
+    if not isinstance(executable_name, str) or not executable_name.strip():
+        raise RuntimeError(f"missing CFBundleExecutable in macOS app plist: {info_plist}")
+    executable_path = Path(executable_name)
+    if executable_path.name != executable_name or executable_path.is_absolute():
+        raise RuntimeError(f"unsafe CFBundleExecutable in macOS app plist: {executable_name}")
+    return executable_name
 
 
 def wheelhouse_source_inputs_exist(root: Path) -> bool:

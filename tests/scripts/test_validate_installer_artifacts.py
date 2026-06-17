@@ -105,6 +105,39 @@ class ValidateInstallerArtifactsTests(unittest.TestCase):
 
             self.assertEqual(checked, [app_bundle])
 
+    def test_validate_artifacts_uses_macos_bundle_executable_from_info_plist(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_bundle = root / "target" / "release" / "bundle" / "macos" / "Hermes.app"
+            info_plist = app_bundle / "Contents" / "Info.plist"
+            app_binary = app_bundle / "Contents" / "MacOS" / "Hermes-Setup"
+            info_plist.parent.mkdir(parents=True)
+            app_binary.parent.mkdir(parents=True)
+            info_plist.write_text(
+                """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>Hermes-Setup</string>
+</dict>
+</plist>
+""",
+                encoding="utf-8",
+            )
+            app_binary.write_bytes(b"app binary")
+
+            checked = module.validate_artifacts(
+                root,
+                [
+                    "target/release/bundle/macos/*.app",
+                ],
+            )
+
+            self.assertEqual(checked, [app_bundle])
+
     def test_validate_artifacts_rejects_macos_app_without_executable(self):
         module = _load_script_module()
         with tempfile.TemporaryDirectory() as tmp:
