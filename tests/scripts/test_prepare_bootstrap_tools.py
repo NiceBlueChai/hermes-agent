@@ -1157,6 +1157,29 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         for section in windows_upload_sections + unix_upload_sections:
             self.assertIn("if-no-files-found: error", section)
 
+    def test_installer_workflows_timeout_bootstrap_tool_bundling(self):
+        """Release smoke should fail a stuck bootstrap tool bundle step quickly."""
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+        windows_step = next(
+            section
+            for section in windows_workflow.split("\n      - name: ")
+            if section.startswith("Bundle bootstrap tool archives")
+        )
+        unix_step = next(
+            section
+            for section in unix_workflow.split("\n            - name: ")
+            if section.startswith("Bundle bootstrap tool archives")
+        )
+
+        self.assertIn("timeout-minutes: 10", windows_step)
+        self.assertIn("timeout-minutes: 10", unix_step)
+
     def test_installer_workflows_accept_optional_audited_archives(self):
         repo_root = Path(__file__).resolve().parents[2]
         windows_workflow = (

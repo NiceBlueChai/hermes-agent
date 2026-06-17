@@ -125,6 +125,7 @@ jobs:
                       wget
 
             - name: Bundle bootstrap tool archives
+              timeout-minutes: 10
               env:
                   HERMES_LINUX_AUDITED_ARCHIVE: ${{ inputs['linux-audited-archive'] }}
                   HERMES_MACOS_AUDITED_ARCHIVE: ${{ inputs['macos-audited-archive'] }}

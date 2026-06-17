@@ -125,6 +125,7 @@ jobs:
           workspaces: apps/bootstrap-installer/src-tauri
 
       - name: Bundle bootstrap tool archives
+        timeout-minutes: 10
         env:
           HERMES_AUDITED_ARCHIVE: ${{ inputs['audited-archive'] }}
         run: |
@@ -497,6 +498,7 @@ jobs:
             wget
 
       - name: Bundle bootstrap tool archives
+        timeout-minutes: 10
         run: |
           set -euo pipefail
           python scripts/prepare_bootstrap_tools.py \
