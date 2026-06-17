@@ -447,6 +447,16 @@ signature types, and the Rust `canRunFullBootstrap` gate ignores evidence withou
 - [Unix smoke run 27714218659](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27714218659) passed on head
   `a2eef1e38ead29fac0108ddf5203c9ef25e6768e`, revalidating Linux and macOS packaged runtime lifecycle smoke after the
   same validator hardening.
+- [Unix smoke run 27716761713](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27716761713) failed on head
+  `84c06efdd39b1eaa1a042b64dccb25337b7708ae` when the Linux Tauri dependency install hit the new 10-minute step
+  timeout, proving the timeout prevented a full-job hang but was too aggressive for slow hosted-runner apt mirrors.
+- [Unsigned Windows smoke run 27717579449](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27717579449)
+  passed on head `8ea556a5fc4399c559473c1494cab2bb2acb70ee`, revalidating fallback burn-down validation and Windows
+  packaged runtime lifecycle smoke after Linux Tauri dependency installation gained apt retry options and a 20-minute
+  step timeout.
+- [Unix smoke run 27717579490](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27717579490) passed on head
+  `8ea556a5fc4399c559473c1494cab2bb2acb70ee`, revalidating Linux and macOS packaged runtime lifecycle smoke after the
+  same apt retry and timeout hardening.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 - Local validator and manager tests now reject split evidence where a platform's required checks are spread across
