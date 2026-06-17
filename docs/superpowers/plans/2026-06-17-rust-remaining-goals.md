@@ -482,6 +482,10 @@ release tags containing whitespace or `/`, requires the release notes URL to equ
   `b2446ccf276c4cbbbf325f32073974c0e9a099bd`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   signed workflow mode began requiring release evidence metadata inputs. The new metadata preflight was parsed by
   GitHub and skipped in unsigned smoke mode.
+- [Unix smoke run 27721403348](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27721403348) passed on head
+  `29d90933dfbd9ea7295d323eef16a3a480ec62da`, revalidating Linux and macOS packaged runtime lifecycle smoke after the
+  signed metadata preflight was tightened to require a single release tag segment and the exact current-repository
+  GitHub `releases/tag/<tag>` URL. The tightened preflight was parsed by GitHub and skipped in unsigned smoke mode.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 - Local validator and manager tests now reject split evidence where a platform's required checks are spread across
