@@ -231,7 +231,8 @@ git diff --check
 flag. The checked-in registry still has no signed release evidence, so the reported value remains `false` until
 Windows, macOS, and Linux evidence each cover every required check. Release-note draft text is recorded in
 `docs/release/native-bootstrap-release-notes.md` and must be reconciled with the actual signed release artifacts before
-publication.
+publication. When the gate eventually reports `true`, the desktop bootstrap runner now uses the native manager manifest
+directly and no longer requires `install.ps1` or `install.sh` just to discover the first-launch stage list.
 
 **Evidence:**
 
@@ -249,6 +250,8 @@ publication.
 - Signed Windows workflow mode now preflights `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
   `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT_NAME`, and `AZURE_SIGNING_CERTIFICATE_PROFILE` before Azure login,
   so missing release-signing configuration is reported directly before the expensive installer build.
+- Desktop runner tests prove a full-native gated bootstrap can complete from the native manifest even when no installer
+  script or build stamp is available.
 
 **Completion standard:**
 

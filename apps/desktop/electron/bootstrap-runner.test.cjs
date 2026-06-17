@@ -384,6 +384,63 @@ test('runBootstrap dispatches manifest-matched native stages through the manager
   }
 })
 
+test('runBootstrap uses native manifest without installer script when full native bootstrap is gated on', async () => {
+  const home = mkTmpHome()
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-bootstrap-empty-repo-'))
+  try {
+    const stages = [{ name: 'install-metadata', title: 'Record install metadata' }]
+    const nativeCalls = []
+    const events = []
+    const result = await runBootstrap({
+      installStamp: null,
+      activeRoot: path.join(home, 'hermes-agent'),
+      sourceRepoRoot: repo,
+      hermesHome: home,
+      logRoot: path.join(home, 'logs'),
+      resourcesPath: '/opt/Hermes/resources',
+      platform: 'linux',
+      onEvent: ev => events.push(ev),
+      writeMarker: payload => ({ ...payload, schemaVersion: 1 }),
+      _recordInstallMetadata: () => true,
+      _probeNativeBootstrapCapabilities: () => ({
+        available: true,
+        canRunFullBootstrap: true,
+        supportedStages: stages.map(stage => stage.name)
+      }),
+      _probeNativeBootstrapManifest: () => ({
+        available: true,
+        protocolVersion: 1,
+        stages
+      }),
+      _runNativeBootstrapStage: async ({ stage }) => {
+        nativeCalls.push(stage.name)
+        return {
+          type: 'stage',
+          name: stage.name,
+          state: 'succeeded',
+          durationMs: 1,
+          runner: 'native',
+          json: { ok: true, stage: stage.name }
+        }
+      }
+    })
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(nativeCalls, ['install-metadata'])
+    assert.ok(
+      events.some(ev => ev.type === 'manifest' && ev.protocolVersion === 1),
+      'native manifest should be emitted through the normal manifest event'
+    )
+    assert.ok(
+      events.some(ev => ev.type === 'log' && /using full native bootstrap manifest/.test(ev.line || '')),
+      'full native bootstrap should be logged'
+    )
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+    fs.rmSync(repo, { recursive: true, force: true })
+  }
+})
+
 test('runBootstrap dispatches native path stage when the bridge advertises it', async () => {
   const home = mkTmpHome()
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-bootstrap-repo-'))

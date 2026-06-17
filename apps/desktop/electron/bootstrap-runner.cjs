@@ -689,21 +689,35 @@ async function runBootstrap(opts) {
       }
     }
 
-    // HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback
-    // Keep script bootstrap until the native bridge can run every first-launch stage.
-    // 1. Resolve the platform installer.
-    const scriptInfo = await resolveInstallScript({ installStamp, sourceRepoRoot, hermesHome, emit })
-    const installerKind = scriptInfo.kind || 'powershell'
+    let scriptInfo = null
+    let installerKind = null
+    let manifest = null
+    if (nativeProbe.available && nativeProbe.canRunFullBootstrap && nativeManifest.available) {
+      emit({
+        type: 'log',
+        line: '[bootstrap] using full native bootstrap manifest; script fallback is not required'
+      })
+      manifest = {
+        stages: nativeManifest.stages,
+        protocolVersion: nativeManifest.protocolVersion || null
+      }
+    } else {
+      // HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback
+      // Keep script bootstrap until the native bridge can run every first-launch stage.
+      // 1. Resolve the platform installer.
+      scriptInfo = await resolveInstallScript({ installStamp, sourceRepoRoot, hermesHome, emit })
+      installerKind = scriptInfo.kind || 'powershell'
 
-    // 2. Fetch manifest
-    const manifest = await fetchManifest({
-      scriptPath: scriptInfo.path,
-      installerKind,
-      emit,
-      hermesHome,
-      activeRoot,
-      installStamp
-    })
+      // 2. Fetch manifest
+      manifest = await fetchManifest({
+        scriptPath: scriptInfo.path,
+        installerKind,
+        emit,
+        hermesHome,
+        activeRoot,
+        installStamp
+      })
+    }
     emit({
       type: 'manifest',
       stages: manifest.stages,
@@ -733,12 +747,41 @@ async function runBootstrap(opts) {
         })
         emit(ev)
         if (ev.state === 'failed' && ev.fallbackToScript) {
-          emit({
-            type: 'log',
-            stage: stage.name,
-            line: `[bootstrap] native stage ${stage.name} unavailable; falling back to script stage ${stage.name}`,
-            stream: 'stderr'
-          })
+          if (!scriptInfo) {
+            ev = {
+              ...ev,
+              error: `${ev.error || 'native bootstrap stage failed'}; script fallback is unavailable`
+            }
+          } else {
+            emit({
+              type: 'log',
+              stage: stage.name,
+              line: `[bootstrap] native stage ${stage.name} unavailable; falling back to script stage ${stage.name}`,
+              stream: 'stderr'
+            })
+            ev = await runStage({
+              scriptPath: scriptInfo.path,
+              installerKind,
+              stage,
+              emit,
+              hermesHome,
+              activeRoot,
+              abortSignal,
+              installStamp
+            })
+          }
+        }
+      } else {
+        if (!scriptInfo) {
+          ev = {
+            type: 'stage',
+            name: stage.name,
+            state: 'failed',
+            durationMs: 0,
+            runner: 'native',
+            error: `native bootstrap manifest stage ${stage.name} is not supported by the native bridge`
+          }
+        } else {
           ev = await runStage({
             scriptPath: scriptInfo.path,
             installerKind,
@@ -750,17 +793,6 @@ async function runBootstrap(opts) {
             installStamp
           })
         }
-      } else {
-        ev = await runStage({
-          scriptPath: scriptInfo.path,
-          installerKind,
-          stage,
-          emit,
-          hermesHome,
-          activeRoot,
-          abortSignal,
-          installStamp
-        })
       }
       if (ev.state === 'failed') {
         emit({ type: 'failed', stage: stage.name, error: ev.error || 'stage failed' })
@@ -796,7 +828,7 @@ async function runBootstrap(opts) {
     return { ok: false, error: err.message || String(err) }
   } finally {
     try {
-      runLog.stream.end()
+      await new Promise(resolve => runLog.stream.end(resolve))
     } catch {
       void 0
     }
