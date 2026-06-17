@@ -211,6 +211,12 @@ class PreparePythonRuntimeTests(unittest.TestCase):
         self.assertIn("--wheelhouse-platform windows", windows_workflow)
         self.assertIn("--python-runtime-dir apps/bootstrap-installer/src-tauri/python-runtime", windows_workflow)
         self.assertIn("apps/bootstrap-installer/src-tauri/python-runtime/*", windows_workflow)
+        self.assertIn("unix-smoke-only:", windows_workflow)
+        self.assertIn("if: ${{ !inputs['unix-smoke-only'] }}", windows_workflow)
+        self.assertIn("Unix packaged runtime smoke", windows_workflow)
+        self.assertIn("os: ubuntu-latest", windows_workflow)
+        self.assertIn("os: macos-latest", windows_workflow)
+        self.assertIn("Smoke Unix packaged runtime lifecycle", windows_workflow)
 
         self.assertIn("linux-python-runtime-archive:", unix_workflow)
         self.assertIn("macos-python-runtime-archive:", unix_workflow)

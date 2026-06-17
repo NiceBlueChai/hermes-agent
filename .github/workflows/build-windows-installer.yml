@@ -20,6 +20,11 @@ on:
         required: false
         default: false
         type: boolean
+      unix-smoke-only:
+        description: Run Linux and macOS packaged runtime smoke checks without the Windows build.
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -52,6 +57,7 @@ jobs:
   build:
     name: Hermes-Setup.exe
     needs: authorize
+    if: ${{ !inputs['unix-smoke-only'] }}
     runs-on: windows-latest
     timeout-minutes: 30
     permissions:
@@ -389,4 +395,278 @@ jobs:
         with:
           name: Hermes-Setup-source-archive
           path: apps/bootstrap-installer/src-tauri/source-archive/*
+          if-no-files-found: error
+
+  unix-packaged-runtime-smoke:
+    name: Unix packaged runtime smoke (${{ matrix.platform }})
+    needs: authorize
+    if: ${{ inputs['unix-smoke-only'] }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-latest
+            artifact-name: Hermes-Setup-linux
+            upload-path: apps/bootstrap-installer/src-tauri/target/release/bundle/appimage/*.AppImage
+          - platform: macos
+            os: macos-latest
+            artifact-name: Hermes-Setup-macos
+            upload-path: |
+              apps/bootstrap-installer/src-tauri/target/release/bundle/dmg/*.dmg
+              apps/bootstrap-installer/src-tauri/target/release/bundle/macos/*.app
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c  # v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+
+      - name: Cache Rust targets
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+        with:
+          workspaces: apps/bootstrap-installer/src-tauri
+
+      - name: Install Linux Tauri dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
+
+      - name: Bundle bootstrap tool archives
+        run: |
+          set -euo pipefail
+          python scripts/prepare_bootstrap_tools.py \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}" \
+            --bundle-playwright-browsers \
+            --bundle-electron-cache \
+            --bundle-npm-cache
+
+      - name: Validate bootstrap tool archives
+        run: >
+          python scripts/prepare_bootstrap_tools.py
+          --validate-only
+          --platform ${{ matrix.platform }}
+          --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
+      - name: Bundle Python wheelhouse
+        run: >
+          python scripts/prepare_python_wheelhouse.py
+          --platform ${{ matrix.platform }}
+          --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --python python
+          --force
+
+      - name: Validate Python wheelhouse
+        run: >
+          python scripts/prepare_python_wheelhouse.py
+          --validate-only
+          --platform ${{ matrix.platform }}
+          --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
+      - name: Bundle Python runtime archive
+        run: |
+          set -euo pipefail
+          runtime_arch="${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}"
+          runtime_archive="dist/python-runtime/python-runtime-${{ matrix.platform }}-${runtime_arch}.tar.gz"
+          python scripts/build_python_runtime_archive.py \
+            --platform "${{ matrix.platform }}" \
+            --arch "${runtime_arch}" \
+            --force
+          python scripts/prepare_python_runtime.py \
+            --platform "${{ matrix.platform }}" \
+            --arch "${runtime_arch}" \
+            --python-tag cp311 \
+            --force \
+            --archive "${runtime_archive}" \
+            --source-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Validate Python runtime archive
+        run: >
+          python scripts/prepare_python_runtime.py
+          --validate-only
+          --platform ${{ matrix.platform }}
+          --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --python-tag cp311
+
+      - name: Build installer
+        env:
+          HERMES_BUILD_PIN_COMMIT: ${{ github.sha }}
+        run: npm run tauri:build
+        working-directory: apps/bootstrap-installer
+
+      - name: Smoke Unix built installer binary
+        run: >
+          ./apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup --self-check
+          --self-check-expect-commit "${{ github.sha }}"
+          --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
+          --self-check-bootstrap-tools-platform ${{ matrix.platform }}
+          --self-check-bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse
+          --self-check-wheelhouse-platform ${{ matrix.platform }}
+          --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime
+          --self-check-python-runtime-platform ${{ matrix.platform }}
+          --self-check-python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
+      - name: Smoke Unix built installer lifecycle
+        run: >
+          ./apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup --self-check-lifecycle
+          --self-check-expect-commit "${{ github.sha }}"
+          --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
+          --self-check-bootstrap-tools-platform ${{ matrix.platform }}
+          --self-check-bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse
+          --self-check-wheelhouse-platform ${{ matrix.platform }}
+          --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime
+          --self-check-python-runtime-platform ${{ matrix.platform }}
+          --self-check-python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
+      - name: Smoke Unix packaged runtime lifecycle
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            package_bin="$(
+              find apps/bootstrap-installer/src-tauri/target/release/bundle/appimage \
+                -maxdepth 1 -name '*.AppImage' -print -quit
+            )"
+            test -n "${package_bin}"
+            chmod +x "${package_bin}"
+          else
+            package_bin="$(
+              find apps/bootstrap-installer/src-tauri/target/release/bundle/macos \
+                -path '*/Contents/MacOS/Hermes' -type f -print -quit
+            )"
+            test -n "${package_bin}"
+          fi
+          "${package_bin}" --self-check \
+            --self-check-expect-commit "${{ github.sha }}" \
+            --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools \
+            --self-check-bootstrap-tools-platform ${{ matrix.platform }} \
+            --self-check-bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
+            --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse \
+            --self-check-wheelhouse-platform ${{ matrix.platform }} \
+            --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
+            --self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime \
+            --self-check-python-runtime-platform ${{ matrix.platform }} \
+            --self-check-python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          "${package_bin}" --self-check-lifecycle \
+            --self-check-expect-commit "${{ github.sha }}" \
+            --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools \
+            --self-check-bootstrap-tools-platform ${{ matrix.platform }} \
+            --self-check-bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
+            --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse \
+            --self-check-wheelhouse-platform ${{ matrix.platform }} \
+            --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
+            --self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime \
+            --self-check-python-runtime-platform ${{ matrix.platform }} \
+            --self-check-python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
+      - name: Validate Linux installer artifacts
+        if: matrix.platform == 'linux'
+        run: >
+          python scripts/validate_installer_artifacts.py
+          --artifact "apps/bootstrap-installer/src-tauri/target/release/bundle/appimage/*.AppImage"
+          --artifact "apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json"
+          --artifact "apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json"
+          --artifact "apps/bootstrap-installer/src-tauri/python-runtime/python-runtime-manifest.json"
+          --bootstrap-tools-dir apps/bootstrap-installer/src-tauri/bootstrap-tools
+          --bootstrap-tools-platform ${{ matrix.platform }}
+          --bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse
+          --wheelhouse-platform ${{ matrix.platform }}
+          --wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --python-runtime-dir apps/bootstrap-installer/src-tauri/python-runtime
+          --python-runtime-platform ${{ matrix.platform }}
+          --python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --max-artifact-bytes 2147483648
+          --max-total-artifact-bytes 3221225472
+
+      - name: Validate macOS installer artifacts
+        if: matrix.platform == 'macos'
+        run: >
+          python scripts/validate_installer_artifacts.py
+          --artifact "apps/bootstrap-installer/src-tauri/target/release/bundle/dmg/*.dmg"
+          --artifact "apps/bootstrap-installer/src-tauri/target/release/bundle/macos/*.app"
+          --artifact "apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json"
+          --artifact "apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json"
+          --artifact "apps/bootstrap-installer/src-tauri/python-runtime/python-runtime-manifest.json"
+          --bootstrap-tools-dir apps/bootstrap-installer/src-tauri/bootstrap-tools
+          --bootstrap-tools-platform ${{ matrix.platform }}
+          --bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse
+          --wheelhouse-platform ${{ matrix.platform }}
+          --wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --python-runtime-dir apps/bootstrap-installer/src-tauri/python-runtime
+          --python-runtime-platform ${{ matrix.platform }}
+          --python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --max-artifact-bytes 2147483648
+          --max-total-artifact-bytes 3221225472
+
+      - name: Validate fallback burn-down registry
+        run: python scripts/validate_fallback_burn_down.py
+
+      - name: Upload Unix installer artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.upload-path }}
+          if-no-files-found: error
+
+      - name: Upload Unix bootstrap tool archives
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ matrix.artifact-name }}-bootstrap-tools
+          path: apps/bootstrap-installer/src-tauri/bootstrap-tools/*.tar.gz
+          if-no-files-found: error
+
+      - name: Upload Unix Python wheelhouse
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ matrix.artifact-name }}-python-wheelhouse
+          path: |
+            apps/bootstrap-installer/src-tauri/wheelhouse/*.whl
+            apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json
+          if-no-files-found: error
+
+      - name: Upload Unix Python runtime archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ matrix.artifact-name }}-python-runtime
+          path: apps/bootstrap-installer/src-tauri/python-runtime/*
           if-no-files-found: error
