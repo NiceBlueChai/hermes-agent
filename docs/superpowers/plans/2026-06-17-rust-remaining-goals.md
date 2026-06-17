@@ -214,6 +214,10 @@ git diff --check
 
 ## Goal 10: Burn Down Release Fallbacks
 
+**Status:** Complete for the current branch state. No fallback has been removed; the retained fallback registry validates.
+Verified with `python -m unittest tests.scripts.test_validate_fallback_burn_down` and
+`python scripts/validate_fallback_burn_down.py`.
+
 **Completion standard:**
 
 - Each removed fallback has release evidence recorded in `docs/release/fallback-burn-down.json`.
