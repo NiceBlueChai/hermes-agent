@@ -262,7 +262,8 @@ release-notes URL must both include the claimed `release` tag, preventing eviden
 Complete Windows, macOS, and Linux evidence must also share the same `release` tag and `commit` SHA, so platform
 evidence from different signed releases cannot be stitched together to unlock the final gate. Evidence `url` and
 `releaseNotes` values must point at GitHub release tag pages for the same repository, matching the generated
-`--print-template` shape.
+`--print-template` shape. Generated placeholders such as `OWNER/REPO` and `vX.Y.Z` must be replaced before evidence can
+be recorded or used by `canRunFullBootstrap`.
 
 **Evidence:**
 
@@ -398,6 +399,8 @@ evidence from different signed releases cannot be stitched together to unlock th
   tag URL, so arbitrary HTTPS pages cannot unlock fallback removal.
 - Local validator and manager tests now reject release-note links that point at a different GitHub repository than the
   signed artifact URL.
+- Local validator and manager tests now reject generated `OWNER/REPO` and `vX.Y.Z` placeholders as real release
+  evidence, keeping `--print-template` output from being recorded verbatim.
 
 **Completion standard:**
 

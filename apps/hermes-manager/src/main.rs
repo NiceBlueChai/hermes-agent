@@ -1029,6 +1029,9 @@ fn release_notes_link_matches_artifact(
 }
 
 fn is_github_release_tag_url(url: &str, release: &str) -> bool {
+    if release == "vX.Y.Z" {
+        return false;
+    }
     let Some(path_start) = url.strip_prefix("https://github.com/") else {
         return false;
     };
@@ -1037,7 +1040,9 @@ fn is_github_release_tag_url(url: &str, release: &str) -> bool {
         return false;
     };
     let marker = format!("/releases/tag/{release}");
-    path.ends_with(&marker) && path.matches('/').count() >= 4
+    path.ends_with(&marker)
+        && path.matches('/').count() >= 4
+        && github_release_repo(url).as_deref() != Some("OWNER/REPO")
 }
 
 fn github_release_repo(url: &str) -> Option<String> {
@@ -3583,6 +3588,40 @@ mod tests {
     }
 
     #[test]
+    fn full_bootstrap_gate_rejects_template_repository_placeholder() {
+        let registry = full_bootstrap_registry_fixture_with_url(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            "https://github.com/OWNER/REPO/releases/tag/v9.9.9",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_template_release_placeholder() {
+        let registry = full_bootstrap_registry_fixture_with_signed_commit_and_url(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            true,
+            "a".repeat(40),
+            "https://github.com/NiceBlueChai/hermes-agent/releases/tag/vX.Y.Z",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
     fn full_bootstrap_gate_rejects_conflicting_release_notes_for_same_artifact() {
         let required_platforms = ["windows", "macos", "linux"];
         let required_evidence = required_platforms
@@ -3742,7 +3781,7 @@ mod tests {
             checks,
             signed,
             commit,
-            "https://github.com/OWNER/REPO/releases/tag/v9.9.9",
+            "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
         )
     }
 

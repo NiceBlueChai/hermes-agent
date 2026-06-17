@@ -298,6 +298,8 @@ def validate_evidence(
         if platform not in required_evidence:
             raise RuntimeError(f"entry {entry_id} has undeclared evidence platform: {platform}")
         release = require_nested_string(item, "release", entry_id, "evidence")
+        if release == "vX.Y.Z":
+            raise RuntimeError(f"entry {entry_id} evidence release must replace vX.Y.Z placeholder")
         url = require_nested_string(item, "url", entry_id, "evidence")
         if not url.startswith("https://"):
             raise RuntimeError(f"entry {entry_id} evidence url must be HTTPS: {url}")
@@ -307,6 +309,8 @@ def validate_evidence(
             raise RuntimeError(
                 f"entry {entry_id} evidence url must be a GitHub release tag URL: {release}"
             )
+        if github_release_repo(url) == "OWNER/REPO":
+            raise RuntimeError(f"entry {entry_id} evidence url must replace OWNER/REPO placeholder")
         commit = item.get("commit")
         if not isinstance(commit, str) or not COMMIT_RE.match(commit):
             raise RuntimeError(f"entry {entry_id} evidence commit must be a 40-character git SHA")
@@ -328,6 +332,10 @@ def validate_evidence(
             if github_release_repo(release_notes) != github_release_repo(url):
                 raise RuntimeError(
                     f"entry {entry_id} evidence releaseNotes must reference the same GitHub repository"
+                )
+            if github_release_repo(release_notes) == "OWNER/REPO":
+                raise RuntimeError(
+                    f"entry {entry_id} evidence releaseNotes must replace OWNER/REPO placeholder"
                 )
             artifact = (platform, release, url, commit)
             existing_release_notes = release_notes_by_artifact.setdefault(artifact, release_notes)
@@ -399,10 +407,12 @@ def complete_evidence_release_keys(
         if (
             not isinstance(release, str)
             or not release.strip()
+            or release == "vX.Y.Z"
             or not isinstance(url, str)
             or not url.startswith("https://")
             or release not in url
             or not is_github_release_tag_url(url, release)
+            or github_release_repo(url) == "OWNER/REPO"
             or not isinstance(commit, str)
             or not COMMIT_RE.match(commit)
             or not isinstance(checks, list)
@@ -417,6 +427,8 @@ def complete_evidence_release_keys(
         if "release-notes" in checks and not is_github_release_tag_url(release_notes, release):
             continue
         if "release-notes" in checks and github_release_repo(release_notes) != github_release_repo(url):
+            continue
+        if "release-notes" in checks and github_release_repo(release_notes) == "OWNER/REPO":
             continue
         artifact = (release, url, commit)
         checks_by_artifact.setdefault(artifact, set()).update(
