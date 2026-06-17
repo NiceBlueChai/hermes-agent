@@ -275,12 +275,18 @@ platform evidence is present.
 - [Unsigned Windows smoke run 27685640529](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27685640529)
   passed on head `d0722920b49e906a939d5614880ff9ee06920d7c`, revalidating fallback burn-down validation after unsigned
   evidence was forbidden from unlocking `canRunFullBootstrap`.
+- [Unsigned Windows smoke run 27686664164](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27686664164)
+  passed on head `102f95e84a662de7aba94bb6ab8c0f8c9ed565e4`, revalidating fallback burn-down validation after release
+  evidence was required to include an exact 40-character commit SHA.
 - [Unix smoke run 27684717355](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27684717355) passed on head
   `e64c1a3b8882baefd08031bb378740a4b54f86f9`, including Linux and macOS packaged runtime lifecycle smoke with the
   Python runtime default gate active.
 - [Unix smoke run 27685640571](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27685640571) passed on head
   `d0722920b49e906a939d5614880ff9ee06920d7c`, revalidating Linux and macOS packaged runtime lifecycle smoke after the
   signed-evidence-only gate was added.
+- [Unix smoke run 27686664189](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27686664189) passed on head
+  `102f95e84a662de7aba94bb6ab8c0f8c9ed565e4`, revalidating Linux and macOS packaged runtime lifecycle smoke after the
+  exact-commit evidence gate was added.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 
