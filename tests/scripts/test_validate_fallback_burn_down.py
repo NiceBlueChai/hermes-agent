@@ -498,6 +498,203 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
             ],
         )
 
+    def test_add_evidence_appends_signed_release_evidence(self) -> None:
+        """Release operators can record signed evidence without hand-editing JSON."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: add-evidence"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "add-evidence",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["can-run-full-bootstrap", "release-notes"],
+                                    }
+                                ],
+                                "evidence": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(
+                registry,
+                root,
+                "--add-evidence",
+                "add-evidence",
+                "--platform",
+                "windows",
+                "--release",
+                "v1.0.0",
+                "--url",
+                "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                "--commit",
+                "a" * 40,
+                "--check",
+                "can-run-full-bootstrap",
+                "--check",
+                "release-notes",
+            )
+
+            payload = json.loads(registry.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("added evidence: add-evidence windows", result.stdout)
+        self.assertEqual(
+            payload["entries"][0]["evidence"],
+            [
+                {
+                    "platform": "windows",
+                    "release": "v1.0.0",
+                    "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                    "commit": "a" * 40,
+                    "signed": True,
+                    "checks": ["can-run-full-bootstrap", "release-notes"],
+                }
+            ],
+        )
+
+    def test_add_evidence_merges_existing_matching_release_evidence(self) -> None:
+        """Repeated signed evidence updates should merge checks for the same release."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: merge-evidence"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            url = "https://github.com/OWNER/REPO/releases/tag/v1.0.0"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "merge-evidence",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "linux",
+                                        "checks": ["can-run-full-bootstrap", "release-notes"],
+                                    }
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": "linux",
+                                        "release": "v1.0.0",
+                                        "url": url,
+                                        "commit": "b" * 40,
+                                        "signed": True,
+                                        "checks": ["can-run-full-bootstrap"],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(
+                registry,
+                root,
+                "--add-evidence",
+                "merge-evidence",
+                "--platform",
+                "linux",
+                "--release",
+                "v1.0.0",
+                "--url",
+                url,
+                "--commit",
+                "b" * 40,
+                "--check",
+                "release-notes",
+            )
+
+            payload = json.loads(registry.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(len(payload["entries"][0]["evidence"]), 1)
+        self.assertEqual(
+            payload["entries"][0]["evidence"][0]["checks"],
+            ["can-run-full-bootstrap", "release-notes"],
+        )
+
+    def test_add_evidence_rejects_undeclared_check_without_mutating_registry(self) -> None:
+        """Evidence recording should fail before writing undeclared checks."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: reject-evidence"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            original = {
+                "schemaVersion": 1,
+                "entries": [
+                    {
+                        "id": "reject-evidence",
+                        "owner": "desktop",
+                        "file": "src/entry.js",
+                        "marker": marker,
+                        "fallback": "Fallback description.",
+                        "removalGate": "Release evidence gate.",
+                        "requiredEvidence": [
+                            {
+                                "platform": "macos",
+                                "checks": ["can-run-full-bootstrap"],
+                            }
+                        ],
+                        "evidence": [],
+                    }
+                ],
+            }
+            registry.write_text(json.dumps(original), encoding="utf-8")
+
+            result = run_validator(
+                registry,
+                root,
+                "--add-evidence",
+                "reject-evidence",
+                "--platform",
+                "macos",
+                "--release",
+                "v1.0.0",
+                "--url",
+                "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                "--commit",
+                "c" * 40,
+                "--check",
+                "unknown-check",
+            )
+
+            payload = json.loads(registry.read_text(encoding="utf-8"))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("undeclared evidence check", result.stderr)
+        self.assertEqual(payload, original)
+
     def test_unsafe_file_path_fails(self) -> None:
         """Registry file paths must stay inside the repository root."""
         with tempfile.TemporaryDirectory() as tmp:

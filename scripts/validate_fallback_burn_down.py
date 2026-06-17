@@ -62,6 +62,7 @@ def validate_registry(
 
 def evidence_template(registry_path: Path, entry_id: str) -> dict[str, Any]:
     """Return a signed release evidence skeleton for one fallback entry."""
+
     payload = load_registry(registry_path)
     for entry in payload.get("entries", []):
         if isinstance(entry, dict) and entry.get("id") == entry_id:
@@ -84,6 +85,92 @@ def evidence_template(registry_path: Path, entry_id: str) -> dict[str, Any]:
                 )
             return {"entryId": entry_id, "evidence": evidence}
     raise RuntimeError(f"template entry not found: {entry_id}")
+
+
+def add_signed_evidence(
+    registry_path: Path,
+    repo_root: Path,
+    entry_id: str,
+    platform: str,
+    release: str,
+    url: str,
+    commit: str,
+    checks: list[str],
+) -> None:
+    """Record one signed release evidence item in the fallback registry."""
+
+    validate_registry(registry_path, repo_root)
+    payload = load_registry(registry_path)
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        raise RuntimeError("entries must be a list")
+
+    target = next(
+        (entry for entry in entries if isinstance(entry, dict) and entry.get("id") == entry_id),
+        None,
+    )
+    if target is None:
+        raise RuntimeError(f"evidence entry not found: {entry_id}")
+
+    new_item = {
+        "platform": platform,
+        "release": release,
+        "url": url,
+        "commit": commit,
+        "signed": True,
+        "checks": checks,
+    }
+    required = validate_required_evidence(target, entry_id)
+    validate_evidence({**target, "evidence": [new_item]}, entry_id, required)
+
+    evidence = target.get("evidence")
+    if not isinstance(evidence, list):
+        raise RuntimeError(f"entry {entry_id} evidence must be a list")
+
+    matching = find_matching_evidence(evidence, new_item)
+    if matching is None:
+        evidence.append(new_item)
+    else:
+        matching["checks"] = merge_checks(matching.get("checks"), checks)
+
+    validate_evidence(target, entry_id, required)
+    registry_path.write_text(json.dumps(payload, indent=4) + "\n", encoding="utf-8")
+
+
+def find_matching_evidence(
+    evidence: list[Any],
+    new_item: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Find an existing evidence item for the same signed release artifact."""
+
+    for item in evidence:
+        if not isinstance(item, dict):
+            continue
+        if (
+            item.get("platform") == new_item["platform"]
+            and item.get("release") == new_item["release"]
+            and item.get("url") == new_item["url"]
+            and item.get("commit") == new_item["commit"]
+            and item.get("signed") is True
+        ):
+            return item
+    return None
+
+
+def merge_checks(existing: Any, added: list[str]) -> list[str]:
+    """Merge evidence checks while preserving first-seen order."""
+
+    if not isinstance(existing, list):
+        raise RuntimeError("matching evidence checks must be a list")
+    merged: list[str] = []
+    seen: set[str] = set()
+    for check in [*existing, *added]:
+        if not isinstance(check, str):
+            raise RuntimeError("matching evidence checks must be strings")
+        if check not in seen:
+            seen.add(check)
+            merged.append(check)
+    return merged
 
 
 def load_registry(registry_path: Path) -> dict[str, Any]:
@@ -297,6 +384,23 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Print a JSON skeleton for missing signed evidence on one fallback entry.",
     )
+    parser.add_argument(
+        "--add-evidence",
+        metavar="ENTRY_ID",
+        default=None,
+        help="Append or merge signed release evidence for one fallback entry.",
+    )
+    parser.add_argument("--platform", choices=sorted(VALID_PLATFORMS), default=None)
+    parser.add_argument("--release", default=None)
+    parser.add_argument("--url", default=None)
+    parser.add_argument("--commit", default=None)
+    parser.add_argument(
+        "--check",
+        action="append",
+        dest="checks",
+        default=[],
+        help="Evidence check to record. Repeat for multiple checks.",
+    )
     return parser.parse_args(argv)
 
 
@@ -305,6 +409,33 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
+        if args.add_evidence:
+            missing = [
+                name
+                for name, value in (
+                    ("--platform", args.platform),
+                    ("--release", args.release),
+                    ("--url", args.url),
+                    ("--commit", args.commit),
+                    ("--check", args.checks),
+                )
+                if not value
+            ]
+            if missing:
+                raise RuntimeError(f"--add-evidence requires {', '.join(missing)}")
+            add_signed_evidence(
+                args.registry,
+                args.repo_root,
+                args.add_evidence,
+                args.platform,
+                args.release,
+                args.url,
+                args.commit,
+                args.checks,
+            )
+            print(f"added evidence: {args.add_evidence} {args.platform}")
+            return 0
+
         count = validate_registry(
             args.registry,
             args.repo_root,
