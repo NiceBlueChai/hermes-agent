@@ -333,6 +333,12 @@ release-notes URL must both include the claimed `release` tag, preventing eviden
 - [Unix smoke run 27693530293](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27693530293) passed on head
   `a10eaf2f3801c8c1ded4b51e491fd9f9a6e0b6d7`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   evidence URLs were required to include the claimed release tag.
+- [Unsigned Windows smoke run 27694624971](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27694624971)
+  passed on head `1569b001732f45a88b9a45bea6a3b0ecf2bb0bf8`, revalidating fallback burn-down validation after
+  `--add-evidence` began failing fast when `release-notes` needs `--release-notes`.
+- [Unix smoke run 27694625053](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27694625053) passed on head
+  `1569b001732f45a88b9a45bea6a3b0ecf2bb0bf8`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  `--add-evidence` began failing fast when `release-notes` needs `--release-notes`.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 - Local validator and manager tests now reject split evidence where a platform's required checks are spread across
