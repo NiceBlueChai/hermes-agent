@@ -444,6 +444,66 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing complete evidence for linux", result.stderr)
 
+    def test_require_complete_rejects_platform_checks_split_across_releases(self) -> None:
+        """Each platform must have one signed release artifact covering all checks."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: split-release-evidence"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            required_checks = ["can-run-full-bootstrap", "release-notes"]
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "split-release-evidence",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {"platform": platform, "checks": required_checks}
+                                    for platform in ("windows", "macos", "linux")
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": platform,
+                                        "release": "v1.0.0",
+                                        "url": f"https://example.invalid/releases/v1.0.0/{platform}",
+                                        "commit": "a" * 40,
+                                        "signed": True,
+                                        "checks": ["can-run-full-bootstrap"],
+                                    }
+                                    for platform in ("windows", "macos", "linux")
+                                ]
+                                + [
+                                    {
+                                        "platform": platform,
+                                        "release": "v1.0.1",
+                                        "url": f"https://example.invalid/releases/v1.0.1/{platform}",
+                                        "commit": "b" * 40,
+                                        "signed": True,
+                                        "checks": ["release-notes"],
+                                    }
+                                    for platform in ("windows", "macos", "linux")
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root, "--require-complete", "split-release-evidence")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing complete evidence for windows", result.stderr)
+
     def test_print_template_outputs_missing_signed_evidence_skeleton(self) -> None:
         """Release operators can generate a complete evidence skeleton for one fallback."""
         with tempfile.TemporaryDirectory() as tmp:

@@ -279,16 +279,49 @@ def validate_complete_evidence(
     required_evidence: dict[str, set[str]],
 ) -> None:
     """Validate that one fallback entry has complete signed evidence for every required check."""
-    checks_by_platform = collected_evidence_checks(entry, required_evidence)
 
     for platform, required_checks in required_evidence.items():
-        evidence_checks = checks_by_platform.get(platform, set())
-        missing = sorted(required_checks - evidence_checks)
+        complete = platform_has_complete_evidence_artifact(entry, platform, required_checks)
+        missing = sorted(required_checks) if not complete else []
         if missing:
             checks = ", ".join(missing)
             raise RuntimeError(
                 f"entry {entry_id} missing complete evidence for {platform}: {checks}"
             )
+
+
+def platform_has_complete_evidence_artifact(
+    entry: dict[str, Any],
+    platform: str,
+    required_checks: set[str],
+) -> bool:
+    """Return whether one signed release artifact covers all checks for a platform."""
+
+    checks_by_artifact: dict[tuple[str, str, str], set[str]] = {}
+    for item in entry.get("evidence", []):
+        if not isinstance(item, dict) or item.get("platform") != platform:
+            continue
+        if item.get("signed") is not True:
+            continue
+        release = item.get("release")
+        url = item.get("url")
+        commit = item.get("commit")
+        checks = item.get("checks")
+        if (
+            not isinstance(release, str)
+            or not release.strip()
+            or not isinstance(url, str)
+            or not url.startswith("https://")
+            or not isinstance(commit, str)
+            or not COMMIT_RE.match(commit)
+            or not isinstance(checks, list)
+        ):
+            continue
+        artifact = (release, url, commit)
+        checks_by_artifact.setdefault(artifact, set()).update(
+            check for check in checks if isinstance(check, str)
+        )
+    return any(required_checks.issubset(checks) for checks in checks_by_artifact.values())
 
 
 def collected_evidence_checks(

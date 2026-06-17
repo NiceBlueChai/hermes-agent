@@ -252,7 +252,9 @@ platform evidence is present. Use `--print-template desktop-bootstrap-script-fal
 generate the missing evidence skeleton instead of hand-authoring the JSON shape. Use
 `--add-evidence desktop-bootstrap-script-fallback --platform <platform> --release <tag> --url <https-release-url>
 --commit <40-char-sha> --check <check>` to record signed release evidence; the command forces `signed: true`, validates
-the platform and checks against the registry contract, and merges checks for the same release artifact.
+the platform and checks against the registry contract, and merges checks for the same release artifact. Complete
+evidence is artifact-scoped: for each platform, one signed `release` + `url` + `commit` group must cover every required
+check, so multiple partial release artifacts cannot be combined to unlock `canRunFullBootstrap`.
 
 **Evidence:**
 
@@ -299,6 +301,8 @@ the platform and checks against the registry contract, and merges checks for the
   signed evidence recording command was added.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
+- Local validator and manager tests now reject split evidence where a platform's required checks are spread across
+  multiple signed release artifacts; every platform needs one complete signed artifact group.
 
 **Completion standard:**
 

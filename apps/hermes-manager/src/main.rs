@@ -912,15 +912,11 @@ fn full_bootstrap_release_evidence_complete(entry: &FallbackBurnDownEntry) -> bo
         return false;
     }
 
-    let evidence = release_evidence_checks_by_platform(entry);
     FULL_BOOTSTRAP_RELEASE_PLATFORMS.iter().all(|platform| {
         let Some(required_checks) = required.get(*platform) else {
             return false;
         };
-        let Some(evidence_checks) = evidence.get(*platform) else {
-            return false;
-        };
-        required_checks.is_subset(evidence_checks)
+        platform_has_complete_release_evidence(entry, platform, required_checks)
     })
 }
 
@@ -939,24 +935,29 @@ fn required_full_bootstrap_checks_by_platform(
         .collect()
 }
 
-fn release_evidence_checks_by_platform(
+fn platform_has_complete_release_evidence(
     entry: &FallbackBurnDownEntry,
-) -> BTreeMap<String, BTreeSet<String>> {
-    let mut checks_by_platform: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    platform: &str,
+    required_checks: &BTreeSet<String>,
+) -> bool {
+    let mut checks_by_artifact: BTreeMap<(&str, &str, &str), BTreeSet<String>> = BTreeMap::new();
     for evidence in &entry.evidence {
         if !evidence.signed
+            || evidence.platform != platform
             || evidence.release.trim().is_empty()
             || !evidence.url.starts_with("https://")
             || !is_git_commit_sha(&evidence.commit)
         {
             continue;
         }
-        checks_by_platform
-            .entry(evidence.platform.clone())
+        checks_by_artifact
+            .entry((&evidence.release, &evidence.url, &evidence.commit))
             .or_default()
             .extend(evidence.checks.iter().cloned());
     }
-    checks_by_platform
+    checks_by_artifact
+        .values()
+        .any(|evidence_checks| required_checks.is_subset(evidence_checks))
 }
 
 fn is_git_commit_sha(value: &str) -> bool {
@@ -3298,6 +3299,60 @@ mod tests {
             ],
             "not-a-sha",
         );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_platform_checks_split_across_releases() {
+        let required_platforms = ["windows", "macos", "linux"];
+        let required_evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "checks": [
+                        "can-run-full-bootstrap",
+                        "release-notes"
+                    ]
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut evidence = Vec::new();
+        for platform in required_platforms {
+            evidence.push(serde_json::json!({
+                "platform": platform,
+                "release": "v9.9.8",
+                "url": "https://example.invalid/releases/v9.9.8",
+                "commit": "a".repeat(40),
+                "signed": true,
+                "checks": ["can-run-full-bootstrap"]
+            }));
+            evidence.push(serde_json::json!({
+                "platform": platform,
+                "release": "v9.9.9",
+                "url": "https://example.invalid/releases/v9.9.9",
+                "commit": "b".repeat(40),
+                "signed": true,
+                "checks": ["release-notes"]
+            }));
+        }
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": required_evidence,
+                    "evidence": evidence
+                }
+            ]
+        })
+        .to_string();
 
         assert!(!can_run_full_bootstrap_from_registry_text(&registry));
     }
