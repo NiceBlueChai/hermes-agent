@@ -367,6 +367,12 @@ evidence from different signed releases cannot be stitched together to unlock th
 - [Unix smoke run 27700222263](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27700222263) passed on head
   `945ab9d251837a00f9f5e01b9665d387c11336bd`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   release evidence links were limited to GitHub release tag pages.
+- [Unsigned Windows smoke run 27701219816](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27701219816)
+  passed on head `2b388bdbb1bcb155945de1e19015cafc4ee754b1`, revalidating fallback burn-down validation after
+  release-note evidence was required to point at the same GitHub repository as the release artifact.
+- [Unix smoke run 27701222464](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27701222464) passed on head
+  `2b388bdbb1bcb155945de1e19015cafc4ee754b1`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  release-note evidence was required to point at the same GitHub repository as the release artifact.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 - Local validator and manager tests now reject split evidence where a platform's required checks are spread across
