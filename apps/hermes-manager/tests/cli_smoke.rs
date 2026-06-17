@@ -809,6 +809,56 @@ fn cli_smoke_installs_native_platform_sdks_from_wheelhouse_first() {
 
 #[cfg(target_os = "windows")]
 #[test]
+fn cli_smoke_installs_native_platform_sdks_from_checkout_wheelhouse() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let hermes_home = temp.path().join("hermes");
+    let install_root = hermes_manager::paths::agent_root(&hermes_home);
+    let scripts_dir = install_root.join("venv").join("Scripts");
+    let wheelhouse = install_root.join("resources").join("wheelhouse");
+    fs::create_dir_all(&scripts_dir).expect("venv should be created");
+    fs::create_dir_all(&wheelhouse).expect("wheelhouse should be created");
+    fs::write(wheelhouse.join("telegram-0.0.0-py3-none-any.whl"), "")
+        .expect("wheel should be written");
+    fs::write(
+        scripts_dir.join("python.cmd"),
+        concat!(
+            "@echo off\r\n",
+            "if \"%1\"==\"-c\" if exist \"%~dp0sdk.marker\" exit /b 0\r\n",
+            "if \"%1\"==\"-c\" exit /b 1\r\n",
+            "if \"%1\"==\"-m\" if \"%2\"==\"pip\" if \"%3\"==\"--version\" exit /b 0\r\n",
+            "if \"%1\"==\"-m\" if \"%2\"==\"pip\" if \"%3\"==\"install\" if \"%4\"==\"--no-index\" (\r\n",
+            "  echo checkout-wheelhouse>\"%~dp0sdk.marker\"\r\n",
+            "  exit /b 0\r\n",
+            ")\r\n",
+            "exit /b 1\r\n",
+        ),
+    )
+    .expect("python shim should be written");
+    fs::write(hermes_home.join(".env"), "TELEGRAM_BOT_TOKEN=abc\n")
+        .expect("env file should be written");
+    let hermes_home_text = hermes_home.display().to_string();
+    let install_root_text = install_root.display().to_string();
+
+    let out = run_manager(&[
+        "--hermes-home",
+        &hermes_home_text,
+        "--json",
+        "bootstrap-stage",
+        "platform-sdks",
+        "--install-root",
+        &install_root_text,
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_str(&out).expect("platform sdk checkout wheelhouse output should be json");
+
+    assert_eq!(report["stage"], "platform-sdks");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["skipped"], false);
+    assert!(scripts_dir.join("sdk.marker").is_file());
+}
+
+#[cfg(target_os = "windows")]
+#[test]
 fn cli_smoke_runs_native_venv_stage_with_managed_uv() {
     let temp = tempfile::tempdir().expect("tempdir should be created");
     let hermes_home = temp.path().join("hermes");

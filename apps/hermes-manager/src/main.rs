@@ -1964,8 +1964,9 @@ fn run_native_platform_sdks_stage(
         ));
     }
     ensure_python_pip(&python)?;
+    let wheelhouse = platform_sdk_wheelhouse(&install_root, options.wheelhouse_dir.as_deref());
     for sdk in &missing {
-        install_platform_sdk(&python, options.wheelhouse_dir.as_deref(), sdk)?;
+        install_platform_sdk(&python, wheelhouse.as_deref(), sdk)?;
     }
     let still_missing: Vec<&str> = missing
         .iter()
@@ -1989,6 +1990,17 @@ fn run_native_platform_sdks_stage(
             still_missing.join(", ")
         ),
     ))
+}
+
+fn platform_sdk_wheelhouse(
+    install_root: &std::path::Path,
+    wheelhouse_dir: Option<&std::path::Path>,
+) -> Option<PathBuf> {
+    let checkout_wheelhouse = install_root.join("resources").join("wheelhouse");
+    wheelhouse_dir
+        .filter(|path| wheelhouse_has_wheels(path))
+        .map(Path::to_path_buf)
+        .or_else(|| wheelhouse_has_wheels(&checkout_wheelhouse).then_some(checkout_wheelhouse))
 }
 
 fn install_platform_sdk(
