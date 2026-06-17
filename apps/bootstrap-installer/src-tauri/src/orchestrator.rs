@@ -5714,23 +5714,38 @@ fn extract_tar_gz_archive(archive_path: &Path, destination_dir: &Path, label: &s
             .path()
             .with_context(|| format!("reading entry path from {}", archive_path.display()))?
             .into_owned();
-        if entry_type.is_symlink() || entry_type.is_hard_link() {
-            return Err(anyhow!(
-                "{label} archive contains unsupported link entry: {}",
-                path.display()
-            ));
-        }
-        if !(entry_type.is_file() || entry_type.is_dir()) {
-            return Err(anyhow!(
-                "{label} archive contains unsupported special entry: {}",
-                path.display()
-            ));
-        }
         if !archive_member_path_is_safe(&path) {
             return Err(anyhow!(
                 "{label} archive contains unsafe entry path: {}",
                 path.display()
             ));
+        }
+        if entry_type.is_hard_link() {
+            return Err(anyhow!(
+                "{label} archive contains unsupported link entry: {}",
+                path.display()
+            ));
+        }
+        if entry_type.is_symlink() {
+            let target = entry
+                .link_name()
+                .with_context(|| format!("reading {label} archive symlink target for {}", path.display()))?
+                .ok_or_else(|| anyhow!("{label} archive contains symlink without target: {}", path.display()))?;
+            if !archive_member_symlink_target_is_safe(&path, &target) {
+                return Err(anyhow!(
+                    "{label} archive contains unsafe symlink entry: {} -> {}",
+                    path.display(),
+                    target.display()
+                ));
+            }
+        }
+        if !(entry_type.is_file() || entry_type.is_dir()) {
+            if !entry_type.is_symlink() {
+                return Err(anyhow!(
+                    "{label} archive contains unsupported special entry: {}",
+                    path.display()
+                ));
+            }
         }
         let destination = destination_dir.join(&path);
         if let Some(parent) = destination.parent() {
@@ -5749,6 +5764,41 @@ fn archive_member_path_is_safe(path: &Path) -> bool {
         && path
             .components()
             .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+fn archive_member_symlink_target_is_safe(entry_path: &Path, target: &Path) -> bool {
+    if target.as_os_str().is_empty() || target.is_absolute() {
+        return false;
+    }
+    if !archive_member_path_is_safe(entry_path) {
+        return false;
+    }
+    let mut logical_target = PathBuf::new();
+    if let Some(parent) = entry_path.parent() {
+        for component in parent.components() {
+            let std::path::Component::Normal(part) = component else {
+                return false;
+            };
+            logical_target.push(part);
+        }
+    }
+    let mut saw_normal_target_component = false;
+    for component in target.components() {
+        match component {
+            std::path::Component::Normal(part) => {
+                saw_normal_target_component = true;
+                logical_target.push(part);
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !logical_target.pop() {
+                    return false;
+                }
+            }
+            std::path::Component::Prefix(_) | std::path::Component::RootDir => return false,
+        }
+    }
+    saw_normal_target_component
 }
 
 fn find_windows_git_bash(install_dir: &Path) -> Option<PathBuf> {
@@ -6710,6 +6760,51 @@ mod tests {
         header.set_cksum();
         archive.append(&header, std::io::empty()).unwrap();
         archive.finish().unwrap();
+    }
+
+    fn write_test_tar_gz_symlink(path: &Path, name: &str, target: &str) {
+        let file = std::fs::File::create(path).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut archive = tar::Builder::new(encoder);
+        append_test_tar_gz_symlink(&mut archive, name, target);
+        archive.finish().unwrap();
+    }
+
+    #[cfg(unix)]
+    fn write_test_tar_gz_with_symlink(
+        path: &Path,
+        entries: &[(&str, &[u8])],
+        symlink_name: &str,
+        symlink_target: &str,
+    ) {
+        let file = std::fs::File::create(path).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut archive = tar::Builder::new(encoder);
+        for (name, bytes) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_path(name).unwrap();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            archive.append(&header, *bytes).unwrap();
+        }
+        append_test_tar_gz_symlink(&mut archive, symlink_name, symlink_target);
+        archive.finish().unwrap();
+    }
+
+    fn append_test_tar_gz_symlink<W: std::io::Write>(
+        archive: &mut tar::Builder<W>,
+        name: &str,
+        target: &str,
+    ) {
+        let mut header = tar::Header::new_gnu();
+        header.set_path(name).unwrap();
+        header.set_size(0);
+        header.set_mode(0o755);
+        header.set_entry_type(tar::EntryType::Symlink);
+        header.set_link_name(target).unwrap();
+        header.set_cksum();
+        archive.append(&header, std::io::empty()).unwrap();
     }
 
     #[test]
@@ -9891,7 +9986,70 @@ mod tests {
     }
 
     #[test]
-    fn install_bundled_python_runtime_archive_rejects_tar_symlinks() {
+    fn archive_member_symlink_target_allows_only_targets_inside_archive_root() {
+        assert!(archive_member_symlink_target_is_safe(
+            Path::new("cpython/bin/2to3"),
+            Path::new("2to3-3.11")
+        ));
+        assert!(archive_member_symlink_target_is_safe(
+            Path::new("cpython/bin/python"),
+            Path::new("../lib/python3.11")
+        ));
+        assert!(!archive_member_symlink_target_is_safe(
+            Path::new("cpython/bin/python"),
+            Path::new("../../../escape")
+        ));
+        assert!(!archive_member_symlink_target_is_safe(
+            Path::new("cpython/bin/python"),
+            Path::new("/tmp/escape")
+        ));
+        assert!(!archive_member_symlink_target_is_safe(
+            Path::new("cpython/bin/python"),
+            Path::new("")
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_bundled_python_runtime_archive_extracts_safe_tar_symlink() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-python-runtime-safe-symlink-tar-{}",
+            std::process::id()
+        ));
+        let archive = root.join("python-runtime.tar.gz");
+        let install_dir = root.join("home").join("python");
+        let source = PythonRuntimeArchiveSource {
+            path: archive.clone(),
+            name: "python-runtime.tar.gz".to_string(),
+            python_tag: "cp311".to_string(),
+        };
+        let plan = PythonRuntimeStagePlan {
+            uv: root.join("uv.exe"),
+            uv_cache_dir: root.join("uv-cache"),
+            python_install_dir: install_dir.clone(),
+            python_bin_dir: root.join("home").join("bin"),
+            runtime_archive: Some(source.clone()),
+        };
+        std::fs::create_dir_all(&root).unwrap();
+        write_test_tar_gz_with_symlink(
+            &archive,
+            &[("cpython/bin/2to3-3.11", b"python")],
+            "cpython/bin/2to3",
+            "2to3-3.11",
+        );
+
+        install_bundled_python_runtime_archive(&plan, &source).unwrap();
+
+        assert_eq!(
+            std::fs::read_link(install_dir.join("cpython").join("bin").join("2to3")).unwrap(),
+            PathBuf::from("2to3-3.11")
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn install_bundled_python_runtime_archive_rejects_unsafe_tar_symlink_target() {
         let root = std::env::temp_dir().join(format!(
             "hermes-python-runtime-symlink-tar-{}",
             std::process::id()
@@ -9911,11 +10069,11 @@ mod tests {
             runtime_archive: Some(source.clone()),
         };
         std::fs::create_dir_all(&root).unwrap();
-        write_test_tar_gz_special_entry(&archive, "cpython/python", tar::EntryType::Symlink);
+        write_test_tar_gz_symlink(&archive, "cpython/python", "../../escape");
 
         let err = install_bundled_python_runtime_archive(&plan, &source).unwrap_err();
 
-        assert!(err.to_string().contains("unsupported link entry"));
+        assert!(err.to_string().contains("unsafe symlink entry"));
         assert!(!install_dir.with_extension("extracting").exists());
         assert!(!install_dir.exists());
 
