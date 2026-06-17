@@ -291,6 +291,9 @@ from `--print-template`.
 - [Unsigned Windows smoke run 27689132412](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27689132412)
   passed on head `4bd5125544ca2022163b6ca3edda9d0e95c8f4c4`, revalidating fallback burn-down validation after complete
   evidence was made artifact-scoped.
+- [Unsigned Windows smoke run 27690130287](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27690130287)
+  passed on head `aa06646c6f71d1d9919fa278fcfa2157e91c99b1`, revalidating fallback burn-down validation after
+  `--print-template` was made artifact-scoped.
 - [Unix smoke run 27684717355](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27684717355) passed on head
   `e64c1a3b8882baefd08031bb378740a4b54f86f9`, including Linux and macOS packaged runtime lifecycle smoke with the
   Python runtime default gate active.
@@ -306,6 +309,9 @@ from `--print-template`.
 - [Unix smoke run 27689132371](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27689132371) passed on head
   `4bd5125544ca2022163b6ca3edda9d0e95c8f4c4`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   complete evidence was made artifact-scoped.
+- [Unix smoke run 27690130266](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27690130266) passed on head
+  `aa06646c6f71d1d9919fa278fcfa2157e91c99b1`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  `--print-template` was made artifact-scoped.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 - Local validator and manager tests now reject split evidence where a platform's required checks are spread across
