@@ -313,6 +313,12 @@ hide missing checks from `--print-template`.
 - [Unix smoke run 27690130266](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27690130266) passed on head
   `aa06646c6f71d1d9919fa278fcfa2157e91c99b1`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   `--print-template` was made artifact-scoped.
+- [Unsigned Windows smoke run 27691194492](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27691194492)
+  passed on head `7e699c9d2c007771e39dbaa4b7c1635e6de2e1c8`, revalidating fallback burn-down validation after
+  `--all-required-checks` was added.
+- [Unix smoke run 27691194903](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27691194903) passed on head
+  `7e699c9d2c007771e39dbaa4b7c1635e6de2e1c8`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  `--all-required-checks` was added.
 - Local validator and manager tests now prove unsigned fallback burn-down evidence cannot unlock
   `canRunFullBootstrap`; release entries must explicitly set `signed: true`.
 - Local validator and manager tests now reject split evidence where a platform's required checks are spread across
