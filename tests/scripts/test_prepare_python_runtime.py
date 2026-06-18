@@ -863,6 +863,65 @@ class PreparePythonRuntimeTests(unittest.TestCase):
                 required_platforms=("windows", "macos", "linux"),
             )
 
+    def test_python_runtime_default_gate_rejects_unrequired_platform_evidence(self):
+        module = _load_default_gate_module()
+
+        def evidence_for(platform, signature):
+            return {
+                "pythonRuntime": {
+                    "version": "3.11.9",
+                    "sourceUrl": f"https://example.invalid/python-runtime-{platform}-x64.zip",
+                    "archiveSha256": "a" * 64,
+                    "securityUpdatePolicy": (
+                        "Runtime archive must be rebuilt when the bundled Python patch release "
+                        "receives a security update."
+                    ),
+                    "manifest": {
+                        "schemaVersion": 1,
+                        "platform": platform,
+                        "arch": "x64",
+                        "pythonTag": "cp311",
+                        "files": [
+                            {
+                                "name": f"python-runtime-{platform}-x64.zip",
+                                "url": f"https://example.invalid/python-runtime-{platform}-x64.zip",
+                                "sizeBytes": 100,
+                                "sha256": "a" * 64,
+                            }
+                        ],
+                    },
+                },
+                "signedInstaller": {
+                    "platform": platform,
+                    "release": "v1.0.0",
+                    "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v1.0.0",
+                    "releaseNotes": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v1.0.0",
+                    "commit": "a" * 40,
+                    "signature": signature,
+                    "withRuntimeBytes": 400,
+                    "withoutRuntimeBytes": 250,
+                    "sizeDeltaBytes": 150,
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            evidence_paths = []
+            for platform, signature in (
+                ("windows", "authenticode"),
+                ("linux", "sigstore"),
+                ("macos", "developer-id-notarized"),
+            ):
+                evidence_path = root / f"{platform}.json"
+                evidence_path.write_text(json.dumps(evidence_for(platform, signature)), encoding="utf-8")
+                evidence_paths.append(evidence_path)
+
+            with self.assertRaisesRegex(RuntimeError, "unexpected runtime default evidence"):
+                module.validate_release_evidence_files(
+                    evidence_paths,
+                    required_platforms=("windows", "linux"),
+                )
+
     def test_python_runtime_default_gate_rejects_duplicate_required_platforms(self):
         module = _load_default_gate_module()
         evidence = {

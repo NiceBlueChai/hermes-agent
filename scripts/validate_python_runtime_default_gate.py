@@ -263,6 +263,10 @@ def validate_release_evidence_files(
     if missing:
         details = ", ".join(sorted(missing))
         raise RuntimeError(f"missing runtime default evidence for platform(s): {details}")
+    extra = set(installers) - required
+    if extra:
+        details = ", ".join(sorted(extra))
+        raise RuntimeError(f"unexpected runtime default evidence for platform(s): {details}")
 
     for field in ("release", "url", "releaseNotes", "commit"):
         values = {installers[platform].get(field) for platform in required}

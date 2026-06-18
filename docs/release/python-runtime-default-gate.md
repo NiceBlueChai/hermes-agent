@@ -65,7 +65,7 @@ python scripts/validate_python_runtime_default_gate.py `
 `--require-platforms` is only valid with one or more `--evidence` files; the validator rejects it on its own so a release
 operator cannot accidentally skip the platform evidence check. Multiple `--evidence` files also require
 `--require-platforms`, so multi-platform evidence cannot be validated as unrelated single-platform files. Duplicate or
-unknown required platforms are rejected.
+unknown required platforms are rejected, and evidence for platforms outside the required set is rejected.
 
 Signed installer workflows generate this evidence instead of requiring release operators to hand-author it:
 
