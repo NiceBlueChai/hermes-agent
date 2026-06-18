@@ -177,7 +177,8 @@ class TestFetchModelsDev:
         md._models_dev_cache = {}
         md._models_dev_cache_time = 0
 
-        with patch.object(md, "_save_disk_cache"):
+        with patch.object(md, "_save_disk_cache"), \
+             patch.dict("os.environ", {"PYTEST_HERMES_MODELS_DEV_OFFLINE": ""}):
             result = fetch_models_dev(force_refresh=True)
 
         assert "anthropic" in result
@@ -191,7 +192,8 @@ class TestFetchModelsDev:
         md._models_dev_cache = SAMPLE_REGISTRY
         md._models_dev_cache_time = 0  # expired
 
-        with patch.object(md, "_load_disk_cache", return_value=SAMPLE_REGISTRY):
+        with patch.object(md, "_load_disk_cache", return_value=SAMPLE_REGISTRY), \
+             patch.dict("os.environ", {"PYTEST_HERMES_MODELS_DEV_OFFLINE": ""}):
             result = fetch_models_dev(force_refresh=True)
 
         assert "anthropic" in result
@@ -248,6 +250,19 @@ class TestFetchModelsDev:
         assert result == {}
 
     @patch("agent.models_dev.requests.get")
+    def test_offline_env_skips_force_refresh_network(self, mock_get):
+        """Test collection-only offline mode also blocks explicit refresh."""
+        import agent.models_dev as md
+        md._models_dev_cache = {}
+        md._models_dev_cache_time = 0
+
+        with patch.dict("os.environ", {"PYTEST_HERMES_MODELS_DEV_OFFLINE": "1"}):
+            result = fetch_models_dev(force_refresh=True)
+
+        mock_get.assert_not_called()
+        assert result == {}
+
+    @patch("agent.models_dev.requests.get")
     def test_stale_disk_cache_falls_through_to_network(self, mock_get):
         """When the disk cache is OLDER than TTL, we must hit the network
         (and only fall back to the stale disk data if network fails)."""
@@ -291,7 +306,8 @@ class TestFetchModelsDev:
         # Disk cache is fresh, but force_refresh must override it.
         with patch.object(md, "_disk_cache_age_seconds", return_value=60.0), \
              patch.object(md, "_load_disk_cache", return_value=SAMPLE_REGISTRY), \
-             patch.object(md, "_save_disk_cache"):
+             patch.object(md, "_save_disk_cache"), \
+             patch.dict("os.environ", {"PYTEST_HERMES_MODELS_DEV_OFFLINE": ""}):
             result = fetch_models_dev(force_refresh=True)
 
         mock_get.assert_called_once()

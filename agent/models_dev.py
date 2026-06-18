@@ -288,8 +288,9 @@ def fetch_models_dev(force_refresh: bool = False) -> Dict[str, Any]:
                     "(%d providers, age=%.0fs)", len(disk_data), disk_age,
                 )
                 return _models_dev_cache
-        if os.getenv("PYTEST_HERMES_MODELS_DEV_OFFLINE") == "1":
-            return {}
+
+    if os.getenv("PYTEST_HERMES_MODELS_DEV_OFFLINE") == "1":
+        return {}
 
     # Stage 3: network fetch.
     try:
