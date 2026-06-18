@@ -336,6 +336,14 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   notes URL, commit SHA, and platform signature type, and reject release-note links from a different GitHub repository.
 - Local Python runtime tests now reject `OWNER/REPO` and `vX.Y.Z` placeholders in structured runtime default evidence,
   keeping generated release-evidence templates from being accepted as real runtime default evidence.
+- [Unsigned Windows smoke run 27730366737](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27730366737)
+  passed on head `e6681e73e8f66a6b3d88b8f9177a8040797a1ef7`, revalidating Windows build, Python runtime default gate,
+  runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
+  upload, and Python runtime artifact validation after structured runtime default evidence began rejecting release
+  identity placeholders.
+- [Unix smoke run 27730366792](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27730366792) passed on head
+  `e6681e73e8f66a6b3d88b8f9177a8040797a1ef7`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  structured runtime default evidence began rejecting release identity placeholders.
 - Local Python runtime tests now require signed Windows, Linux, and macOS workflow paths to fail preflight unless the
   Python runtime archive is supplied as an audited `NAME=HTTPS_URL=SHA256` input. Unsigned smoke remains allowed to
   build temporary runtime archives in Actions, but those unsigned archives cannot satisfy the signed release evidence
