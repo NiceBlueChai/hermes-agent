@@ -79,8 +79,14 @@ python scripts/validate_python_runtime_default_gate.py `
   --require-platforms windows,macos,linux
 ```
 
-Record the fallback evidence using the generated `fallback-burn-down-*.sh` command files, or use the generated JSON to
-copy the same fields into `docs/release/fallback-burn-down.json`.
+Record the fallback evidence using the generated `fallback-burn-down-*.sh` command files, or import the generated JSON
+artifacts directly:
+
+```powershell
+python scripts/validate_fallback_burn_down.py --add-evidence-json <fallback-evidence-windows.json>
+python scripts/validate_fallback_burn_down.py --add-evidence-json <fallback-evidence-macos.json>
+python scripts/validate_fallback_burn_down.py --add-evidence-json <fallback-evidence-linux.json>
+```
 
 For the installer source archive and Python runtime download fallbacks, generate the missing evidence shape and record
 the signed release fields only after the matching artifact smoke, direct-install coverage, cleanup, and release-note

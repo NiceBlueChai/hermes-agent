@@ -304,8 +304,10 @@ repository's GitHub `releases/tag/<tag>` page, and uses those inputs in the prin
 placeholder release metadata.
 The signed paths now also write that command into a `.release-evidence/fallback-burn-down-*` file, generate a validated
 machine-readable evidence JSON with `--print-evidence-item`, and upload both as signed-only artifacts, so the final
-release evidence handoff does not depend on scraping workflow logs or hand-authoring JSON. The signed release operator
-runbook is recorded in `docs/release/native-bootstrap-signed-release-runbook.md`.
+release evidence handoff does not depend on scraping workflow logs or hand-authoring JSON. The validator can now import
+those workflow JSON artifacts directly with `--add-evidence-json`, so signed release operators do not need to hand-edit
+`docs/release/fallback-burn-down.json`. The signed release operator runbook is recorded in
+`docs/release/native-bootstrap-signed-release-runbook.md`.
 
 **Evidence:**
 

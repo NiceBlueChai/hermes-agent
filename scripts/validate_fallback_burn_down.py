@@ -139,6 +139,62 @@ def add_signed_evidence(
         all_required_checks,
     )
 
+    merge_signed_evidence_item(target, entry_id, required, new_item)
+    registry_path.write_text(json.dumps(payload, indent=4) + "\n", encoding="utf-8")
+
+
+def add_evidence_json(registry_path: Path, repo_root: Path, evidence_path: Path) -> str:
+    """Record signed release evidence from a workflow-generated JSON artifact."""
+
+    validate_registry(registry_path, repo_root)
+    payload = load_registry(registry_path)
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        raise RuntimeError("entries must be a list")
+
+    try:
+        imported = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"evidence JSON not found: {evidence_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"evidence JSON is not valid JSON: {exc}") from exc
+    if not isinstance(imported, dict):
+        raise RuntimeError("evidence JSON root must be an object")
+
+    entry_id = imported.get("entryId")
+    if not isinstance(entry_id, str) or not entry_id.strip():
+        raise RuntimeError("evidence JSON field entryId must be a non-empty string")
+    evidence_items = imported.get("evidence")
+    if not isinstance(evidence_items, list) or not evidence_items:
+        raise RuntimeError(f"entry {entry_id} evidence JSON field evidence must be a non-empty list")
+
+    target = next(
+        (entry for entry in entries if isinstance(entry, dict) and entry.get("id") == entry_id),
+        None,
+    )
+    if target is None:
+        raise RuntimeError(f"evidence entry not found: {entry_id}")
+
+    required = validate_required_evidence(target, entry_id)
+    for item in evidence_items:
+        if not isinstance(item, dict):
+            raise RuntimeError(f"entry {entry_id} evidence JSON items must be objects")
+        merge_signed_evidence_item(target, entry_id, required, dict(item))
+
+    validate_evidence(target, entry_id, required)
+    registry_path.write_text(json.dumps(payload, indent=4) + "\n", encoding="utf-8")
+    return entry_id
+
+
+def merge_signed_evidence_item(
+    target: dict[str, Any],
+    entry_id: str,
+    required: dict[str, set[str]],
+    new_item: dict[str, Any],
+) -> None:
+    """Merge one validated signed evidence item into a registry entry."""
+
+    validate_evidence({**target, "evidence": [new_item]}, entry_id, required)
     evidence = target.get("evidence")
     if not isinstance(evidence, list):
         raise RuntimeError(f"entry {entry_id} evidence must be a list")
@@ -158,9 +214,6 @@ def add_signed_evidence(
                 )
             matching["releaseNotes"] = new_item["releaseNotes"]
         matching["checks"] = merge_checks(matching.get("checks"), new_item["checks"])
-
-    validate_evidence(target, entry_id, required)
-    registry_path.write_text(json.dumps(payload, indent=4) + "\n", encoding="utf-8")
 
 
 def build_signed_evidence_item(
@@ -644,6 +697,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Print one validated signed release evidence item without mutating the registry.",
     )
+    parser.add_argument(
+        "--add-evidence-json",
+        metavar="PATH",
+        type=Path,
+        default=None,
+        help="Append or merge signed release evidence from a workflow-generated JSON file.",
+    )
     parser.add_argument("--platform", choices=sorted(VALID_PLATFORMS), default=None)
     parser.add_argument("--release", default=None)
     parser.add_argument("--url", default=None)
@@ -678,8 +738,19 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
+        if args.add_evidence_json and (
+            args.add_evidence
+            or args.print_evidence_item
+            or args.require_complete
+            or args.print_template
+        ):
+            raise RuntimeError("--add-evidence-json cannot be combined with other actions")
         if args.add_evidence and args.print_evidence_item:
             raise RuntimeError("--add-evidence cannot be combined with --print-evidence-item")
+        if args.add_evidence_json:
+            entry_id = add_evidence_json(args.registry, args.repo_root, args.add_evidence_json)
+            print(f"added evidence JSON: {entry_id}")
+            return 0
         if args.add_evidence or args.print_evidence_item:
             command_name = "--add-evidence" if args.add_evidence else "--print-evidence-item"
             entry_id = args.add_evidence or args.print_evidence_item
