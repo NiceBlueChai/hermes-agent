@@ -524,6 +524,21 @@ jobs:
               --signature authenticode `
               > "$evidenceDir/fallback-burn-down-windows-$entry.json"
           }
+          $statusRegistry = "$evidenceDir/fallback-burn-down-status-registry-windows.json"
+          Copy-Item "docs/release/fallback-burn-down.json" $statusRegistry
+          foreach ($entry in @(
+            "desktop-bootstrap-script-fallback",
+            "installer-source-archive-download-fallback",
+            "installer-python-runtime-download-fallback"
+          )) {
+            python scripts/validate_fallback_burn_down.py `
+              --registry $statusRegistry `
+              --add-evidence-json "$evidenceDir/fallback-burn-down-windows-$entry.json"
+          }
+          python scripts/validate_fallback_burn_down.py `
+            --registry $statusRegistry `
+            --print-status `
+            > "$evidenceDir/fallback-burn-down-windows-status.json"
 
       - name: Upload signed fallback evidence command
         if: ${{ !inputs['unsigned-smoke-only'] }}
@@ -1154,6 +1169,21 @@ jobs:
             "${command[@]/--add-evidence/--print-evidence-item}" \
               > ".release-evidence/fallback-burn-down-${{ matrix.platform }}-${entry}.json"
           done
+          status_registry=".release-evidence/fallback-burn-down-status-registry-${{ matrix.platform }}.json"
+          cp docs/release/fallback-burn-down.json "${status_registry}"
+          for entry in \
+            desktop-bootstrap-script-fallback \
+            installer-source-archive-download-fallback \
+            installer-python-runtime-download-fallback
+          do
+            python scripts/validate_fallback_burn_down.py \
+              --registry "${status_registry}" \
+              --add-evidence-json ".release-evidence/fallback-burn-down-${{ matrix.platform }}-${entry}.json"
+          done
+          python scripts/validate_fallback_burn_down.py \
+            --registry "${status_registry}" \
+            --print-status \
+            > ".release-evidence/fallback-burn-down-${{ matrix.platform }}-status.json"
 
       - name: Upload signed fallback evidence command
         if: ${{ !inputs['unsigned-smoke-only'] }}
