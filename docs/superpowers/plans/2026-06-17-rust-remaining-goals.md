@@ -797,6 +797,15 @@ runbook is recorded in `docs/release/native-bootstrap-signed-release-runbook.md`
 - [Unix smoke run 27743308971](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27743308971) passed on head
   `67f4f7d30f08f0000c2b9c7a7490c55438a573fe`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   cross-repository release evidence was rejected.
+- [Unsigned Windows smoke run 27744551562](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27744551562)
+  passed on head `dd5d6a4948a5a70a02c18ad77d94ab5d8e29c7ea`, revalidating Windows build, Python runtime default gate,
+  runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
+  upload, and Python runtime artifact validation after direct installer scripts began requiring existing Git commands to
+  pass `git --version` before skipping managed Git recovery.
+- [Unix smoke run 27744551533](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27744551533) passed on head
+  `dd5d6a4948a5a70a02c18ad77d94ab5d8e29c7ea`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  direct installer scripts began requiring existing Git commands to pass `git --version` before skipping managed Git
+  recovery.
 - [Unsigned Windows smoke run 27741586603](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27741586603)
   passed on head `09ee22560ee052e478903df7ea26f88232f65517`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
