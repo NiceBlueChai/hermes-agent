@@ -773,6 +773,14 @@ runbook is recorded in `docs/release/native-bootstrap-signed-release-runbook.md`
   `canRunFullBootstrap` aligned with the stricter Python release evidence validator.
 - Local fallback burn-down validator tests now reject query or fragment suffixes on release evidence and release-note
   URLs before those links can be recorded in `docs/release/fallback-burn-down.json`.
+- [Unsigned Windows smoke run 27741586603](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27741586603)
+  passed on head `09ee22560ee052e478903df7ea26f88232f65517`, revalidating Windows build, Python runtime default gate,
+  runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
+  upload, source archive validation, and Python runtime artifact validation after release evidence URL parsing was
+  tightened across the Rust manager and Python fallback validator.
+- [Unix smoke run 27741592661](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27741592661) passed on head
+  `09ee22560ee052e478903df7ea26f88232f65517`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  release evidence URL parsing was tightened across the Rust manager and Python fallback validator.
 - [Unsigned Windows smoke run 27740524669](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27740524669)
   passed on head `1708abbbe66856ffc7558d978e08e473634094cc`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
