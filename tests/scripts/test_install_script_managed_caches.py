@@ -50,3 +50,12 @@ class InstallScriptManagedCachesTests(unittest.TestCase):
         self.assertIn("Restore-BundledNpmCacheIfAvailable", script)
         self.assertIn("Restore-BundledPlaywrightBrowsersIfAvailable", script)
         self.assertIn("Restore-BundledElectronCacheIfAvailable", script)
+
+    def test_install_ps1_git_fast_path_requires_working_git(self):
+        """A broken system git command should not suppress managed PortableGit install."""
+
+        script = (REPO_ROOT / "scripts" / "install.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("$gitCheck = Get-Command git -ErrorAction SilentlyContinue", script)
+        self.assertIn("$gitVersion = & $gitCheck.Source --version", script)
+        self.assertIn("if ($LASTEXITCODE -eq 0 -and $gitVersion)", script)

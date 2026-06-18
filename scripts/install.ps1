@@ -586,11 +586,15 @@ function Install-Git {
     #>
     Write-Info "Checking Git..."
 
-    if (Get-Command git -ErrorAction SilentlyContinue) {
-        $version = git --version
-        Write-Success "Git found ($version)"
-        Set-GitBashEnvVar
-        return $true
+    $gitCheck = Get-Command git -ErrorAction SilentlyContinue
+    if ($gitCheck) {
+        $gitVersion = & $gitCheck.Source --version 2>$null
+        if ($LASTEXITCODE -eq 0 -and $gitVersion) {
+            Write-Success "Git found ($gitVersion)"
+            Set-GitBashEnvVar
+            return $true
+        }
+        Write-Warn "Git command exists but failed its version check; installing managed PortableGit."
     }
 
     # Download PortableGit into $HermesHome\git.  Always works as long as
