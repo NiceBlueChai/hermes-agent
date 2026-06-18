@@ -51,6 +51,17 @@ with:
 python scripts/validate_python_runtime_default_gate.py --evidence <signed-runtime-evidence.json>
 ```
 
+For a release that promotes bundled runtimes across all packaged desktop platforms, validate all generated evidence
+together so Windows, macOS, and Linux prove the same signed release and commit:
+
+```powershell
+python scripts/validate_python_runtime_default_gate.py `
+  --evidence <signed-runtime-evidence-windows.json> `
+  --evidence <signed-runtime-evidence-macos.json> `
+  --evidence <signed-runtime-evidence-linux.json> `
+  --require-platforms windows,macos,linux
+```
+
 Signed installer workflows generate this evidence instead of requiring release operators to hand-author it:
 
 ```powershell

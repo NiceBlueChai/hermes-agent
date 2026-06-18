@@ -33,6 +33,7 @@ REQUIRED_MARKERS = {
     "artifact validator": "scripts/validate_installer_artifacts.py",
     "structured release evidence": "python scripts/validate_python_runtime_default_gate.py --evidence",
     "generated release evidence": "--print-evidence",
+    "required platform evidence set": "--require-platforms",
 }
 
 HEX_SHA256_RE = re.compile(r"[0-9a-fA-F]{64}")
@@ -199,9 +200,50 @@ def validate_release_evidence_payload(payload: object) -> None:
         raise RuntimeError("signedInstaller.sizeDeltaBytes must be positive")
 
 
+def load_release_evidence(path: Path) -> dict:
+    """Load and validate one structured release evidence file."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    validate_release_evidence_payload(payload)
+    return require_mapping(payload, "root")
+
+
 def validate_release_evidence(path: Path) -> None:
     """Validate structured release evidence read from a JSON file."""
-    validate_release_evidence_payload(json.loads(path.read_text(encoding="utf-8")))
+    load_release_evidence(path)
+
+
+def validate_release_evidence_files(
+    paths: list[Path],
+    required_platforms: tuple[str, ...] = (),
+) -> None:
+    """Validate one or more runtime evidence files and an optional required platform set."""
+    payloads = [load_release_evidence(path) for path in paths]
+    if not required_platforms:
+        return
+
+    required = set(required_platforms)
+    unknown_platforms = required - set(PLATFORM_SIGNATURES)
+    if not required or unknown_platforms:
+        details = ", ".join(sorted(unknown_platforms or required))
+        raise RuntimeError(f"unknown required platform(s): {details}")
+
+    installers: dict[str, dict] = {}
+    for payload in payloads:
+        installer = require_mapping(payload.get("signedInstaller"), "signedInstaller")
+        platform = require_non_empty_string(installer.get("platform"), "signedInstaller.platform")
+        if platform in installers:
+            raise RuntimeError(f"duplicate runtime default evidence for platform: {platform}")
+        installers[platform] = installer
+
+    missing = required - set(installers)
+    if missing:
+        details = ", ".join(sorted(missing))
+        raise RuntimeError(f"missing runtime default evidence for platform(s): {details}")
+
+    for field in ("release", "url", "releaseNotes", "commit"):
+        values = {installers[platform].get(field) for platform in required}
+        if len(values) != 1:
+            raise RuntimeError("runtime default evidence must share one signed release and commit")
 
 
 def build_release_evidence(
@@ -361,8 +403,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--evidence",
         type=Path,
-        default=None,
-        help="Optional structured signed-release evidence JSON to validate.",
+        action="append",
+        default=[],
+        help="Optional structured signed-release evidence JSON to validate; may be repeated.",
+    )
+    parser.add_argument(
+        "--require-platforms",
+        default="",
+        help="Comma-separated platform list that repeated --evidence files must cover.",
     )
     return parser.parse_args()
 
@@ -374,8 +422,11 @@ def main() -> int:
     if args.print_evidence:
         print_release_evidence(args)
         return 0
-    if args.evidence is not None:
-        validate_release_evidence(args.evidence)
+    if args.evidence:
+        required_platforms = tuple(
+            platform.strip() for platform in args.require_platforms.split(",") if platform.strip()
+        )
+        validate_release_evidence_files(args.evidence, required_platforms)
     print(f"validated Python runtime default gate: {args.doc}")
     return 0
 
