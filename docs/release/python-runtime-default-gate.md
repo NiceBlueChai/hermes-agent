@@ -95,5 +95,6 @@ The validator requires the runtime source and manifest file URLs to be HTTPS, th
 manifest file, `signedInstaller.platform` to match the manifest platform, release URLs to be GitHub release tag URLs
 for `signedInstaller.release` in the same repository, `signedInstaller.commit` to be a 40-character SHA,
 `signedInstaller.signature` to match the platform signing method, `sizeDeltaBytes` to equal
-`withRuntimeBytes - withoutRuntimeBytes`, and that delta to be positive. Template placeholders such as `OWNER/REPO`
-and `vX.Y.Z` are rejected as release evidence.
+`withRuntimeBytes - withoutRuntimeBytes`, that delta to be positive, and `pythonRuntime.manifest.pythonTag` to match
+`pythonRuntime.version`'s major/minor CPython ABI tag. Template placeholders such as `OWNER/REPO` and `vX.Y.Z` are
+rejected as release evidence.

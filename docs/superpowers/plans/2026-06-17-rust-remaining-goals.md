@@ -347,6 +347,8 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   runtime gate with the fallback burn-down validator's required-platform contract.
 - Local Python runtime tests now reject multi-platform runtime default evidence whose required platforms do not share
   the same Python runtime version.
+- Local Python runtime tests now reject runtime default evidence whose manifest Python tag does not match
+  `pythonRuntime.version`, preventing a Python archive from being promoted with the wrong CPython ABI tag.
 - [Unsigned Windows smoke run 27733238764](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27733238764)
   passed on head `081829ea0259e21e425d3696853485628e38ef20`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact

@@ -106,7 +106,8 @@ def validate_release_evidence_payload(payload: object) -> None:
     manifest = require_mapping(runtime.get("manifest"), "pythonRuntime.manifest")
 
     version = require_non_empty_string(runtime.get("version"), "pythonRuntime.version")
-    if not re.fullmatch(r"\d+\.\d+\.\d+(?:[a-zA-Z0-9.+-]*)?", version):
+    version_match = re.fullmatch(r"(\d+)\.(\d+)\.\d+(?:[a-zA-Z0-9.+-]*)?", version)
+    if version_match is None:
         raise RuntimeError("pythonRuntime.version must identify a Python patch release")
     source_url = require_non_empty_string(runtime.get("sourceUrl"), "pythonRuntime.sourceUrl")
     if not source_url.startswith("https://"):
@@ -159,6 +160,9 @@ def validate_release_evidence_payload(payload: object) -> None:
     python_tag = require_non_empty_string(manifest.get("pythonTag"), "pythonRuntime.manifest.pythonTag")
     if not re.fullmatch(r"cp\d+", python_tag):
         raise RuntimeError("pythonRuntime.manifest.pythonTag must be a CPython ABI tag")
+    expected_python_tag = f"cp{version_match.group(1)}{version_match.group(2)}"
+    if python_tag != expected_python_tag:
+        raise RuntimeError("pythonRuntime.manifest.pythonTag must match pythonRuntime.version")
 
     files = manifest.get("files")
     if not isinstance(files, list) or not files:
