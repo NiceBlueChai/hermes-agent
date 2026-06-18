@@ -363,6 +363,14 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   archive URL lacks an HTTPS host, aligning tool bundle provenance with the runtime archive gate.
 - Local workflow tests now require signed runtime archive metadata preflights to reject `NAME=https:///...=SHA256`
   inputs before packaging starts, keeping workflow dispatch validation aligned with the archive validators.
+- [Unsigned Windows smoke run 27737605924](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27737605924)
+  passed on head `f52b0b2f12ac24fbec6b937972886d3460c07ffd`, revalidating Windows workflow dispatch, build,
+  Python runtime default gate, runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down
+  validation, runtime artifact upload, and Python runtime artifact validation after signed runtime archive metadata
+  preflights began rejecting HTTPS URLs without hosts.
+- [Unix smoke run 27737605937](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27737605937) passed on head
+  `f52b0b2f12ac24fbec6b937972886d3460c07ffd`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  signed runtime archive metadata preflights began rejecting HTTPS URLs without hosts.
 - [Unsigned Windows smoke run 27737010222](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27737010222)
   passed on head `a50caf2c07cbff906fb94606efc6f85592a96e21`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
