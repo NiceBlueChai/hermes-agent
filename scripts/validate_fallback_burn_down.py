@@ -240,6 +240,24 @@ def add_evidence_json(registry_path: Path, repo_root: Path, evidence_path: Path)
     return entry_id
 
 
+def evidence_json_paths_from_dir(evidence_dir: Path) -> list[Path]:
+    """Return workflow-generated fallback evidence JSON files from a directory."""
+
+    if not evidence_dir.is_dir():
+        raise RuntimeError(f"evidence directory not found: {evidence_dir}")
+
+    paths = [
+        path
+        for path in evidence_dir.rglob("fallback-burn-down-*.json")
+        if path.is_file()
+        and not path.name.endswith("-status.json")
+        and "status-registry" not in path.name
+    ]
+    if not paths:
+        raise RuntimeError(f"evidence directory has no fallback burn-down JSON files: {evidence_dir}")
+    return sorted(paths)
+
+
 def merge_signed_evidence_item(
     target: dict[str, Any],
     entry_id: str,
@@ -769,6 +787,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Append or merge signed release evidence from a workflow-generated JSON file. Repeat for multiple files.",
     )
+    parser.add_argument(
+        "--add-evidence-dir",
+        metavar="PATH",
+        type=Path,
+        action="append",
+        default=None,
+        help="Append or merge all fallback-burn-down evidence JSON files under a downloaded artifact directory.",
+    )
     parser.add_argument("--platform", choices=sorted(VALID_PLATFORMS), default=None)
     parser.add_argument("--release", default=None)
     parser.add_argument("--url", default=None)
@@ -803,7 +829,8 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        if args.add_evidence_json and (
+        has_evidence_import = bool(args.add_evidence_json or args.add_evidence_dir)
+        if has_evidence_import and (
             args.add_evidence
             or args.print_evidence_item
             or args.require_complete
@@ -811,7 +838,7 @@ def main(argv: list[str] | None = None) -> int:
             or args.print_template
             or args.print_status
         ):
-            raise RuntimeError("--add-evidence-json cannot be combined with other actions")
+            raise RuntimeError("--add-evidence-json/--add-evidence-dir cannot be combined with other actions")
         if args.print_status and (
             args.add_evidence
             or args.print_evidence_item
@@ -822,8 +849,11 @@ def main(argv: list[str] | None = None) -> int:
             raise RuntimeError("--print-status cannot be combined with other actions")
         if args.add_evidence and args.print_evidence_item:
             raise RuntimeError("--add-evidence cannot be combined with --print-evidence-item")
-        if args.add_evidence_json:
-            for evidence_path in args.add_evidence_json:
+        if has_evidence_import:
+            evidence_paths = list(args.add_evidence_json or [])
+            for evidence_dir in args.add_evidence_dir or []:
+                evidence_paths.extend(evidence_json_paths_from_dir(evidence_dir))
+            for evidence_path in evidence_paths:
                 entry_id = add_evidence_json(args.registry, args.repo_root, evidence_path)
                 print(f"added evidence JSON: {entry_id}")
             return 0

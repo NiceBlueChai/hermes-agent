@@ -83,21 +83,14 @@ python scripts/validate_python_runtime_default_gate.py `
   --require-platforms windows,macos,linux
 ```
 
-Record the fallback evidence using the generated `fallback-burn-down-*.sh` command files, or import the generated JSON
-artifacts directly:
+Record the fallback evidence using the generated `fallback-burn-down-*.sh` command files, or import the downloaded JSON
+artifact directory directly:
 
 ```powershell
-python scripts/validate_fallback_burn_down.py `
-  --add-evidence-json <fallback-burn-down-windows-desktop-bootstrap-script-fallback.json> `
-  --add-evidence-json <fallback-burn-down-windows-installer-source-archive-download-fallback.json> `
-  --add-evidence-json <fallback-burn-down-windows-installer-python-runtime-download-fallback.json> `
-  --add-evidence-json <fallback-burn-down-macos-desktop-bootstrap-script-fallback.json> `
-  --add-evidence-json <fallback-burn-down-macos-installer-source-archive-download-fallback.json> `
-  --add-evidence-json <fallback-burn-down-macos-installer-python-runtime-download-fallback.json> `
-  --add-evidence-json <fallback-burn-down-linux-desktop-bootstrap-script-fallback.json> `
-  --add-evidence-json <fallback-burn-down-linux-installer-source-archive-download-fallback.json> `
-  --add-evidence-json <fallback-burn-down-linux-installer-python-runtime-download-fallback.json>
+python scripts/validate_fallback_burn_down.py --add-evidence-dir <downloaded-fallback-evidence-artifacts>
 ```
+
+Use repeated `--add-evidence-json <file>` arguments only when importing selected files manually.
 
 Verify the desktop bootstrap gate before using `canRunFullBootstrap=true`:
 
