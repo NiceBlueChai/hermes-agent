@@ -361,6 +361,14 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   lacks an HTTPS host, aligning manifest generation with the runtime default evidence gate.
 - Local bootstrap tool tests now reject audited/local bootstrap archive inputs and generated bootstrap manifests whose
   archive URL lacks an HTTPS host, aligning tool bundle provenance with the runtime archive gate.
+- [Unsigned Windows smoke run 27737010222](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27737010222)
+  passed on head `a50caf2c07cbff906fb94606efc6f85592a96e21`, revalidating Windows build, Python runtime default gate,
+  runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
+  upload, and Python runtime artifact validation after bootstrap tool archive input and manifest validation began
+  requiring archive URLs to include HTTPS hosts.
+- [Unix smoke run 27737010239](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27737010239) passed on head
+  `a50caf2c07cbff906fb94606efc6f85592a96e21`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  bootstrap tool archive input and manifest validation began requiring archive URLs to include HTTPS hosts.
 - [Unsigned Windows smoke run 27736466116](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27736466116)
   passed on head `08af161d34e20287aa89c99a631809ac9d2a05bd`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
