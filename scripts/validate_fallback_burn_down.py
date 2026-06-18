@@ -371,8 +371,14 @@ def validate_evidence(
             raise RuntimeError(f"entry {entry_id} evidence commit must be a 40-character git SHA")
         if item.get("signed") is not True:
             raise RuntimeError(f"entry {entry_id} evidence signed must be true")
+        signature = item.get("signature")
+        if signature is not None:
+            expected_signature = FULL_BOOTSTRAP_SIGNATURES[platform]
+            if signature != expected_signature:
+                raise RuntimeError(
+                    f"entry {entry_id} evidence signature must be {expected_signature}"
+                )
         if entry_id == FULL_BOOTSTRAP_FALLBACK_ID:
-            signature = item.get("signature")
             expected_signature = FULL_BOOTSTRAP_SIGNATURES[platform]
             if signature != expected_signature:
                 raise RuntimeError(

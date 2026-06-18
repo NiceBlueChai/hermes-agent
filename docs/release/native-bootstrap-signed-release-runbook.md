@@ -22,7 +22,8 @@ Use this only for a real signed release. Unsigned smoke runs keep proving packag
   `authenticode`, `developer-id-notarized`, or `sigstore`.
 - Fallback burn-down evidence for `installer-source-archive-download-fallback` and
   `installer-python-runtime-download-fallback` must be recorded only after the signed artifacts prove the corresponding
-  registry checks in `docs/release/fallback-burn-down.json`.
+  registry checks in `docs/release/fallback-burn-down.json`. If a `signature` field is recorded for those entries, it
+  must match the platform signing type.
 
 ## Dispatch Signed Workflows
 

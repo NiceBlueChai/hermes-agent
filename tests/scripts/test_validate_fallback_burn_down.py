@@ -359,6 +359,57 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("evidence signature must be", result.stderr)
 
+    def test_signed_installer_fallback_rejects_wrong_signature_type(self) -> None:
+        """Optional fallback evidence signatures must match the platform signing proof."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: installer-signature"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "installer-signature",
+                                "owner": "installer",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {
+                                        "platform": "windows",
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": "windows",
+                                        "release": "v1.0.0",
+                                        "url": VALID_RELEASE_V1_URL,
+                                        "releaseNotes": VALID_RELEASE_V1_URL,
+                                        "commit": "a" * 40,
+                                        "signed": True,
+                                        "signature": "sigstore",
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("evidence signature must be authenticode", result.stderr)
+
     def test_evidence_must_include_release_commit(self) -> None:
         """Fallback removal evidence must name the exact signed release commit."""
         with tempfile.TemporaryDirectory() as tmp:
