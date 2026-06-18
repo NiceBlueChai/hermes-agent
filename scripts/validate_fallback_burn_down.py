@@ -22,7 +22,7 @@ DEFAULT_REGISTRY = REPO_ROOT / "docs" / "release" / "fallback-burn-down.json"
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 GITHUB_RELEASE_TAG_RE = re.compile(
-    r"^https://github\.com/[^/\\\s]+/[^/\\\s]+/releases/tag/([^/\\?#\s]+)(?:[?#].*)?$"
+    r"^https://github\.com/([^/\\?#\s]+)/([^/\\?#\s]+)/releases/tag/([^/\\?#\s]+)$"
 )
 VALID_PLATFORMS = frozenset(("windows", "macos", "linux"))
 FULL_BOOTSTRAP_FALLBACK_ID = "desktop-bootstrap-script-fallback"
@@ -538,7 +538,7 @@ def is_github_release_tag_url(url: str, release: str) -> bool:
     """Return whether a URL points at the exact GitHub release tag."""
 
     match = GITHUB_RELEASE_TAG_RE.match(url)
-    return bool(match and match.group(1) == release)
+    return bool(match and match.group(3) == release)
 
 
 def github_release_repo(url: str) -> str | None:

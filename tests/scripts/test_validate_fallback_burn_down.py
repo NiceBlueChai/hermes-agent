@@ -658,6 +658,57 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("evidence url must be a GitHub release tag URL", result.stderr)
 
+    def test_evidence_url_rejects_query_or_fragment_suffix(self) -> None:
+        """Release evidence URLs must be exact GitHub release tag URLs."""
+        for suffix in ("?download=true", "#notes"):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                source = root / "src" / "entry.js"
+                source.parent.mkdir(parents=True)
+                marker = "HERMES-FALLBACK-BURN-DOWN: release-tag-query-fragment"
+                source.write_text(f"// {marker}\n", encoding="utf-8")
+                registry = root / "fallback.json"
+                registry.write_text(
+                    json.dumps(
+                        {
+                            "schemaVersion": 1,
+                            "entries": [
+                                {
+                                    "id": "release-tag-query-fragment",
+                                    "owner": "desktop",
+                                    "file": "src/entry.js",
+                                    "marker": marker,
+                                    "fallback": "Fallback description.",
+                                    "removalGate": "Release evidence gate.",
+                                    "requiredEvidence": [
+                                        {
+                                            "platform": "windows",
+                                            "checks": ["release-notes"],
+                                        }
+                                    ],
+                                    "evidence": [
+                                        {
+                                            "platform": "windows",
+                                            "release": "v1.0.0",
+                                            "url": f"{VALID_RELEASE_V1_URL}{suffix}",
+                                            "releaseNotes": VALID_RELEASE_V1_URL,
+                                            "commit": "a" * 40,
+                                            "signed": True,
+                                            "checks": ["release-notes"],
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+                result = run_validator(registry, root)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("evidence url must be a GitHub release tag URL", result.stderr)
+
     def test_release_notes_url_must_be_github_release_tag_url(self) -> None:
         """Release-note evidence must point at a GitHub release tag page."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -908,8 +959,8 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("evidence release must replace vX.Y.Z placeholder", result.stderr)
 
-    def test_same_release_artifact_rejects_conflicting_release_notes(self) -> None:
-        """One signed release artifact must point at one published release note URL."""
+    def test_same_release_artifact_rejects_release_notes_fragment(self) -> None:
+        """One signed release artifact must point at an exact release note URL."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "src" / "entry.js"
@@ -965,7 +1016,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
             result = run_validator(registry, root)
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("conflicting releaseNotes for release artifact", result.stderr)
+        self.assertIn("evidence releaseNotes must be a GitHub release tag URL", result.stderr)
 
     def test_require_complete_passes_when_signed_evidence_covers_all_checks(self) -> None:
         """Release fallback removal can require complete signed evidence for one entry."""
@@ -1815,8 +1866,8 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
             ["can-run-full-bootstrap", "release-notes"],
         )
 
-    def test_add_evidence_rejects_conflicting_release_notes_without_mutating_registry(self) -> None:
-        """Repeated signed evidence updates must not silently rewrite release notes."""
+    def test_add_evidence_rejects_release_notes_query_without_mutating_registry(self) -> None:
+        """Repeated signed evidence updates must still use exact release note URLs."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "src" / "entry.js"
@@ -1878,7 +1929,7 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
             payload = json.loads(registry.read_text(encoding="utf-8"))
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("conflicting releaseNotes for release artifact", result.stderr)
+        self.assertIn("evidence releaseNotes must be a GitHub release tag URL", result.stderr)
         self.assertEqual(payload, original)
 
     def test_add_evidence_rejects_undeclared_check_without_mutating_registry(self) -> None:

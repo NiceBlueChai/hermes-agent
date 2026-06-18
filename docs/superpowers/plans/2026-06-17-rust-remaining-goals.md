@@ -277,9 +277,10 @@ rejects query or fragment suffixes on release tag URLs instead of accepting the 
 The manager-side gate now also rejects malformed evidence contracts instead of relying on map/set deduplication:
 duplicate or unknown required platforms, empty, invalid, or duplicate required checks, and undeclared or duplicate
 evidence checks cannot unlock `canRunFullBootstrap`.
-The Python fallback burn-down validator now rejects whitespace, backslashes, and query/fragment delimiters inside GitHub
-release tag URL segments, matching the Rust manager parser before signed evidence can be recorded. Release workflows now
-put step-level timeouts on Linux Tauri dependency installation and bootstrap tool archive bundling, and the Linux
+The Python fallback burn-down validator now rejects whitespace, backslashes, query/fragment delimiters inside GitHub
+release tag URL segments, and query/fragment URL suffixes, matching the Rust manager parser before signed evidence can
+be recorded. Release workflows now put step-level timeouts on Linux Tauri dependency installation and bootstrap tool
+archive bundling, and the Linux
 dependency install uses apt retries, download timeouts, and `--no-install-recommends`, so transient apt, download, or
 cache hangs fail quickly instead of consuming the full release job timeout.
 The validator now also requires the `desktop-bootstrap-script-fallback` entry to declare Windows, macOS, and Linux
@@ -770,6 +771,8 @@ runbook is recorded in `docs/release/native-bootstrap-signed-release-runbook.md`
   delimiters in `release-tag`.
 - Local Rust manager tests now reject fallback burn-down release URLs with query or fragment suffixes, keeping
   `canRunFullBootstrap` aligned with the stricter Python release evidence validator.
+- Local fallback burn-down validator tests now reject query or fragment suffixes on release evidence and release-note
+  URLs before those links can be recorded in `docs/release/fallback-burn-down.json`.
 - [Unsigned Windows smoke run 27740524669](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27740524669)
   passed on head `1708abbbe66856ffc7558d978e08e473634094cc`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
