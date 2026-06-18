@@ -349,6 +349,10 @@ class PreparePythonRuntimeTests(unittest.TestCase):
                 "compare the signed installer size with and without the runtime bundle",
                 "record installer size notes",
             ),
+            "signed installer platform": doc_text.replace(
+                "signedInstaller.platform",
+                "signedInstaller.target",
+            ),
             "security rebuild policy": doc_text.replace(
                 "must be rebuilt when the bundled Python patch release receives a security update",
                 "must be reviewed when the bundled Python patch release receives a security update",
@@ -394,6 +398,7 @@ class PreparePythonRuntimeTests(unittest.TestCase):
                 },
             },
             "signedInstaller": {
+                "platform": "windows",
                 "withRuntimeBytes": 400,
                 "withoutRuntimeBytes": 250,
                 "sizeDeltaBytes": 150,
@@ -405,6 +410,46 @@ class PreparePythonRuntimeTests(unittest.TestCase):
             evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
 
             module.validate_release_evidence(evidence_path)
+
+    def test_python_runtime_default_gate_rejects_signed_installer_platform_mismatch(self):
+        module = _load_default_gate_module()
+        evidence = {
+            "pythonRuntime": {
+                "version": "3.11.9",
+                "sourceUrl": "https://example.invalid/python-runtime-windows-x64.zip",
+                "archiveSha256": "a" * 64,
+                "securityUpdatePolicy": (
+                    "Runtime archive must be rebuilt when the bundled Python patch release "
+                    "receives a security update."
+                ),
+                "manifest": {
+                    "platform": "windows",
+                    "arch": "x64",
+                    "pythonTag": "cp311",
+                    "files": [
+                        {
+                            "name": "python-runtime-windows-x64.zip",
+                            "url": "https://example.invalid/python-runtime-windows-x64.zip",
+                            "sizeBytes": 100,
+                            "sha256": "a" * 64,
+                        }
+                    ],
+                },
+            },
+            "signedInstaller": {
+                "platform": "linux",
+                "withRuntimeBytes": 400,
+                "withoutRuntimeBytes": 250,
+                "sizeDeltaBytes": 150,
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_path = Path(tmp) / "evidence.json"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "signedInstaller.platform"):
+                module.validate_release_evidence(evidence_path)
 
     def test_python_runtime_default_gate_builds_structured_release_evidence_from_manifest(self):
         module = _load_default_gate_module()
@@ -438,6 +483,7 @@ class PreparePythonRuntimeTests(unittest.TestCase):
 
             self.assertEqual(evidence["pythonRuntime"]["sourceUrl"], manifest["files"][0]["url"])
             self.assertEqual(evidence["pythonRuntime"]["archiveSha256"], manifest["files"][0]["sha256"])
+            self.assertEqual(evidence["signedInstaller"]["platform"], "windows")
             self.assertEqual(evidence["signedInstaller"]["sizeDeltaBytes"], 150)
             module.validate_release_evidence(evidence_path)
 
@@ -464,6 +510,7 @@ class PreparePythonRuntimeTests(unittest.TestCase):
                 },
             },
             "signedInstaller": {
+                "platform": "windows",
                 "withRuntimeBytes": 400,
                 "withoutRuntimeBytes": 250,
                 "sizeDeltaBytes": 149,
@@ -500,6 +547,7 @@ class PreparePythonRuntimeTests(unittest.TestCase):
                 },
             },
             "signedInstaller": {
+                "platform": "windows",
                 "withRuntimeBytes": 250,
                 "withoutRuntimeBytes": 250,
                 "sizeDeltaBytes": 0,

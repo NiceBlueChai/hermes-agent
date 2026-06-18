@@ -19,6 +19,7 @@ REQUIRED_MARKERS = {
         "actual `python-runtime-manifest.json` size, SHA-256, Python tag, platform, and arch"
     ),
     "signed installer size comparison": "compare the signed installer size with and without the runtime bundle",
+    "signed installer platform": "signedInstaller.platform",
     "security gate heading": "## Security-Update Gate",
     "checksum-pinned source": "HTTPS and checksum-pinned",
     "security rebuild policy": "must be rebuilt when the bundled Python patch release receives a security update",
@@ -99,6 +100,11 @@ def validate_release_evidence_payload(payload: object) -> None:
     platform = require_non_empty_string(manifest.get("platform"), "pythonRuntime.manifest.platform")
     if platform not in {"windows", "linux", "macos"}:
         raise RuntimeError("pythonRuntime.manifest.platform must be windows, linux, or macos")
+    installer_platform = require_non_empty_string(installer.get("platform"), "signedInstaller.platform")
+    if installer_platform not in {"windows", "linux", "macos"}:
+        raise RuntimeError("signedInstaller.platform must be windows, linux, or macos")
+    if installer_platform != platform:
+        raise RuntimeError("signedInstaller.platform must match pythonRuntime.manifest.platform")
     arch = require_non_empty_string(manifest.get("arch"), "pythonRuntime.manifest.arch")
     if arch not in {"x64", "arm64"}:
         raise RuntimeError("pythonRuntime.manifest.arch must be x64 or arm64")
@@ -172,6 +178,7 @@ def build_release_evidence(
             "manifest": manifest,
         },
         "signedInstaller": {
+            "platform": manifest.get("platform"),
             "withRuntimeBytes": with_runtime_bytes,
             "withoutRuntimeBytes": without_runtime_bytes,
             "sizeDeltaBytes": with_runtime_bytes - without_runtime_bytes,

@@ -330,6 +330,8 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   and macOS workflow paths to upload `python-runtime-default-evidence-*.json` artifacts.
 - Local Python runtime tests now reject non-positive signed installer runtime size deltas, so default promotion evidence
   must prove the bundled runtime actually increases the measured signed artifact size.
+- Local Python runtime tests now require structured runtime default evidence to record `signedInstaller.platform` and
+  reject signed installer evidence whose platform does not match the runtime manifest platform.
 - Local Python runtime tests now require signed Windows, Linux, and macOS workflow paths to fail preflight unless the
   Python runtime archive is supplied as an audited `NAME=HTTPS_URL=SHA256` input. Unsigned smoke remains allowed to
   build temporary runtime archives in Actions, but those unsigned archives cannot satisfy the signed release evidence

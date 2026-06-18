@@ -67,7 +67,8 @@ The evidence file must include:
 
 - `pythonRuntime.version`, `sourceUrl`, `archiveSha256`, `securityUpdatePolicy`, and the actual
   `python-runtime-manifest.json` payload.
-- `signedInstaller.withRuntimeBytes`, `withoutRuntimeBytes`, and `sizeDeltaBytes`.
+- `signedInstaller.platform`, `withRuntimeBytes`, `withoutRuntimeBytes`, and `sizeDeltaBytes`.
 
 The validator requires the runtime source and manifest file URLs to be HTTPS, the runtime archive SHA-256 to match a
-manifest file, `sizeDeltaBytes` to equal `withRuntimeBytes - withoutRuntimeBytes`, and that delta to be positive.
+manifest file, `signedInstaller.platform` to match the manifest platform, `sizeDeltaBytes` to equal
+`withRuntimeBytes - withoutRuntimeBytes`, and that delta to be positive.
