@@ -1,0 +1,81 @@
+<!--
+文件意图：记录启用 Rust 原生 packaged bootstrap 前，签名发布证据的收集和验证步骤。
+-->
+
+# Native Bootstrap Signed Release Runbook
+
+Use this only for a real signed release. Unsigned smoke runs keep proving packaging shape, but they do not unlock
+`canRunFullBootstrap` and must not be recorded as fallback burn-down evidence.
+
+## Required Inputs
+
+- `release-tag`: the final GitHub release tag. It must be one path segment: no whitespace, `/`, or `\`.
+- `release-notes-url`: `https://github.com/<owner>/<repo>/releases/tag/<release-tag>`.
+- `python-runtime-version`: the bundled Python patch version.
+- `python-runtime-archive`, `linux-python-runtime-archive`, and `macos-python-runtime-archive`:
+  `NAME=HTTPS_URL=SHA256` audited runtime archives.
+- `python-runtime-without-bytes`, `linux-python-runtime-without-bytes`, and
+  `macos-python-runtime-without-bytes`: signed installer sizes from matching no-runtime baseline builds.
+- Signing configuration: Azure Artifact Signing for Windows, Apple signing/notarization for macOS, and Sigstore for
+  Linux.
+
+## Dispatch Signed Workflows
+
+Run the Windows signed path:
+
+```powershell
+gh workflow run build-windows-installer.yml `
+  --repo <owner>/<repo> `
+  --ref <release-branch-or-tag> `
+  -f release-tag=<release-tag> `
+  -f release-notes-url=https://github.com/<owner>/<repo>/releases/tag/<release-tag> `
+  -f python-runtime-version=<python-patch-version> `
+  -f python-runtime-archive=<name=https-url=sha256> `
+  -f python-runtime-without-bytes=<signed-no-runtime-size>
+```
+
+Run the signed Unix matrix through the fork-dispatchable workflow:
+
+```powershell
+gh workflow run build-windows-installer.yml `
+  --repo <owner>/<repo> `
+  --ref <release-branch-or-tag> `
+  -f unix-smoke-only=true `
+  -f release-tag=<release-tag> `
+  -f release-notes-url=https://github.com/<owner>/<repo>/releases/tag/<release-tag> `
+  -f python-runtime-version=<python-patch-version> `
+  -f linux-python-runtime-archive=<name=https-url=sha256> `
+  -f macos-python-runtime-archive=<name=https-url=sha256> `
+  -f linux-python-runtime-without-bytes=<signed-linux-no-runtime-size> `
+  -f macos-python-runtime-without-bytes=<signed-macos-no-runtime-size>
+```
+
+Do not pass `unsigned-smoke-only=true` for signed evidence.
+
+## Collect Evidence Artifacts
+
+Download these artifacts from the completed signed runs:
+
+- `*-python-runtime-default-evidence` JSON files for Windows, macOS, and Linux.
+- `*-fallback-evidence` command and JSON artifacts for Windows, macOS, and Linux.
+- Signed installer artifacts and signature/notarization outputs.
+
+Validate the runtime default evidence together:
+
+```powershell
+python scripts/validate_python_runtime_default_gate.py `
+  --evidence <windows-runtime-evidence.json> `
+  --evidence <macos-runtime-evidence.json> `
+  --evidence <linux-runtime-evidence.json> `
+  --require-platforms windows,macos,linux
+```
+
+Record the fallback evidence using the generated `fallback-burn-down-*.sh` command files, or use the generated JSON to
+copy the same fields into `docs/release/fallback-burn-down.json`. Then verify:
+
+```powershell
+python scripts/validate_fallback_burn_down.py --require-complete desktop-bootstrap-script-fallback
+```
+
+Only after those checks pass may `hermes-manager bootstrap-capabilities` report `canRunFullBootstrap=true` for the
+signed release evidence.

@@ -298,7 +298,8 @@ release tags containing whitespace, `/`, or `\`, requires the release notes URL 
 `releases/tag/<tag>` page, and uses those inputs in the printed evidence command instead of placeholder release metadata.
 The signed paths now also write that command into a `.release-evidence/fallback-burn-down-*` file, generate a validated
 machine-readable evidence JSON with `--print-evidence-item`, and upload both as signed-only artifacts, so the final
-release evidence handoff does not depend on scraping workflow logs or hand-authoring JSON.
+release evidence handoff does not depend on scraping workflow logs or hand-authoring JSON. The signed release operator
+runbook is recorded in `docs/release/native-bootstrap-signed-release-runbook.md`.
 
 **Evidence:**
 
@@ -781,6 +782,8 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
 - Local validator tests now prove `--print-evidence-item` emits a validated signed evidence JSON object without
   mutating the checked-in fallback registry, and local workflow tests require signed installer workflows to upload that
   JSON beside the command artifact.
+- The signed release operator runbook now records required workflow inputs, signed Windows/Unix dispatch commands,
+  evidence artifacts to collect, and the local validators that must pass before `canRunFullBootstrap=true` can be used.
 - [Unix smoke run 27723006956](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27723006956) passed on head
   `823268a8ebee9cdbab0d3b7f14a7bedc3c8eef20`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   signed fallback evidence command artifacts were added. The new upload step was parsed by GitHub and skipped in
