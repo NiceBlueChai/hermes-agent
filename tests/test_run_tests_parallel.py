@@ -282,6 +282,36 @@ def test_exit4_restores_tracked_file_deleted_by_parallel_test(tmp_path, monkeypa
     assert calls["n"] == 2
 
 
+def test_restore_missing_file_falls_back_to_head_when_index_lacks_path(tmp_path):
+    """A discovered file can still be restored from HEAD if the index no longer has it."""
+    rtp = _load_runner_module()
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
+    tracked = tmp_path / "test_deleted_after_discovery.py"
+    tracked.write_text("def test_ok():\n    assert True\n")
+    subprocess.run(["git", "add", tracked.name], cwd=tmp_path, check=True, capture_output=True, text=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Hermes Tests",
+            "-c",
+            "user.email=hermes-tests@example.invalid",
+            "commit",
+            "-m",
+            "add test file",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    tracked.unlink()
+    subprocess.run(["git", "rm", "--cached", tracked.name], cwd=tmp_path, check=True, capture_output=True, text=True)
+
+    assert rtp._restore_tracked_file_if_missing(tracked, tmp_path) is True
+    assert tracked.read_text() == "def test_ok():\n    assert True\n"
+
+
 def test_exit4_retry_gives_up_after_max_attempts(tmp_path, monkeypatch):
     """If the transient never clears, we stop after the bounded attempt count."""
     rtp = _load_runner_module()

@@ -353,17 +353,22 @@ def _restore_tracked_file_if_missing(file: Path, repo_root: Path) -> bool:
     except ValueError:
         return False
 
-    blob = subprocess.run(
-        ["git", "show", f":{rel}"],
-        cwd=repo_root,
-        capture_output=True,
-        timeout=10,
-    )
-    if blob.returncode != 0:
+    blob = None
+    for treeish in (f":{rel}", f"HEAD:{rel}"):
+        candidate = subprocess.run(
+            ["git", "show", treeish],
+            cwd=repo_root,
+            capture_output=True,
+            timeout=10,
+        )
+        if candidate.returncode == 0:
+            blob = candidate.stdout
+            break
+    if blob is None:
         return False
     try:
         file.parent.mkdir(parents=True, exist_ok=True)
-        file.write_bytes(blob.stdout)
+        file.write_bytes(blob)
     except OSError:
         return False
     return file.exists()
