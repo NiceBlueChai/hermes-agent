@@ -191,10 +191,12 @@ def validate_release_evidence_payload(payload: object) -> None:
         )
         if not HEX_SHA256_RE.fullmatch(file_sha256):
             raise RuntimeError(f"pythonRuntime.manifest.files[{index}].sha256 must be a SHA-256 hex digest")
-    if not any(file_entry.get("url") == source_url for file_entry in files if isinstance(file_entry, dict)):
-        raise RuntimeError("pythonRuntime.sourceUrl must match a manifest file URL")
-    if not any(file_entry.get("sha256") == archive_sha256 for file_entry in files if isinstance(file_entry, dict)):
-        raise RuntimeError("pythonRuntime.archiveSha256 must match a manifest file SHA-256")
+    if not any(
+        file_entry.get("url") == source_url and file_entry.get("sha256") == archive_sha256
+        for file_entry in files
+        if isinstance(file_entry, dict)
+    ):
+        raise RuntimeError("pythonRuntime.sourceUrl and archiveSha256 must match the same manifest file")
 
     with_runtime = require_positive_int(installer.get("withRuntimeBytes"), "signedInstaller.withRuntimeBytes")
     without_runtime = require_positive_int(
