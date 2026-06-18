@@ -767,6 +767,13 @@ runbook is recorded in `docs/release/native-bootstrap-signed-release-runbook.md`
 - Local Python runtime tests now reject structured runtime default evidence whose GitHub release tag URL treats `?` or
   `#` as part of the tag segment, and local workflow tests require signed release metadata preflights to reject those
   delimiters in `release-tag`.
+- [Unsigned Windows smoke run 27740524669](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27740524669)
+  passed on head `1708abbbe66856ffc7558d978e08e473634094cc`, revalidating Windows build, Python runtime default gate,
+  runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
+  upload, and Python runtime artifact validation after release tag validation began rejecting `?` and `#`.
+- [Unix smoke run 27740524657](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27740524657) passed on head
+  `1708abbbe66856ffc7558d978e08e473634094cc`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  release tag validation began rejecting `?` and `#`.
 - Local workflow tests now require bootstrap tool archive bundling steps to carry `timeout-minutes: 10`, preventing
   release smoke from hanging the full job when external archive/cache preparation stalls.
 - Local workflow tests now require Linux Tauri dependency installation steps to carry `timeout-minutes: 30`,
