@@ -234,6 +234,20 @@ class TestFetchModelsDev:
         assert md._models_dev_cache == SAMPLE_REGISTRY
 
     @patch("agent.models_dev.requests.get")
+    def test_offline_env_skips_missing_cache_network(self, mock_get):
+        """Test collection-only offline mode skips live network lookup."""
+        import agent.models_dev as md
+        md._models_dev_cache = {}
+        md._models_dev_cache_time = 0
+
+        with patch.object(md, "_disk_cache_age_seconds", return_value=None), \
+             patch.dict("os.environ", {"PYTEST_HERMES_MODELS_DEV_OFFLINE": "1"}):
+            result = fetch_models_dev()
+
+        mock_get.assert_not_called()
+        assert result == {}
+
+    @patch("agent.models_dev.requests.get")
     def test_stale_disk_cache_falls_through_to_network(self, mock_get):
         """When the disk cache is OLDER than TTL, we must hit the network
         (and only fall back to the stale disk data if network fails)."""
@@ -251,7 +265,8 @@ class TestFetchModelsDev:
         with patch.object(md, "_disk_cache_age_seconds",
                           return_value=md._MODELS_DEV_CACHE_TTL + 60), \
              patch.object(md, "_load_disk_cache", return_value=SAMPLE_REGISTRY), \
-             patch.object(md, "_save_disk_cache"):
+             patch.object(md, "_save_disk_cache"), \
+             patch.dict("os.environ", {"PYTEST_HERMES_MODELS_DEV_OFFLINE": ""}):
             result = fetch_models_dev()
 
         mock_get.assert_called_once()
@@ -297,7 +312,8 @@ class TestFetchModelsDev:
         mock_get.return_value = mock_resp
 
         with patch.object(md, "_disk_cache_age_seconds", return_value=None), \
-             patch.object(md, "_save_disk_cache"):
+             patch.object(md, "_save_disk_cache"), \
+             patch.dict("os.environ", {"PYTEST_HERMES_MODELS_DEV_OFFLINE": ""}):
             result = fetch_models_dev()
 
         mock_get.assert_called_once()

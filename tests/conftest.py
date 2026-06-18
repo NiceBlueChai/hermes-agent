@@ -31,6 +31,9 @@ PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# Collection imports should never block on the live models.dev service.
+os.environ.setdefault("PYTEST_HERMES_MODELS_DEV_OFFLINE", "1")
+
 
 # ── Per-file process isolation ──────────────────────────────────────────────
 # Tests run via ``scripts/run_tests_parallel.py``, which spawns a fresh
