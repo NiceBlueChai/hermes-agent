@@ -833,7 +833,8 @@ runbook is recorded in `docs/release/native-bootstrap-signed-release-runbook.md`
   mutating the checked-in fallback registry, and local workflow tests require signed installer workflows to upload that
   JSON beside the command artifact.
 - The signed release operator runbook now records required workflow inputs, signed Windows/Unix dispatch commands,
-  evidence artifacts to collect, and the local validators that must pass before `canRunFullBootstrap=true` can be used.
+  evidence artifacts to collect, the desktop bootstrap evidence gate for `canRunFullBootstrap=true`, and the retained
+  fallback evidence gates that must pass before script fallback removal.
 - [Unsigned Windows smoke run 27739907686](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27739907686)
   passed on head `ac758470aeb56df37c381c20609323ab658cd1a7`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
