@@ -97,7 +97,7 @@ Verify the desktop bootstrap gate before using `canRunFullBootstrap=true`:
 python scripts/validate_fallback_burn_down.py --require-complete desktop-bootstrap-script-fallback
 ```
 
-Then verify every retained fallback entry before removing any script fallback:
+Then verify the remaining retained fallback entries before removing any script fallback:
 
 ```powershell
 python scripts/validate_fallback_burn_down.py --require-complete installer-source-archive-download-fallback
