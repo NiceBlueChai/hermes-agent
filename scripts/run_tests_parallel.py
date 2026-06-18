@@ -374,6 +374,15 @@ def _restore_tracked_file_if_missing(file: Path, repo_root: Path) -> bool:
     return file.exists()
 
 
+def _run_before_parallel(file: Path, repo_root: Path) -> bool:
+    """Return whether a test file must run before the shared parallel pool starts."""
+    try:
+        rel = file.resolve().relative_to(repo_root.resolve())
+    except ValueError:
+        return False
+    return len(rel.parts) >= 2 and rel.parts[0] == "tests" and rel.parts[1] == "scripts"
+
+
 def _run_one_file(
     file: Path,
     pytest_args: List[str],
@@ -910,9 +919,21 @@ def main() -> int:
             if rc != 0:
                 _print_inline_failure(fpath, output, repo_root, pytest_passthrough)
 
+    serial_files = [file for file in files if _run_before_parallel(file, repo_root)]
+    parallel_files = [file for file in files if file not in serial_files]
+
+    for file in serial_files:
+        t0 = time.monotonic()
+        fut: Future = Future()
+        try:
+            fut.set_result(_run_one_file(file, pytest_passthrough, repo_root, args.file_timeout))
+        except Exception as exc:  # noqa: BLE001 — keep accounting identical to pool futures
+            fut.set_exception(exc)
+        _on_done(file, t0, fut)
+
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         futures: List[Future] = []
-        for file in files:
+        for file in parallel_files:
             t0 = time.monotonic()
             fut = pool.submit(
                 _run_one_file, file, pytest_passthrough, repo_root, args.file_timeout

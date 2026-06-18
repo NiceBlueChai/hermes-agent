@@ -312,6 +312,20 @@ def test_restore_missing_file_falls_back_to_head_when_index_lacks_path(tmp_path)
     assert tracked.read_text() == "def test_ok():\n    assert True\n"
 
 
+def test_tests_scripts_files_run_before_parallel_pool(tmp_path):
+    """Release script contract tests run before other parallel tests can mutate the checkout."""
+    rtp = _load_runner_module()
+    scripts_test = tmp_path / "tests" / "scripts" / "test_prepare_bootstrap_tools.py"
+    regular_test = tmp_path / "tests" / "run_agent" / "test_agent.py"
+    scripts_test.parent.mkdir(parents=True)
+    regular_test.parent.mkdir(parents=True)
+    scripts_test.write_text("def test_ok():\n    assert True\n")
+    regular_test.write_text("def test_ok():\n    assert True\n")
+
+    assert rtp._run_before_parallel(scripts_test, tmp_path) is True
+    assert rtp._run_before_parallel(regular_test, tmp_path) is False
+
+
 def test_exit4_retry_gives_up_after_max_attempts(tmp_path, monkeypatch):
     """If the transient never clears, we stop after the bounded attempt count."""
     rtp = _load_runner_module()
