@@ -22,7 +22,7 @@ DEFAULT_REGISTRY = REPO_ROOT / "docs" / "release" / "fallback-burn-down.json"
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 GITHUB_RELEASE_TAG_RE = re.compile(
-    r"^https://github\.com/[^/\s]+/[^/\s]+/releases/tag/([^/?#\s]+)(?:[?#].*)?$"
+    r"^https://github\.com/[^/\\\s]+/[^/\\\s]+/releases/tag/([^/\\?#\s]+)(?:[?#].*)?$"
 )
 VALID_PLATFORMS = frozenset(("windows", "macos", "linux"))
 FULL_BOOTSTRAP_FALLBACK_ID = "desktop-bootstrap-script-fallback"

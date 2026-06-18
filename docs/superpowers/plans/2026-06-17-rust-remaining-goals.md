@@ -276,11 +276,11 @@ or repository subpaths that merely end with `/releases/tag/<tag>` cannot unlock 
 The manager-side gate now also rejects malformed evidence contracts instead of relying on map/set deduplication:
 duplicate or unknown required platforms, empty, invalid, or duplicate required checks, and undeclared or duplicate
 evidence checks cannot unlock `canRunFullBootstrap`.
-The Python fallback burn-down validator now rejects whitespace inside GitHub release tag URL segments, matching the Rust
-manager parser before signed evidence can be recorded. Release workflows now put step-level timeouts on Linux Tauri
-dependency installation and bootstrap tool archive bundling, and the Linux dependency install uses apt retries,
-download timeouts, and `--no-install-recommends`, so transient apt, download, or cache hangs fail quickly instead of
-consuming the full release job timeout.
+The Python fallback burn-down validator now rejects whitespace and backslashes inside GitHub release tag URL segments,
+matching the Rust manager parser before signed evidence can be recorded. Release workflows now put step-level timeouts
+on Linux Tauri dependency installation and bootstrap tool archive bundling, and the Linux dependency install uses apt
+retries, download timeouts, and `--no-install-recommends`, so transient apt, download, or cache hangs fail quickly
+instead of consuming the full release job timeout.
 The validator now also requires the `desktop-bootstrap-script-fallback` entry to declare Windows, macOS, and Linux
 required evidence before printing the full-bootstrap template, preventing incomplete signed evidence skeletons.
 Full-bootstrap signed evidence must now carry a platform signature type: `authenticode` for Windows,
@@ -294,7 +294,7 @@ Sigstore before uploading the Sigstore bundles. Signed Windows, macOS, and Linux
 `validate_fallback_burn_down.py --add-evidence` command with the required platform signature type after artifact
 validation and before upload, so release operators can record evidence without hand-authoring the registry shape. Signed
 workflow mode now requires explicit `release-tag` and `release-notes-url` inputs before signing proceeds, rejects
-release tags containing whitespace or `/`, requires the release notes URL to equal the current repository's GitHub
+release tags containing whitespace, `/`, or `\`, requires the release notes URL to equal the current repository's GitHub
 `releases/tag/<tag>` page, and uses those inputs in the printed evidence command instead of placeholder release metadata.
 The signed paths now also write that command into a `.release-evidence/fallback-burn-down-*` file, generate a validated
 machine-readable evidence JSON with `--print-evidence-item`, and upload both as signed-only artifacts, so the final
@@ -752,8 +752,8 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   signed release artifact, keeping recorded release notes immutable once attached.
 - Local manager tests now reject malformed required/evidence contracts that the Python validator would reject, keeping
   the Rust `canRunFullBootstrap` gate aligned when required platforms or check lists are duplicated or invalid.
-- Local validator tests now reject GitHub release tag URLs whose tag segment contains whitespace, matching the Rust
-  manager release URL parser before signed release evidence can be recorded.
+- Local validator and manager tests now reject GitHub release tag URLs whose tag segment contains whitespace or `\`,
+  matching the Rust manager release URL parser before signed release evidence can be recorded.
 - Local workflow tests now require bootstrap tool archive bundling steps to carry `timeout-minutes: 10`, preventing
   release smoke from hanging the full job when external archive/cache preparation stalls.
 - Local workflow tests now require Linux Tauri dependency installation steps to carry `timeout-minutes: 30`,
@@ -767,8 +767,8 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
 - Local workflow tests now require signed installer workflows to print the fallback burn-down evidence command for
   Windows `authenticode`, macOS `developer-id-notarized`, and Linux `sigstore` after release artifact verification.
 - Local workflow tests now require signed installer workflows to validate `release-tag` and `release-notes-url` inputs,
-  reject release tags with whitespace or `/`, require the exact current-repository GitHub `releases/tag/<tag>` URL,
-  use those values in the evidence command, and avoid printing placeholder release metadata.
+  reject release tags with whitespace, `/`, or `\`, require the exact current-repository GitHub `releases/tag/<tag>`
+  URL, use those values in the evidence command, and avoid printing placeholder release metadata.
 - Local workflow tests now require signed installer workflows to upload the fallback burn-down evidence command as a
   signed-only `.release-evidence/fallback-burn-down-*` artifact for Windows, macOS, and Linux release paths.
 - Local validator tests now prove `--print-evidence-item` emits a validated signed evidence JSON object without

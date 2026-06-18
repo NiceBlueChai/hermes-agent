@@ -1606,6 +1606,7 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             self.assertIn("inputs['release-notes-url']", workflow_text)
             self.assertIn("release-tag must be a single GitHub tag segment", workflow_text)
             self.assertIn("release-notes-url must equal GitHub release tag URL", workflow_text)
+            self.assertIn("\\\\*)", workflow_text)
             self.assertIn("releases/tag/", workflow_text)
             self.assertIn("Upload signed fallback evidence command", workflow_text)
             self.assertIn(".release-evidence/fallback-burn-down", workflow_text)

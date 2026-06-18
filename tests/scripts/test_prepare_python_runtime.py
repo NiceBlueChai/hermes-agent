@@ -597,7 +597,7 @@ class PreparePythonRuntimeTests(unittest.TestCase):
 
     def test_python_runtime_default_gate_rejects_placeholder_release_identity(self):
         module = _load_default_gate_module()
-        evidence = {
+        base_evidence = {
             "pythonRuntime": {
                 "version": "3.11.9",
                 "sourceUrl": "https://example.invalid/python-runtime-windows-x64.zip",
@@ -634,12 +634,29 @@ class PreparePythonRuntimeTests(unittest.TestCase):
             },
         }
 
-        with tempfile.TemporaryDirectory() as tmp:
-            evidence_path = Path(tmp) / "evidence.json"
-            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+        for release, url, message in (
+            (
+                "vX.Y.Z",
+                "https://github.com/OWNER/REPO/releases/tag/vX.Y.Z",
+                "placeholder",
+            ),
+            (
+                "v1.0.0\\evil",
+                "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v1.0.0\\evil",
+                "GitHub release tag URL",
+            ),
+        ):
+            with self.subTest(release=release):
+                evidence = json.loads(json.dumps(base_evidence))
+                evidence["signedInstaller"]["release"] = release
+                evidence["signedInstaller"]["url"] = url
+                evidence["signedInstaller"]["releaseNotes"] = url
+                with tempfile.TemporaryDirectory() as tmp:
+                    evidence_path = Path(tmp) / "evidence.json"
+                    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
 
-            with self.assertRaisesRegex(RuntimeError, "placeholder"):
-                module.validate_release_evidence(evidence_path)
+                    with self.assertRaisesRegex(RuntimeError, message):
+                        module.validate_release_evidence(evidence_path)
 
     def test_python_runtime_default_gate_rejects_python_tag_mismatching_runtime_version(self):
         module = _load_default_gate_module()

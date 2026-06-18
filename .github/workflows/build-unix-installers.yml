@@ -152,7 +152,7 @@ jobs:
                       exit 1
                   fi
                   case "${HERMES_RELEASE_TAG}" in
-                      *[[:space:]/]*)
+                      *[[:space:]/]*|*\\*)
                           echo "::error::release-tag must be a single GitHub tag segment."
                           exit 1
                           ;;

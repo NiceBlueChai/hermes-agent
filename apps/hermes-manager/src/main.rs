@@ -1118,7 +1118,7 @@ fn github_release_tag_parts(url: &str) -> Option<(&str, &str, &str)> {
 }
 
 fn is_invalid_github_release_path_segment(segment: &str) -> bool {
-    segment.is_empty() || segment.chars().any(|value| value.is_whitespace())
+    segment.is_empty() || segment.chars().any(|value| value == '\\' || value.is_whitespace())
 }
 
 fn github_release_repo(url: &str) -> Option<String> {
@@ -4111,6 +4111,14 @@ mod tests {
         );
 
         assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn github_release_tag_url_rejects_backslash_tag_segment() {
+        assert!(!is_github_release_tag_url(
+            "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9\\evil",
+            "v9.9.9\\evil",
+        ));
     }
 
     #[test]
