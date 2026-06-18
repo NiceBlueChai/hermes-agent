@@ -612,7 +612,7 @@ attempt_install_git() {
             if command -v brew >/dev/null 2>&1; then
                 log_info "Installing Git via Homebrew..."
                 brew install git >/dev/null 2>&1 || true
-                command -v git >/dev/null 2>&1 && return 0
+                command -v git >/dev/null 2>&1 && git --version >/dev/null 2>&1 && return 0
             fi
             # Fall back to Apple Command Line Tools, which provide git AND the
             # compiler some Python wheels need. `xcode-select --install` pops a
@@ -660,7 +660,7 @@ attempt_install_git() {
                     return 1
                     ;;
             esac
-            command -v git >/dev/null 2>&1 && return 0
+            command -v git >/dev/null 2>&1 && git --version >/dev/null 2>&1 && return 0
             return 1
             ;;
     esac
@@ -682,7 +682,7 @@ check_git() {
     if [ "$DISTRO" = "termux" ]; then
         log_info "Installing Git via pkg..."
         pkg install -y git >/dev/null
-        if command -v git >/dev/null 2>&1; then
+        if command -v git >/dev/null 2>&1 && git --version >/dev/null 2>&1; then
             GIT_VERSION=$(git --version | awk '{print $3}')
             log_success "Git $GIT_VERSION installed"
             return 0

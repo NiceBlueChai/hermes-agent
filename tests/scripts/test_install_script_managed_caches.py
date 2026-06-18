@@ -59,3 +59,11 @@ class InstallScriptManagedCachesTests(unittest.TestCase):
         self.assertIn("$gitCheck = Get-Command git -ErrorAction SilentlyContinue", script)
         self.assertIn("$gitVersion = & $gitCheck.Source --version", script)
         self.assertIn("if ($LASTEXITCODE -eq 0 -and $gitVersion)", script)
+
+    def test_install_sh_git_auto_install_requires_working_git(self):
+        """Unix Git auto-install success must mean git actually runs."""
+
+        script = (REPO_ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+
+        self.assertIn("command -v git >/dev/null 2>&1 && git --version >/dev/null 2>&1", script)
+        self.assertNotIn("command -v git >/dev/null 2>&1 && return 0", script)

@@ -181,8 +181,8 @@ git diff --check
 
 **Status:** Complete on branch. Verified with
 `cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml archive -- --nocapture` and
-`cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml update -- --nocapture`. Direct PowerShell
-fallback installs now only skip managed PortableGit when the existing `git` command also passes `git --version`, so a
+`cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml update -- --nocapture`. Direct script
+fallback installs now only treat Git as available when the existing `git` command also passes `git --version`, so a
 broken system Git no longer blocks the self-contained managed Git recovery path.
 
 **Completion standard:**
