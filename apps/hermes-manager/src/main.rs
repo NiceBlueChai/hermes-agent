@@ -1093,7 +1093,10 @@ fn is_github_release_tag_url(url: &str, release: &str) -> bool {
 
 fn github_release_tag_parts(url: &str) -> Option<(&str, &str, &str)> {
     let path_start = url.strip_prefix("https://github.com/")?;
-    let path = path_start.split(['?', '#']).next()?;
+    if path_start.contains('?') || path_start.contains('#') {
+        return None;
+    }
+    let path = path_start;
     let mut segments = path.split('/');
     let owner = segments.next()?;
     let repo = segments.next()?;
@@ -1118,7 +1121,10 @@ fn github_release_tag_parts(url: &str) -> Option<(&str, &str, &str)> {
 }
 
 fn is_invalid_github_release_path_segment(segment: &str) -> bool {
-    segment.is_empty() || segment.chars().any(|value| value == '\\' || value.is_whitespace())
+    segment.is_empty()
+        || segment
+            .chars()
+            .any(|value| value == '\\' || value.is_whitespace())
 }
 
 fn github_release_repo(url: &str) -> Option<String> {
@@ -4119,6 +4125,16 @@ mod tests {
             "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9\\evil",
             "v9.9.9\\evil",
         ));
+    }
+
+    #[test]
+    fn github_release_tag_url_rejects_query_or_fragment() {
+        for url in [
+            "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9?download=true",
+            "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9#notes",
+        ] {
+            assert!(!is_github_release_tag_url(url, "v9.9.9"));
+        }
     }
 
     #[test]

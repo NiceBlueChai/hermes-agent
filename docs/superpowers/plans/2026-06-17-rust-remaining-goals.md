@@ -272,7 +272,8 @@ evidence from different signed releases cannot be stitched together to unlock th
 `--print-template` shape. Generated placeholders such as `OWNER/REPO` and `vX.Y.Z` must be replaced before evidence can
 be recorded or used by `canRunFullBootstrap`. The manager-side gate also requires the GitHub path to be exactly
 `owner/repo/releases/tag/<tag>` with non-empty, whitespace-free owner, repository, and tag segments, so malformed paths
-or repository subpaths that merely end with `/releases/tag/<tag>` cannot unlock the native bootstrap gate.
+or repository subpaths that merely end with `/releases/tag/<tag>` cannot unlock the native bootstrap gate. It also
+rejects query or fragment suffixes on release tag URLs instead of accepting the stripped path.
 The manager-side gate now also rejects malformed evidence contracts instead of relying on map/set deduplication:
 duplicate or unknown required platforms, empty, invalid, or duplicate required checks, and undeclared or duplicate
 evidence checks cannot unlock `canRunFullBootstrap`.
@@ -767,6 +768,8 @@ runbook is recorded in `docs/release/native-bootstrap-signed-release-runbook.md`
 - Local Python runtime tests now reject structured runtime default evidence whose GitHub release tag URL treats `?` or
   `#` as part of the tag segment, and local workflow tests require signed release metadata preflights to reject those
   delimiters in `release-tag`.
+- Local Rust manager tests now reject fallback burn-down release URLs with query or fragment suffixes, keeping
+  `canRunFullBootstrap` aligned with the stricter Python release evidence validator.
 - [Unsigned Windows smoke run 27740524669](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27740524669)
   passed on head `1708abbbe66856ffc7558d978e08e473634094cc`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
