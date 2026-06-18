@@ -29,6 +29,25 @@ Use this only for a real signed release. Unsigned smoke runs keep proving packag
 - Complete fallback burn-down evidence for Windows, macOS, and Linux must point at the same GitHub owner/repository,
   release tag, and commit SHA.
 
+## Signing Configuration Preflight
+
+Run this before dispatching signed workflows. The signed path cannot produce fallback burn-down evidence until every
+name below exists in the release repository:
+
+```powershell
+gh secret list --repo <owner>/<repo>
+gh variable list --repo <owner>/<repo>
+```
+
+Required secrets:
+
+- `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
+- `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`
+
+Required variables:
+
+- `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT_NAME`, `AZURE_SIGNING_CERTIFICATE_PROFILE`
+
 ## Dispatch Signed Workflows
 
 Run the Windows signed path:
