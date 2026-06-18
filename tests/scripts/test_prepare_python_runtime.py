@@ -362,13 +362,20 @@ class PreparePythonRuntimeTests(unittest.TestCase):
             repo_root / ".github" / "workflows" / "build-unix-installers.yml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("$archivePattern = '^[^=\\s]+=https://[^=\\s]+=[0-9a-fA-F]{64}$'", windows_workflow)
+        self.assertIn(
+            "$archivePattern = '^[^=\\s]+=https://[^/=\\s][^=\\s]*=[0-9a-fA-F]{64}$'",
+            windows_workflow,
+        )
         self.assertIn("python-runtime-archive must use NAME=HTTPS_URL=SHA256.", windows_workflow)
-        self.assertIn("archive_pattern='^[^=[:space:]]+=https://[^=[:space:]]+=[0-9a-fA-F]{64}$'",
-                      windows_workflow)
+        self.assertIn(
+            "archive_pattern='^[^=[:space:]]+=https://[^/=[:space:]][^=[:space:]]*=[0-9a-fA-F]{64}$'",
+            windows_workflow,
+        )
         self.assertIn("python runtime archive must use NAME=HTTPS_URL=SHA256.", windows_workflow)
-        self.assertIn("archive_pattern='^[^=[:space:]]+=https://[^=[:space:]]+=[0-9a-fA-F]{64}$'",
-                      unix_workflow)
+        self.assertIn(
+            "archive_pattern='^[^=[:space:]]+=https://[^/=[:space:]][^=[:space:]]*=[0-9a-fA-F]{64}$'",
+            unix_workflow,
+        )
         self.assertIn("python runtime archive must use NAME=HTTPS_URL=SHA256.", unix_workflow)
 
     def test_python_runtime_default_gate_rejects_missing_release_decision_details(self):

@@ -363,6 +363,8 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   archive URL lacks an HTTPS host, aligning tool bundle provenance with the runtime archive gate.
 - Local workflow tests now require signed runtime archive metadata preflights to reject `NAME=https:///...=SHA256`
   inputs before packaging starts, keeping workflow dispatch validation aligned with the archive validators.
+- Local source archive tests now reject audited source archive inputs and generated source archive manifests whose archive
+  URL lacks an HTTPS host, aligning the optional source snapshot provenance gate with runtime and bootstrap archives.
 - [Unsigned Windows smoke run 27737605924](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27737605924)
   passed on head `f52b0b2f12ac24fbec6b937972886d3460c07ffd`, revalidating Windows workflow dispatch, build,
   Python runtime default gate, runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down

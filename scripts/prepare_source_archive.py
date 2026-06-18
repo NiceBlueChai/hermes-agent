@@ -23,7 +23,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from prepare_python_runtime import REPO_ROOT, name_is_plain_file, sha256_file
+from prepare_python_runtime import REPO_ROOT, is_https_url_with_host, name_is_plain_file, sha256_file
 
 
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "apps" / "bootstrap-installer" / "src-tauri" / "source-archive"
@@ -60,7 +60,7 @@ def parse_audited_archive_arg(value: str) -> AuditedSourceArchiveSpec:
         raise ValueError("audited source archive must use NAME=HTTPS_URL=SHA256")
     if not name_is_plain_file(name) or not name.endswith(".zip"):
         raise ValueError(f"audited source archive has unsafe name: {name}")
-    if not url.startswith("https://"):
+    if not is_https_url_with_host(url):
         raise ValueError("audited source archive URL must be HTTPS")
     if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
         raise ValueError(f"audited source archive has invalid sha256: {name}")
@@ -244,7 +244,7 @@ def validate_manifest(
             raise RuntimeError(f"duplicate source archive file: {name}")
         seen_names.add(name)
         url = file.get("url")
-        if not isinstance(url, str) or not url.startswith("https://"):
+        if not isinstance(url, str) or not is_https_url_with_host(url):
             raise RuntimeError(f"source archive file has invalid url: {name}")
         expected_size = file.get("sizeBytes")
         if type(expected_size) is not int or expected_size <= 0:

@@ -69,7 +69,8 @@ class PrepareSourceArchiveTests(unittest.TestCase):
             output_dir = Path(tmp) / "source-archive"
             archive_bytes = _zip_bytes("hermes-agent-abcdef123/README.md", b"source")
 
-            with mock.patch.object(module.urllib.request, "urlopen", lambda url, timeout: _FakeResponse(archive_bytes)):
+            fake_urlopen = lambda url, timeout: _FakeResponse(archive_bytes)
+            with mock.patch.object(module.urllib.request, "urlopen", fake_urlopen):
                 with self.assertRaisesRegex(RuntimeError, "checksum mismatch"):
                     module.prepare_audited_source_archive(
                         output_dir=output_dir,
@@ -89,6 +90,8 @@ class PrepareSourceArchiveTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "HTTPS"):
             module.parse_audited_archive_arg(f"source.zip=http://example.invalid/source.zip={sha256}")
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            module.parse_audited_archive_arg(f"source.zip=https:///source.zip={sha256}")
         with self.assertRaisesRegex(ValueError, "unsafe"):
             module.parse_audited_archive_arg(f"../source.zip=https://example.invalid/source.zip={sha256}")
         with self.assertRaisesRegex(ValueError, "invalid sha256"):
@@ -127,6 +130,34 @@ class PrepareSourceArchiveTests(unittest.TestCase):
                     "abcdef123",
                     max_archive_bytes=1024,
                 )
+
+    def test_validate_payload_rejects_source_url_without_https_host(self):
+        module = _load_script_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "source-archive"
+            output_dir.mkdir()
+            archive = output_dir / "hermes-agent-abcdef123.zip"
+            archive.write_bytes(b"source")
+            module.write_manifest(
+                output_dir=output_dir,
+                owner="NousResearch",
+                repo="hermes-agent",
+                archive_ref="abcdef123",
+                commit="abcdef123",
+                branch="main",
+                files=[
+                    module.PreparedSourceArchive(
+                        name=archive.name,
+                        url="https:///hermes-agent-abcdef123.zip",
+                        path=archive,
+                        size_bytes=archive.stat().st_size,
+                        sha256=module.sha256_file(archive),
+                    )
+                ],
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "invalid url"):
+                module.validate_payload(output_dir, "NousResearch", "hermes-agent", "abcdef123")
 
     def test_installer_workflows_accept_optional_audited_source_archive(self):
         repo_root = Path(__file__).resolve().parents[2]
