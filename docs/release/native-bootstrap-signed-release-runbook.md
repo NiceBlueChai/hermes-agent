@@ -18,6 +18,8 @@ Use this only for a real signed release. Unsigned smoke runs keep proving packag
   `macos-python-runtime-without-bytes`: signed installer sizes from matching no-runtime baseline builds.
 - Signing configuration: Azure Artifact Signing for Windows, Apple signing/notarization for macOS, and Sigstore for
   Linux.
+- Fallback burn-down evidence for `desktop-bootstrap-script-fallback` must include the matching `--signature` value:
+  `authenticode`, `developer-id-notarized`, or `sigstore`.
 
 ## Dispatch Signed Workflows
 

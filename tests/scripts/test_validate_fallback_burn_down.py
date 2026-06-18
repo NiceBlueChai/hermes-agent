@@ -1690,6 +1690,58 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
         self.assertIn("--add-evidence requires --release-notes", result.stderr)
         self.assertEqual(payload, original)
 
+    def test_add_full_bootstrap_evidence_requires_signature_without_mutating_registry(self) -> None:
+        """Full-bootstrap evidence recording should fail fast when signature type is missing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            original = {
+                "schemaVersion": 1,
+                "entries": [
+                    {
+                        "id": "desktop-bootstrap-script-fallback",
+                        "owner": "desktop",
+                        "file": "src/entry.js",
+                        "marker": marker,
+                        "fallback": "Fallback description.",
+                        "removalGate": "Release evidence gate.",
+                        "requiredEvidence": [
+                            {"platform": "windows", "checks": ["can-run-full-bootstrap"]},
+                            {"platform": "macos", "checks": ["can-run-full-bootstrap"]},
+                            {"platform": "linux", "checks": ["can-run-full-bootstrap"]},
+                        ],
+                        "evidence": [],
+                    }
+                ],
+            }
+            registry.write_text(json.dumps(original), encoding="utf-8")
+
+            result = run_validator(
+                registry,
+                root,
+                "--add-evidence",
+                "desktop-bootstrap-script-fallback",
+                "--platform",
+                "linux",
+                "--release",
+                "v1.0.0",
+                "--url",
+                VALID_RELEASE_V1_URL,
+                "--commit",
+                "e" * 40,
+                "--all-required-checks",
+            )
+
+            payload = json.loads(registry.read_text(encoding="utf-8"))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--add-evidence requires --signature", result.stderr)
+        self.assertEqual(payload, original)
+
     def test_add_evidence_merges_existing_matching_release_evidence(self) -> None:
         """Repeated signed evidence updates should merge checks for the same release."""
         with tempfile.TemporaryDirectory() as tmp:

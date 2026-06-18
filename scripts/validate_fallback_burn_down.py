@@ -689,6 +689,8 @@ def main(argv: list[str] | None = None) -> int:
             ]
             if not args.checks and not args.all_required_checks:
                 missing.append("--check or --all-required-checks")
+            if entry_id == FULL_BOOTSTRAP_FALLBACK_ID and not args.signature:
+                missing.append("--signature")
             if missing:
                 raise RuntimeError(f"{command_name} requires {', '.join(missing)}")
             if args.add_evidence:

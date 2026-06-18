@@ -285,7 +285,8 @@ The validator now also requires the `desktop-bootstrap-script-fallback` entry to
 required evidence before printing the full-bootstrap template, preventing incomplete signed evidence skeletons.
 Full-bootstrap signed evidence must now carry a platform signature type: `authenticode` for Windows,
 `developer-id-notarized` for macOS, and `sigstore` for Linux. The Python validator rejects missing or mismatched
-signature types, and the Rust `canRunFullBootstrap` gate ignores evidence without the expected platform signature.
+signature types, `--add-evidence` and `--print-evidence-item` fail fast when full-bootstrap evidence omits
+`--signature`, and the Rust `canRunFullBootstrap` gate ignores evidence without the expected platform signature.
 The Unix release paths now have a signed path instead of being unsigned-only: the standalone Unix workflow and the fork
 dispatchable Windows workflow's Unix smoke job both use `unsigned-smoke-only=true` to preserve fork smoke coverage, while
 signed mode validates Apple signing configuration, exports Tauri's Apple signing/notarization environment only for signed
@@ -772,6 +773,8 @@ runbook is recorded in `docs/release/native-bootstrap-signed-release-runbook.md`
 - Local validator and manager tests now reject full-bootstrap signed evidence without the expected platform signature
   type, and `--print-template desktop-bootstrap-script-fallback` emits the required `signature` values for release
   operators.
+- Local validator tests now make `--add-evidence desktop-bootstrap-script-fallback` fail fast when release operators omit
+  `--signature`, preventing a later generic registry error.
 - Local workflow tests now require signed installer workflows to print the fallback burn-down evidence command for
   Windows `authenticode`, macOS `developer-id-notarized`, and Linux `sigstore` after release artifact verification.
 - Local workflow tests now require signed installer workflows to validate `release-tag` and `release-notes-url` inputs,
