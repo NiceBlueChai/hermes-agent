@@ -1200,8 +1200,8 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             if section.startswith("Install Linux Tauri dependencies")
         )
 
-        self.assertIn("timeout-minutes: 20", windows_step)
-        self.assertIn("timeout-minutes: 20", unix_step)
+        self.assertIn("timeout-minutes: 30", windows_step)
+        self.assertIn("timeout-minutes: 30", unix_step)
         self.assertIn("--no-install-recommends", windows_step)
         self.assertIn("--no-install-recommends", unix_step)
         self.assertIn("Acquire::Retries=3", windows_step)

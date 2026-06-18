@@ -515,6 +515,9 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
 - [Unix smoke run 27717579490](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27717579490) passed on head
   `8ea556a5fc4399c559473c1494cab2bb2acb70ee`, revalidating Linux and macOS packaged runtime lifecycle smoke after the
   same apt retry and timeout hardening.
+- [Unix smoke run 27726801272](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27726801272) failed on head
+  `13ed8d349ac62486f4d71a9c9673646152e108906` when the Linux Tauri dependency install was still making progress
+  through package setup but hit the 20-minute step timeout, proving the timeout still needed more hosted-runner margin.
 - Local workflow tests now require both Unix release entry points to support signed macOS and Linux release artifacts:
   `unsigned-smoke-only` keeps fork smoke unsigned, signed macOS jobs require Apple signing/notarization configuration and
   notarization verification, and signed Linux jobs use Sigstore and upload `*.sigstore.json` bundles.
@@ -574,7 +577,7 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   manager release URL parser before signed release evidence can be recorded.
 - Local workflow tests now require bootstrap tool archive bundling steps to carry `timeout-minutes: 10`, preventing
   release smoke from hanging the full job when external archive/cache preparation stalls.
-- Local workflow tests now require Linux Tauri dependency installation steps to carry `timeout-minutes: 20`,
+- Local workflow tests now require Linux Tauri dependency installation steps to carry `timeout-minutes: 30`,
   `--no-install-recommends`, and apt retry options, preventing apt-level stalls from consuming the full Unix release
   smoke job timeout while keeping enough time for slow hosted-runner mirrors.
 - Local validator tests now reject full-bootstrap evidence templates when `requiredEvidence` omits any supported release
