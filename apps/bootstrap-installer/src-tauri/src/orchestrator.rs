@@ -9781,7 +9781,7 @@ mod tests {
             let command = root.join("fake-package-manager.sh");
             std::fs::write(
                 &command,
-                "#!/usr/bin/env sh\necho 'package manager said no' >&2\nexit 7\n",
+                "#!/bin/sh\necho 'package manager said no' >&2\nexit 7\n",
             )
             .unwrap();
             make_executable(&command).unwrap();
