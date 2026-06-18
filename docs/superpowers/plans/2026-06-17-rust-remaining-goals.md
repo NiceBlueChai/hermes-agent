@@ -349,6 +349,14 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   the same Python runtime version.
 - Local Python runtime tests now reject runtime default evidence whose manifest Python tag does not match
   `pythonRuntime.version`, preventing a Python archive from being promoted with the wrong CPython ABI tag.
+- [Unsigned Windows smoke run 27733900664](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27733900664)
+  passed on head `4054ba8df6ad9144235c9c1222617a6f381add06`, revalidating Windows build, Python runtime default gate,
+  runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
+  upload, and Python runtime artifact validation after runtime default evidence began requiring the manifest Python tag
+  to match `pythonRuntime.version`.
+- [Unix smoke run 27733900646](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27733900646) passed on head
+  `4054ba8df6ad9144235c9c1222617a6f381add06`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  runtime default evidence began requiring the manifest Python tag to match `pythonRuntime.version`.
 - [Unsigned Windows smoke run 27733238764](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27733238764)
   passed on head `081829ea0259e21e425d3696853485628e38ef20`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
