@@ -2809,6 +2809,20 @@ pub async fn install_windows_git_runtime_stage(
     if !cfg!(target_os = "windows") {
         return Err(anyhow!("native Git stage is only available on Windows"));
     }
+    let path_env = std::env::var_os("PATH").unwrap_or_default();
+    let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+    if let Some(git) = usable_git_on_path_with_pathext(&path_env, &pathext) {
+        if let Some(bash) = find_windows_git_bash_for_git(&git) {
+            persist_windows_env_var("HERMES_GIT_BASH_PATH", &bash.display().to_string())?;
+            std::env::set_var("HERMES_GIT_BASH_PATH", &bash);
+            return Ok(serde_json::json!({
+                "git": git,
+                "bash": bash,
+                "skipped": true,
+                "reason": "Git already available",
+            }));
+        }
+    }
     let arch = windows_node_arch_slug();
     let plan = windows_git_runtime_stage_plan(hermes_home, &arch)?;
     let archive_source =
@@ -2907,7 +2921,14 @@ fn usable_git_on_path<P>(path_env: P) -> Option<PathBuf>
 where
     P: AsRef<OsStr>,
 {
-    let git = find_executable_on_path("git", path_env, "")?;
+    usable_git_on_path_with_pathext(path_env, "")
+}
+
+fn usable_git_on_path_with_pathext<P>(path_env: P, pathext: &str) -> Option<PathBuf>
+where
+    P: AsRef<OsStr>,
+{
+    let git = find_executable_on_path("git", path_env, pathext)?;
     let status = Command::new(&git)
         .arg("--version")
         .stdout(Stdio::null())
@@ -2915,6 +2936,17 @@ where
         .status()
         .ok()?;
     status.success().then_some(git)
+}
+
+fn find_windows_git_bash_for_git(git: &Path) -> Option<PathBuf> {
+    let bin_dir = git.parent()?;
+    let root = bin_dir.parent()?;
+    [
+        root.join("bin").join("bash.exe"),
+        root.join("usr").join("bin").join("bash.exe"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
 }
 
 fn run_unix_git_install_command(command: &UnixGitInstallCommandPlan) -> Result<()> {
@@ -6836,6 +6868,23 @@ mod tests {
         let found = find_executable_on_path("uv", &root, ".COM;.EXE;.BAT").unwrap();
 
         assert_eq!(found, exe);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn find_windows_git_bash_for_git_uses_git_for_windows_layout() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-orchestrator-git-bash-{}",
+            std::process::id()
+        ));
+        let git = root.join("Git").join("cmd").join("git.exe");
+        let bash = root.join("Git").join("bin").join("bash.exe");
+        std::fs::create_dir_all(git.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(bash.parent().unwrap()).unwrap();
+        std::fs::write(&git, b"git").unwrap();
+        std::fs::write(&bash, b"bash").unwrap();
+
+        assert_eq!(find_windows_git_bash_for_git(&git), Some(bash));
         let _ = std::fs::remove_dir_all(&root);
     }
 
