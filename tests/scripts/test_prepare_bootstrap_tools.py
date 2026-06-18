@@ -1672,6 +1672,11 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
         workflow = (repo_root / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
 
         self.assertIn("Build bootstrap release binary", workflow)
+        self.assertIn("timeout-minutes: 10", workflow)
+        self.assertIn("APT_OPTS=(-o Acquire::Retries=3", workflow)
+        self.assertIn('sudo apt-get "${APT_OPTS[@]}" update', workflow)
+        self.assertIn('sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends', workflow)
+        self.assertIn("--no-install-recommends", workflow)
         self.assertIn("cargo build --release --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml", workflow)
         self.assertIn("Run bootstrap release binary self-check", workflow)
         self.assertIn("--self-check-expect-commit \"${{ github.sha }}\"", workflow)
