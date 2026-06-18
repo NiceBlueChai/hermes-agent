@@ -355,6 +355,14 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   signed-release gate aligned with the checked-in runtime manifest contract.
 - Local Python runtime tests now reject runtime default evidence whose source URL and archive SHA-256 match different
   manifest files, keeping archive provenance tied to one manifest-owned file record.
+- [Unsigned Windows smoke run 27735423103](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27735423103)
+  passed on head `ec2e2a9b85f11aac5deb9e59c3752c589c6886fd`, revalidating Windows build, Python runtime default gate,
+  runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
+  upload, and Python runtime artifact validation after runtime default evidence began requiring source URL and archive
+  SHA-256 to match the same manifest file.
+- [Unix smoke run 27735423119](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27735423119) passed on head
+  `ec2e2a9b85f11aac5deb9e59c3752c589c6886fd`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  runtime default evidence began requiring source URL and archive SHA-256 to match the same manifest file.
 - [Unsigned Windows smoke run 27734904335](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27734904335)
   passed on head `02c25c7ce0595bc0b6e578572e58f157f5c4b974`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
