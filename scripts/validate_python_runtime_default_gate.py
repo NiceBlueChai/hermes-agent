@@ -162,6 +162,9 @@ def validate_release_evidence_payload(payload: object) -> None:
     signature = require_non_empty_string(installer.get("signature"), "signedInstaller.signature")
     if signature != PLATFORM_SIGNATURES[platform]:
         raise RuntimeError("signedInstaller.signature must match signedInstaller.platform")
+    schema_version = manifest.get("schemaVersion")
+    if type(schema_version) is not int or schema_version != 1:
+        raise RuntimeError("pythonRuntime.manifest.schemaVersion must be 1")
     arch = require_non_empty_string(manifest.get("arch"), "pythonRuntime.manifest.arch")
     if arch not in {"x64", "arm64"}:
         raise RuntimeError("pythonRuntime.manifest.arch must be x64 or arm64")

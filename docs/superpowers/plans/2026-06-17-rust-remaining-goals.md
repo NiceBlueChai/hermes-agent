@@ -351,6 +351,8 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   `pythonRuntime.version`, preventing a Python archive from being promoted with the wrong CPython ABI tag.
 - Local Python runtime tests now reject runtime default evidence whose runtime source or manifest file URL lacks an HTTPS
   host, preventing placeholder URL strings from satisfying the archive provenance gate.
+- Local Python runtime tests now reject runtime default evidence whose manifest schema version is not `1`, keeping the
+  signed-release gate aligned with the checked-in runtime manifest contract.
 - [Unsigned Windows smoke run 27734391124](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27734391124)
   passed on head `eca2c9c100fd9b3814bb513bcdd052de71e08156`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
