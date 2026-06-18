@@ -144,6 +144,8 @@ def validate_release_evidence_payload(payload: object) -> None:
         raise RuntimeError("signedInstaller.releaseNotes must be a GitHub release tag URL for signedInstaller.release")
     if github_release_repo(release_notes) != github_release_repo(release_url):
         raise RuntimeError("signedInstaller.releaseNotes must reference the same GitHub repository")
+    if release == "vX.Y.Z" or github_release_repo(release_url) == "OWNER/REPO":
+        raise RuntimeError("signedInstaller release identity must replace placeholder values")
     commit = require_non_empty_string(installer.get("commit"), "signedInstaller.commit")
     if not HEX_COMMIT_RE.fullmatch(commit):
         raise RuntimeError("signedInstaller.commit must be a 40-character commit SHA")

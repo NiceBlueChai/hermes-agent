@@ -334,6 +334,8 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   reject signed installer evidence whose platform does not match the runtime manifest platform.
 - Local Python runtime tests now require structured runtime default evidence to carry release tag, release URL, release
   notes URL, commit SHA, and platform signature type, and reject release-note links from a different GitHub repository.
+- Local Python runtime tests now reject `OWNER/REPO` and `vX.Y.Z` placeholders in structured runtime default evidence,
+  keeping generated release-evidence templates from being accepted as real runtime default evidence.
 - Local Python runtime tests now require signed Windows, Linux, and macOS workflow paths to fail preflight unless the
   Python runtime archive is supplied as an audited `NAME=HTTPS_URL=SHA256` input. Unsigned smoke remains allowed to
   build temporary runtime archives in Actions, but those unsigned archives cannot satisfy the signed release evidence
