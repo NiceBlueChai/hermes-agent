@@ -131,7 +131,7 @@ jobs:
             Write-Error "python-runtime-archive must use NAME=HTTPS_URL=SHA256."
             exit 1
           }
-          if ($env:HERMES_RELEASE_TAG -match "[\s/\\]") {
+          if ($env:HERMES_RELEASE_TAG -match "[\s/\\?#]") {
             Write-Error "release-tag must be a single GitHub tag segment."
             exit 1
           }
@@ -654,7 +654,7 @@ jobs:
             exit 1
           fi
           case "${HERMES_RELEASE_TAG}" in
-            *[[:space:]/]*|*\\*)
+            *[[:space:]/]*|*\\*|*[?#]*)
               echo "::error::release-tag must be a single GitHub tag segment."
               exit 1
               ;;

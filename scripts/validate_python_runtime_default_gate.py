@@ -39,7 +39,9 @@ REQUIRED_MARKERS = {
 
 HEX_SHA256_RE = re.compile(r"[0-9a-fA-F]{64}")
 HEX_COMMIT_RE = re.compile(r"[0-9a-fA-F]{40}")
-GITHUB_RELEASE_TAG_RE = re.compile(r"^https://github\.com/([^/\\\s]+)/([^/\\\s]+)/releases/tag/([^/\\\s]+)$")
+GITHUB_RELEASE_TAG_RE = re.compile(
+    r"^https://github\.com/([^/\\?#\s]+)/([^/\\?#\s]+)/releases/tag/([^/\\?#\s]+)$"
+)
 PLATFORM_SIGNATURES = {
     "windows": "authenticode",
     "macos": "developer-id-notarized",

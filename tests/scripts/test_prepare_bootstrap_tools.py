@@ -1606,7 +1606,8 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             self.assertIn("inputs['release-notes-url']", workflow_text)
             self.assertIn("release-tag must be a single GitHub tag segment", workflow_text)
             self.assertIn("release-notes-url must equal GitHub release tag URL", workflow_text)
-            self.assertIn("\\\\*)", workflow_text)
+            self.assertIn("*[?#]*)", workflow_text)
+            self.assertIn("*\\\\*|*[?#]*)", workflow_text)
             self.assertIn("releases/tag/", workflow_text)
             self.assertIn("Upload signed fallback evidence command", workflow_text)
             self.assertIn(".release-evidence/fallback-burn-down", workflow_text)
@@ -1616,6 +1617,7 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             self.assertIn(".json", workflow_text)
             self.assertNotIn("<release-tag>", workflow_text)
 
+        self.assertIn("[\\s/\\\\?#]", windows_workflow)
         self.assertIn(evidence_marker, windows_workflow)
         self.assertIn("--add-evidence desktop-bootstrap-script-fallback", windows_workflow)
         self.assertIn("--platform windows", windows_workflow)

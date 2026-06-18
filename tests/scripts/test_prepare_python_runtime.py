@@ -645,6 +645,16 @@ class PreparePythonRuntimeTests(unittest.TestCase):
                 "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v1.0.0\\evil",
                 "GitHub release tag URL",
             ),
+            (
+                "v1.0.0?evil",
+                "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v1.0.0?evil",
+                "GitHub release tag URL",
+            ),
+            (
+                "v1.0.0#evil",
+                "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v1.0.0#evil",
+                "GitHub release tag URL",
+            ),
         ):
             with self.subTest(release=release):
                 evidence = json.loads(json.dumps(base_evidence))

@@ -94,7 +94,7 @@ The evidence file must include:
 The validator requires the runtime source and manifest file URLs to be HTTPS URLs with hosts, the runtime source URL and
 archive SHA-256 to match the same manifest file, `pythonRuntime.manifest.schemaVersion` to be `1`,
 `signedInstaller.platform` to match the manifest platform, release URLs to be GitHub release tag URLs for
-`signedInstaller.release` in the same repository with no whitespace, `/`, or `\` in the tag segment,
+`signedInstaller.release` in the same repository with no whitespace, `/`, `\`, `?`, or `#` in the tag segment,
 `signedInstaller.commit` to be a 40-character SHA,
 `signedInstaller.signature` to match the platform signing method, `sizeDeltaBytes` to equal
 `withRuntimeBytes - withoutRuntimeBytes`, that delta to be positive, and `pythonRuntime.manifest.pythonTag` to match

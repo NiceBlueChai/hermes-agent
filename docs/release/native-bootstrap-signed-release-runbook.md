@@ -9,7 +9,7 @@ Use this only for a real signed release. Unsigned smoke runs keep proving packag
 
 ## Required Inputs
 
-- `release-tag`: the final GitHub release tag. It must be one path segment: no whitespace, `/`, or `\`.
+- `release-tag`: the final GitHub release tag. It must be one path segment: no whitespace, `/`, `\`, `?`, or `#`.
 - `release-notes-url`: `https://github.com/<owner>/<repo>/releases/tag/<release-tag>`.
 - `python-runtime-version`: the bundled Python patch version.
 - `python-runtime-archive`, `linux-python-runtime-archive`, and `macos-python-runtime-archive`:
