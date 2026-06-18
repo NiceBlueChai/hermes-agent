@@ -1640,6 +1640,19 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                 self.assertIn(f"--platform {platform}", workflow_text)
                 self.assertIn(f"--signature {signature}", workflow_text)
 
+    def test_signed_runtime_archive_preflight_requires_https_host(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("https://[^/=\\s]", windows_workflow)
+        self.assertIn("https://[^/=[:space:]]", windows_workflow)
+        self.assertIn("https://[^/=[:space:]]", unix_workflow)
+
     def test_tauri_bundle_declares_self_contained_resources(self):
         repo_root = Path(__file__).resolve().parents[2]
         config_path = repo_root / "apps" / "bootstrap-installer" / "src-tauri" / "tauri.conf.json"
