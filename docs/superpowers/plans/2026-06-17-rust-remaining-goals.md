@@ -787,6 +787,14 @@ runbook is recorded in `docs/release/native-bootstrap-signed-release-runbook.md`
   JSON beside the command artifact.
 - The signed release operator runbook now records required workflow inputs, signed Windows/Unix dispatch commands,
   evidence artifacts to collect, and the local validators that must pass before `canRunFullBootstrap=true` can be used.
+- [Unsigned Windows smoke run 27739907686](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27739907686)
+  passed on head `ac758470aeb56df37c381c20609323ab658cd1a7`, revalidating Windows build, Python runtime default gate,
+  runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
+  upload, and Python runtime artifact validation after full-bootstrap evidence recording began failing fast when
+  `--signature` is omitted.
+- [Unix smoke run 27739907676](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27739907676) passed on head
+  `ac758470aeb56df37c381c20609323ab658cd1a7`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  full-bootstrap evidence recording began failing fast when `--signature` is omitted.
 - [Unix smoke run 27723006956](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27723006956) passed on head
   `823268a8ebee9cdbab0d3b7f14a7bedc3c8eef20`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   signed fallback evidence command artifacts were added. The new upload step was parsed by GitHub and skipped in
