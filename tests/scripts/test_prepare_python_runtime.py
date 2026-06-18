@@ -655,6 +655,51 @@ class PreparePythonRuntimeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "pythonRuntime.manifest.pythonTag"):
                 module.validate_release_evidence(evidence_path)
 
+    def test_python_runtime_default_gate_rejects_runtime_source_without_https_host(self):
+        module = _load_default_gate_module()
+        evidence = {
+            "pythonRuntime": {
+                "version": "3.11.9",
+                "sourceUrl": "https://",
+                "archiveSha256": "a" * 64,
+                "securityUpdatePolicy": (
+                    "Runtime archive must be rebuilt when the bundled Python patch release "
+                    "receives a security update."
+                ),
+                "manifest": {
+                    "platform": "windows",
+                    "arch": "x64",
+                    "pythonTag": "cp311",
+                    "files": [
+                        {
+                            "name": "python-runtime-windows-x64.zip",
+                            "url": "https://",
+                            "sizeBytes": 100,
+                            "sha256": "a" * 64,
+                        }
+                    ],
+                },
+            },
+            "signedInstaller": {
+                "platform": "windows",
+                "release": "v1.0.0",
+                "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v1.0.0",
+                "releaseNotes": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v1.0.0",
+                "commit": "a" * 40,
+                "signature": "authenticode",
+                "withRuntimeBytes": 400,
+                "withoutRuntimeBytes": 250,
+                "sizeDeltaBytes": 150,
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_path = Path(tmp) / "evidence.json"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "pythonRuntime.sourceUrl"):
+                module.validate_release_evidence(evidence_path)
+
     def test_python_runtime_default_gate_validates_required_platform_evidence_set(self):
         module = _load_default_gate_module()
 

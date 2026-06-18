@@ -7,6 +7,7 @@ import glob
 import json
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 REQUIRED_MARKERS = {
@@ -75,6 +76,15 @@ def require_non_empty_string(value: object, label: str) -> str:
     return value
 
 
+def require_https_url(value: object, label: str) -> str:
+    """Return an HTTPS URL with a host or raise a release-evidence validation error."""
+    url = require_non_empty_string(value, label)
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise RuntimeError(f"{label} must be an HTTPS URL with a host")
+    return url
+
+
 def require_positive_int(value: object, label: str) -> int:
     """Return a positive integer release-evidence field."""
     if type(value) is not int or value <= 0:
@@ -109,9 +119,7 @@ def validate_release_evidence_payload(payload: object) -> None:
     version_match = re.fullmatch(r"(\d+)\.(\d+)\.\d+(?:[a-zA-Z0-9.+-]*)?", version)
     if version_match is None:
         raise RuntimeError("pythonRuntime.version must identify a Python patch release")
-    source_url = require_non_empty_string(runtime.get("sourceUrl"), "pythonRuntime.sourceUrl")
-    if not source_url.startswith("https://"):
-        raise RuntimeError("pythonRuntime.sourceUrl must be HTTPS")
+    source_url = require_https_url(runtime.get("sourceUrl"), "pythonRuntime.sourceUrl")
     archive_sha256 = require_non_empty_string(runtime.get("archiveSha256"), "pythonRuntime.archiveSha256")
     if not HEX_SHA256_RE.fullmatch(archive_sha256):
         raise RuntimeError("pythonRuntime.archiveSha256 must be a SHA-256 hex digest")
@@ -172,9 +180,7 @@ def validate_release_evidence_payload(payload: object) -> None:
         name = require_non_empty_string(file_payload.get("name"), f"pythonRuntime.manifest.files[{index}].name")
         if name != name.strip() or "/" in name or "\\" in name or name in {".", ".."}:
             raise RuntimeError(f"pythonRuntime.manifest.files[{index}].name must be a plain file name")
-        file_url = require_non_empty_string(file_payload.get("url"), f"pythonRuntime.manifest.files[{index}].url")
-        if not file_url.startswith("https://"):
-            raise RuntimeError(f"pythonRuntime.manifest.files[{index}].url must be HTTPS")
+        file_url = require_https_url(file_payload.get("url"), f"pythonRuntime.manifest.files[{index}].url")
         require_positive_int(file_payload.get("sizeBytes"), f"pythonRuntime.manifest.files[{index}].sizeBytes")
         file_sha256 = require_non_empty_string(
             file_payload.get("sha256"),
