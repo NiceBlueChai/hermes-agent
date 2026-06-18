@@ -1169,6 +1169,68 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing complete evidence for linux", result.stderr)
 
+    def test_require_all_complete_fails_on_first_incomplete_entry(self) -> None:
+        """Release fallback removal can require every retained fallback to be complete."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "// HERMES-FALLBACK-BURN-DOWN: complete-one\n"
+                "// HERMES-FALLBACK-BURN-DOWN: incomplete-two\n",
+                encoding="utf-8",
+            )
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "complete-one",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": "HERMES-FALLBACK-BURN-DOWN: complete-one",
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {"platform": "windows", "checks": ["release-notes"]}
+                                ],
+                                "evidence": [
+                                    {
+                                        "platform": "windows",
+                                        "release": "v1.0.0",
+                                        "url": VALID_RELEASE_V1_URL,
+                                        "releaseNotes": VALID_RELEASE_V1_URL,
+                                        "commit": "a" * 40,
+                                        "signed": True,
+                                        "checks": ["release-notes"],
+                                    }
+                                ],
+                            },
+                            {
+                                "id": "incomplete-two",
+                                "owner": "installer",
+                                "file": "src/entry.js",
+                                "marker": "HERMES-FALLBACK-BURN-DOWN: incomplete-two",
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {"platform": "windows", "checks": ["release-notes"]}
+                                ],
+                                "evidence": [],
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_validator(registry, root, "--require-all-complete")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("entry incomplete-two missing complete evidence", result.stderr)
+
     def test_require_complete_rejects_platforms_from_different_releases(self) -> None:
         """All required platforms must be proven by one shared signed release."""
         with tempfile.TemporaryDirectory() as tmp:

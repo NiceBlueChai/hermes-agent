@@ -38,6 +38,7 @@ def validate_registry(
     registry_path: Path,
     repo_root: Path,
     require_complete: str | None = None,
+    require_all_complete: bool = False,
     print_template: str | None = None,
 ) -> int:
     """Validate fallback entries and return the number of checked entries."""
@@ -65,6 +66,9 @@ def validate_registry(
         if entry is None:
             raise RuntimeError(f"required complete entry not found: {require_complete}")
         validate_complete_evidence(entry, require_complete, requirements_by_id[require_complete])
+    if require_all_complete:
+        for entry_id, entry in entries_by_id.items():
+            validate_complete_evidence(entry, entry_id, requirements_by_id[entry_id])
     if print_template is not None and print_template not in entries_by_id:
         raise RuntimeError(f"template entry not found: {print_template}")
     return len(entries)
@@ -680,6 +684,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Require complete signed evidence for one fallback entry.",
     )
     parser.add_argument(
+        "--require-all-complete",
+        action="store_true",
+        help="Require complete signed evidence for every fallback entry.",
+    )
+    parser.add_argument(
         "--print-template",
         metavar="ENTRY_ID",
         default=None,
@@ -743,6 +752,7 @@ def main(argv: list[str] | None = None) -> int:
             args.add_evidence
             or args.print_evidence_item
             or args.require_complete
+            or args.require_all_complete
             or args.print_template
         ):
             raise RuntimeError("--add-evidence-json cannot be combined with other actions")
@@ -808,6 +818,7 @@ def main(argv: list[str] | None = None) -> int:
             args.registry,
             args.repo_root,
             args.require_complete,
+            args.require_all_complete,
             args.print_template,
         )
         if args.print_template:
@@ -820,6 +831,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"validated {count} fallback burn-down entries")
     if args.require_complete:
         print(f"complete evidence: {args.require_complete}")
+    if args.require_all_complete:
+        print("complete evidence: all")
     return 0
 
 
