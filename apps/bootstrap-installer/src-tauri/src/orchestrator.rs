@@ -614,12 +614,13 @@ pub fn satisfied_tool_stage_skip_result<P>(
 where
     P: AsRef<OsStr>,
 {
-    satisfied_tool_stage_skip_result_with_node_probe(
+    satisfied_tool_stage_skip_result_with_tool_probes(
         stage,
         hermes_home,
         path_env,
         pathext,
         |_| false,
+        |_, _| true,
     )
 }
 
@@ -634,10 +635,36 @@ where
     P: AsRef<OsStr>,
     F: Fn(&Path) -> bool,
 {
+    satisfied_tool_stage_skip_result_with_tool_probes(
+        stage,
+        hermes_home,
+        path_env,
+        pathext,
+        node_version_ok,
+        install_tool_command_works,
+    )
+}
+
+fn satisfied_tool_stage_skip_result_with_tool_probes<P, N, T>(
+    stage: &StageInfo,
+    hermes_home: &Path,
+    path_env: P,
+    pathext: &str,
+    node_version_ok: N,
+    tool_works: T,
+) -> Option<crate::events::StageResultPayload>
+where
+    P: AsRef<OsStr>,
+    N: Fn(&Path) -> bool,
+    T: Fn(&str, &Path) -> bool,
+{
     let available = match stage.name.as_str() {
         name if name.eq_ignore_ascii_case("uv") => {
-            managed_tool_path(hermes_home, "uv").is_file()
-                || find_executable_on_path("uv", path_env.as_ref(), pathext).is_some()
+            let managed_uv = managed_tool_path(hermes_home, "uv");
+            [managed_uv.is_file().then_some(managed_uv), find_executable_on_path("uv", path_env.as_ref(), pathext)]
+                .into_iter()
+                .flatten()
+                .any(|uv| tool_works("uv", &uv))
         }
         name if name.eq_ignore_ascii_case("git") => {
             find_executable_on_path("git", path_env.as_ref(), pathext).is_some()
@@ -648,8 +675,10 @@ where
             matches!(node, Some(path) if npm.is_some() && node_version_ok(&path))
         }
         name if name.eq_ignore_ascii_case("system-packages") => {
-            find_executable_on_path("rg", path_env.as_ref(), pathext).is_some()
-                && find_executable_on_path("ffmpeg", path_env.as_ref(), pathext).is_some()
+            find_executable_on_path("rg", path_env.as_ref(), pathext)
+                .is_some_and(|rg| tool_works("rg", &rg))
+                && find_executable_on_path("ffmpeg", path_env.as_ref(), pathext)
+                    .is_some_and(|ffmpeg| tool_works("ffmpeg", &ffmpeg))
         }
         _ => false,
     };
@@ -663,6 +692,33 @@ where
         reason: Some("required tool already available".to_string()),
         data: None,
     })
+}
+
+fn install_tool_command_works(name: &str, path: &Path) -> bool {
+    let version_arg = if name.eq_ignore_ascii_case("ffmpeg") {
+        "-version"
+    } else {
+        "--version"
+    };
+    Command::new(path)
+        .arg(version_arg)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn working_install_tool(name: &str, path: &Path) -> Option<PathBuf> {
+    (path.is_file() && install_tool_command_works(name, path)).then(|| path.to_path_buf())
+}
+
+fn find_working_install_tool_on_path<P>(name: &str, path_env: P, pathext: &str) -> Option<PathBuf>
+where
+    P: AsRef<OsStr>,
+{
+    let tool = find_executable_on_path(name, path_env, pathext)?;
+    working_install_tool(name, &tool)
 }
 
 /// Return a Rust-side skip result for tool stages satisfied in this process.
@@ -2529,8 +2585,8 @@ pub async fn install_windows_system_packages_stage(
     let path_env = std::env::var_os("PATH").unwrap_or_default();
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
     let managed_rg = managed_tool_path(hermes_home, "rg");
-    let rg_before = find_executable_on_path("rg", &path_env, &pathext)
-        .or_else(|| managed_rg.is_file().then_some(managed_rg.clone()));
+    let rg_before = find_working_install_tool_on_path("rg", &path_env, &pathext)
+        .or_else(|| working_install_tool("rg", &managed_rg));
     let mut archive_name = None;
     let mut archive_source_kind = None;
 
@@ -2581,8 +2637,8 @@ pub async fn install_windows_system_packages_stage(
 
     let mut refreshed_path = std::env::var_os("PATH").unwrap_or_default();
     let managed_ffmpeg = managed_tool_path(hermes_home, "ffmpeg");
-    let mut ffmpeg = find_executable_on_path("ffmpeg", &refreshed_path, &pathext)
-        .or_else(|| managed_ffmpeg.is_file().then_some(managed_ffmpeg.clone()));
+    let mut ffmpeg = find_working_install_tool_on_path("ffmpeg", &refreshed_path, &pathext)
+        .or_else(|| working_install_tool("ffmpeg", &managed_ffmpeg));
     let mut ffmpeg_commands = Vec::new();
     let mut ffmpeg_archive_name = None;
     let mut ffmpeg_archive_source_kind = None;
@@ -2602,6 +2658,9 @@ pub async fn install_windows_system_packages_stage(
             prepend_process_path(&plan.install_dir);
             persist_windows_path_entries(&[plan.install_dir.clone()])?;
             refreshed_path = std::env::var_os("PATH").unwrap_or_default();
+            if !install_tool_command_works("ffmpeg", &plan.ffmpeg_exe) {
+                return Err(anyhow!("installed ffmpeg failed version check"));
+            }
             ffmpeg = Some(plan.ffmpeg_exe);
             ffmpeg_archive_name = Some(plan.archive_name);
             ffmpeg_archive_source_kind = Some(archive_source.kind.as_str().to_string());
@@ -2631,12 +2690,12 @@ pub async fn install_windows_system_packages_stage(
                         }
                     }
                     refreshed_path = std::env::var_os("PATH").unwrap_or_default();
-                    ffmpeg = find_executable_on_path("ffmpeg", &refreshed_path, &pathext);
+                    ffmpeg = find_working_install_tool_on_path("ffmpeg", &refreshed_path, &pathext);
                     if ffmpeg.is_some() {
                         break;
                     }
                     errors.push(format!(
-                        "{} completed but ffmpeg is still unavailable",
+                        "{} completed but ffmpeg is still unavailable or failed version check",
                         windows_package_command_display(command)
                     ));
                 }
@@ -2656,7 +2715,7 @@ pub async fn install_windows_system_packages_stage(
     }
 
     Ok(serde_json::json!({
-        "ripgrep": find_executable_on_path("rg", &refreshed_path, &pathext),
+        "ripgrep": find_working_install_tool_on_path("rg", &refreshed_path, &pathext),
         "ffmpeg": ffmpeg,
         "ffmpegCommands": ffmpeg_commands,
         "ffmpegArchive": ffmpeg_archive_name,
@@ -2680,7 +2739,7 @@ pub async fn install_unix_system_packages_stage(
     let path_env = std::env::var_os("PATH").unwrap_or_default();
     let managed_rg = managed_tool_path(hermes_home, "rg");
     let rg_before =
-        find_executable_on_path("rg", &path_env, "").or_else(|| managed_rg.is_file().then_some(managed_rg.clone()));
+        find_working_install_tool_on_path("rg", &path_env, "").or_else(|| working_install_tool("rg", &managed_rg));
     let mut archive_name = None;
     let mut archive_source_kind = None;
 
@@ -2728,8 +2787,8 @@ pub async fn install_unix_system_packages_stage(
 
     let mut refreshed_path = std::env::var_os("PATH").unwrap_or_default();
     let managed_ffmpeg = managed_tool_path(hermes_home, "ffmpeg");
-    let mut ffmpeg = find_executable_on_path("ffmpeg", &refreshed_path, "")
-        .or_else(|| managed_ffmpeg.is_file().then_some(managed_ffmpeg.clone()));
+    let mut ffmpeg = find_working_install_tool_on_path("ffmpeg", &refreshed_path, "")
+        .or_else(|| working_install_tool("ffmpeg", &managed_ffmpeg));
     let mut ffmpeg_commands = Vec::new();
     let mut ffmpeg_archive_name = None;
     let mut ffmpeg_archive_source_kind = None;
@@ -2748,6 +2807,9 @@ pub async fn install_unix_system_packages_stage(
             }
             prepend_process_path(&plan.install_dir);
             refreshed_path = std::env::var_os("PATH").unwrap_or_default();
+            if !install_tool_command_works("ffmpeg", &plan.ffmpeg_bin) {
+                return Err(anyhow!("installed ffmpeg failed version check"));
+            }
             ffmpeg = Some(plan.ffmpeg_bin);
             ffmpeg_archive_name = Some(plan.archive_name);
             ffmpeg_archive_source_kind = Some(archive_source.kind.as_str().to_string());
@@ -2778,10 +2840,10 @@ pub async fn install_unix_system_packages_stage(
             run_unix_system_package_install_command(command)?;
         }
         refreshed_path = std::env::var_os("PATH").unwrap_or_default();
-        ffmpeg = find_executable_on_path("ffmpeg", &refreshed_path, "");
+        ffmpeg = find_working_install_tool_on_path("ffmpeg", &refreshed_path, "");
         if ffmpeg.is_none() {
             return Err(anyhow!(
-                "ffmpeg install command completed but ffmpeg is still unavailable"
+                "ffmpeg install command completed but ffmpeg is still unavailable or failed version check"
             ));
         }
         ffmpeg_commands = commands
@@ -2791,7 +2853,7 @@ pub async fn install_unix_system_packages_stage(
     }
 
     Ok(serde_json::json!({
-        "ripgrep": find_executable_on_path("rg", &refreshed_path, ""),
+        "ripgrep": find_working_install_tool_on_path("rg", &refreshed_path, ""),
         "ffmpeg": ffmpeg,
         "ffmpegCommands": ffmpeg_commands,
         "ffmpegArchive": ffmpeg_archive_name,
@@ -4641,11 +4703,21 @@ fn uv_tool_path<P>(hermes_home: &Path, path_env: P, pathext: &str) -> Result<Pat
 where
     P: AsRef<OsStr>,
 {
+    uv_tool_path_with_probe(hermes_home, path_env, pathext, install_tool_command_works)
+}
+
+fn uv_tool_path_with_probe<P, F>(hermes_home: &Path, path_env: P, pathext: &str, uv_works: F) -> Result<PathBuf>
+where
+    P: AsRef<OsStr>,
+    F: Fn(&str, &Path) -> bool,
+{
     let managed = managed_tool_path(hermes_home, "uv");
-    if managed.is_file() {
+    if managed.is_file() && uv_works("uv", &managed) {
         return Ok(managed);
     }
-    find_executable_on_path("uv", path_env, pathext)
+    let uv = find_executable_on_path("uv", path_env, pathext)
+        .filter(|path| uv_works("uv", path));
+    uv
         .ok_or_else(|| anyhow!("uv is not available"))
 }
 
@@ -6733,6 +6805,18 @@ mod tests {
         }
     }
 
+    fn write_test_version_tool(path: &Path) {
+        if cfg!(target_os = "windows") {
+            let path_env = std::env::var_os("PATH").unwrap_or_default();
+            let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+            let node = find_executable_on_path("node", path_env, &pathext).unwrap();
+            std::fs::copy(node, path).unwrap();
+        } else {
+            std::fs::write(path, "#!/usr/bin/env sh\nexit 0\n").unwrap();
+            make_executable(path).unwrap();
+        }
+    }
+
     fn write_test_zip(path: &Path, entries: &[(&str, &[u8])]) {
         let file = std::fs::File::create(path).unwrap();
         let mut zip = zip::ZipWriter::new(file);
@@ -7370,6 +7454,143 @@ mod tests {
         )
         .is_some());
         assert!(satisfied_tool_stage_skip_result(&venv, &hermes_home, &tools, ".EXE").is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn satisfied_uv_stage_skip_requires_working_uv() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-uv-skip-test-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+        let tools = root.join("tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::write(tools.join(test_bin_tool("uv")), b"broken uv").unwrap();
+        let uv = stage_info("uv", "Installing uv package manager", "prereqs", false);
+
+        assert!(satisfied_tool_stage_skip_result_with_tool_probes(
+            &uv,
+            &hermes_home,
+            &tools,
+            ".EXE",
+            |_| false,
+            |_, _| false,
+        )
+        .is_none());
+        assert!(satisfied_tool_stage_skip_result_with_tool_probes(
+            &uv,
+            &hermes_home,
+            &tools,
+            ".EXE",
+            |_| false,
+            |_, _| true,
+        )
+        .is_some());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn satisfied_system_packages_skip_requires_working_tools() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-system-packages-skip-test-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+        let tools = root.join("tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::write(tools.join(test_bin_tool("rg")), b"broken rg").unwrap();
+        std::fs::write(tools.join(test_bin_tool("ffmpeg")), b"broken ffmpeg").unwrap();
+        let system_packages = stage_info(
+            "system-packages",
+            "Installing ripgrep and ffmpeg",
+            "prereqs",
+            false,
+        );
+
+        assert!(satisfied_tool_stage_skip_result_with_tool_probes(
+            &system_packages,
+            &hermes_home,
+            &tools,
+            ".EXE",
+            |_| false,
+            |name, _| name == "rg",
+        )
+        .is_none());
+        assert!(satisfied_tool_stage_skip_result_with_tool_probes(
+            &system_packages,
+            &hermes_home,
+            &tools,
+            ".EXE",
+            |_| false,
+            |_, _| true,
+        )
+        .is_some());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn install_tool_command_probe_uses_tool_specific_version_arg() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-install-tool-probe-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let args_file = root.join("args.txt");
+        let ok = if cfg!(target_os = "windows") {
+            let command = root.join("ok.cmd");
+            let script = format!("@echo off\r\necho %* > \"{}\"\r\nexit /b 0\r\n", args_file.display());
+            std::fs::write(&command, script).unwrap();
+            command
+        } else {
+            let command = root.join("ok.sh");
+            let script = format!("#!/usr/bin/env sh\nprintf '%s' \"$*\" > '{}'\nexit 0\n", args_file.display());
+            std::fs::write(&command, script).unwrap();
+            make_executable(&command).unwrap();
+            command
+        };
+        let fail = if cfg!(target_os = "windows") {
+            let command = root.join("fail.cmd");
+            std::fs::write(&command, "@echo off\r\nexit /b 7\r\n").unwrap();
+            command
+        } else {
+            let command = root.join("fail.sh");
+            std::fs::write(&command, "#!/usr/bin/env sh\nexit 7\n").unwrap();
+            make_executable(&command).unwrap();
+            command
+        };
+
+        assert!(install_tool_command_works("ffmpeg", &ok));
+        assert_eq!(std::fs::read_to_string(&args_file).unwrap().trim(), "-version");
+        assert!(install_tool_command_works("rg", &ok));
+        assert_eq!(std::fs::read_to_string(&args_file).unwrap().trim(), "--version");
+        assert!(!install_tool_command_works("rg", &fail));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn uv_tool_path_ignores_broken_managed_uv_when_path_uv_works() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-uv-tool-path-test-{}",
+            std::process::id()
+        ));
+        let hermes_home = root.join("home");
+        let path_tools = root.join("tools");
+        std::fs::create_dir_all(hermes_home.join("bin")).unwrap();
+        std::fs::create_dir_all(&path_tools).unwrap();
+        std::fs::write(hermes_home.join("bin").join(test_bin_tool("uv")), b"broken uv").unwrap();
+        let path_uv = path_tools.join(test_bin_tool("uv"));
+        std::fs::write(&path_uv, b"working uv").unwrap();
+
+        let found = uv_tool_path_with_probe(&hermes_home, &path_tools, ".EXE", |_, path| {
+            path.parent() == Some(path_tools.as_path())
+        })
+        .unwrap();
+        assert_eq!(found.parent(), Some(path_tools.as_path()));
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -9855,8 +10076,8 @@ mod tests {
         let path_tools = root.join("tools");
         std::fs::create_dir_all(hermes_home.join("bin")).unwrap();
         std::fs::create_dir_all(&path_tools).unwrap();
-        std::fs::write(hermes_home.join("bin").join(test_bin_tool("uv")), b"managed uv").unwrap();
-        std::fs::write(path_tools.join(test_bin_tool("uv")), b"path uv").unwrap();
+        write_test_version_tool(&hermes_home.join("bin").join(test_bin_tool("uv")));
+        write_test_version_tool(&path_tools.join(test_bin_tool("uv")));
 
         let plan = python_runtime_stage_plan_for_layout(
             &hermes_home,
@@ -9889,8 +10110,8 @@ mod tests {
         std::fs::create_dir_all(hermes_home.join("bin")).unwrap();
         std::fs::create_dir_all(&path_tools).unwrap();
         std::fs::create_dir_all(&runtime_dir).unwrap();
-        std::fs::write(hermes_home.join("bin").join(test_bin_tool("uv")), b"managed uv").unwrap();
-        std::fs::write(path_tools.join(test_bin_tool("uv")), b"path uv").unwrap();
+        write_test_version_tool(&hermes_home.join("bin").join(test_bin_tool("uv")));
+        write_test_version_tool(&path_tools.join(test_bin_tool("uv")));
         std::fs::write(&archive, b"runtime archive").unwrap();
         std::fs::write(
             runtime_dir.join("python-runtime-manifest.json"),
@@ -9946,7 +10167,7 @@ mod tests {
         std::fs::create_dir_all(hermes_home.join("bin")).unwrap();
         std::fs::create_dir_all(&path_tools).unwrap();
         std::fs::create_dir_all(&runtime_dir).unwrap();
-        std::fs::write(hermes_home.join("bin").join(test_bin_tool("uv")), b"managed uv").unwrap();
+        write_test_version_tool(&hermes_home.join("bin").join(test_bin_tool("uv")));
         std::fs::write(&archive, b"runtime archive").unwrap();
         std::fs::write(
             runtime_dir.join("python-runtime-manifest.json"),
@@ -10200,7 +10421,7 @@ mod tests {
         let install_root = hermes_home.join("hermes-agent");
         std::fs::create_dir_all(hermes_home.join("bin")).unwrap();
         std::fs::create_dir_all(&install_root).unwrap();
-        std::fs::write(hermes_home.join("bin").join(test_bin_tool("uv")), b"managed uv").unwrap();
+        write_test_version_tool(&hermes_home.join("bin").join(test_bin_tool("uv")));
 
         let plan = python_venv_stage_plan(&install_root, &hermes_home, "", ".EXE").unwrap();
 
@@ -10637,8 +10858,8 @@ mod tests {
         std::fs::create_dir_all(hermes_home.join("bin")).unwrap();
         std::fs::create_dir_all(&install_root).unwrap();
         std::fs::create_dir_all(&path_tools).unwrap();
-        std::fs::write(hermes_home.join("bin").join(test_bin_tool("uv")), b"managed uv").unwrap();
-        std::fs::write(path_tools.join(test_bin_tool("uv")), b"path uv").unwrap();
+        write_test_version_tool(&hermes_home.join("bin").join(test_bin_tool("uv")));
+        write_test_version_tool(&path_tools.join(test_bin_tool("uv")));
 
         let plan = python_venv_stage_plan(&install_root, &hermes_home, &path_tools, ".EXE")
             .unwrap();
@@ -10659,7 +10880,7 @@ mod tests {
         std::fs::create_dir_all(hermes_home.join("bin")).unwrap();
         std::fs::create_dir_all(&install_root).unwrap();
         std::fs::create_dir_all(&path_tools).unwrap();
-        std::fs::write(hermes_home.join("bin").join(test_bin_tool("uv")), b"managed uv").unwrap();
+        write_test_version_tool(&hermes_home.join("bin").join(test_bin_tool("uv")));
 
         let missing_lock =
             python_dependencies_stage_plan(&install_root, &hermes_home, &path_tools, ".EXE")

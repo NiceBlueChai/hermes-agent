@@ -183,7 +183,9 @@ git diff --check
 `cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml archive -- --nocapture` and
 `cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml update -- --nocapture`. Direct script
 fallback installs now only treat Git as available when the existing `git` command also passes `git --version`, so a
-broken system Git no longer blocks the self-contained managed Git recovery path.
+broken system Git no longer blocks the self-contained managed Git recovery path. Packaged bootstrap now also requires
+existing `uv`, `rg`, and `ffmpeg` commands to pass their version probes before skipping the managed install path.
+Native Python runtime, venv, and dependency plans also ignore a broken managed `uv` when a working PATH `uv` exists.
 
 **Completion standard:**
 
