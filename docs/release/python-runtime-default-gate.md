@@ -62,6 +62,9 @@ python scripts/validate_python_runtime_default_gate.py `
   --require-platforms windows,macos,linux
 ```
 
+`--require-platforms` is only valid with one or more `--evidence` files; the validator rejects it on its own so a release
+operator cannot accidentally skip the platform evidence check.
+
 Signed installer workflows generate this evidence instead of requiring release operators to hand-author it:
 
 ```powershell

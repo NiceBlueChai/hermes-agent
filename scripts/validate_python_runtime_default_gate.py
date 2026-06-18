@@ -422,6 +422,8 @@ def main() -> int:
     if args.print_evidence:
         print_release_evidence(args)
         return 0
+    if args.require_platforms and not args.evidence:
+        raise RuntimeError("--require-platforms requires --evidence")
     if args.evidence:
         required_platforms = tuple(
             platform.strip() for platform in args.require_platforms.split(",") if platform.strip()

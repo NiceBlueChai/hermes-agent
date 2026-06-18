@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -665,6 +666,25 @@ class PreparePythonRuntimeTests(unittest.TestCase):
                 evidence_paths,
                 required_platforms=("windows", "macos", "linux"),
             )
+
+    def test_python_runtime_default_gate_cli_rejects_required_platforms_without_evidence(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(repo_root / "scripts" / "validate_python_runtime_default_gate.py"),
+                "--require-platforms",
+                "windows,macos,linux",
+            ],
+            cwd=repo_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--require-platforms requires --evidence", result.stderr)
 
     def test_python_runtime_default_gate_builds_structured_release_evidence_from_manifest(self):
         module = _load_default_gate_module()
