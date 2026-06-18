@@ -370,6 +370,8 @@ runbook is recorded in `docs/release/native-bootstrap-signed-release-runbook.md`
   archive URL lacks an HTTPS host, aligning tool bundle provenance with the runtime archive gate.
 - Local workflow tests now require signed runtime archive metadata preflights to reject `NAME=https:///...=SHA256`
   inputs before packaging starts, keeping workflow dispatch validation aligned with the archive validators.
+- Local workflow tests now require signed runtime archive metadata preflights to reject `python-runtime-version` values
+  that do not identify a Python patch release before packaging starts.
 - Local source archive tests now reject audited source archive inputs and generated source archive manifests whose archive
   URL lacks an HTTPS host, aligning the optional source snapshot provenance gate with runtime and bootstrap archives.
 - [Unsigned Windows smoke run 27739136009](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27739136009)

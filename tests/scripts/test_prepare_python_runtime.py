@@ -378,6 +378,30 @@ class PreparePythonRuntimeTests(unittest.TestCase):
         )
         self.assertIn("python runtime archive must use NAME=HTTPS_URL=SHA256.", unix_workflow)
 
+    def test_signed_release_workflows_validate_python_runtime_version_shape(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        windows_workflow = (
+            repo_root / ".github" / "workflows" / "build-windows-installer.yml"
+        ).read_text(encoding="utf-8")
+        unix_workflow = (
+            repo_root / ".github" / "workflows" / "build-unix-installers.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "$env:HERMES_PYTHON_RUNTIME_VERSION -notmatch '^\\d+\\.\\d+\\.\\d+'",
+            windows_workflow,
+        )
+        self.assertIn("python-runtime-version must identify a Python patch release.", windows_workflow)
+        self.assertIn(
+            '[[ "${HERMES_PYTHON_RUNTIME_VERSION}" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+ ]]',
+            windows_workflow,
+        )
+        self.assertIn(
+            '[[ "${HERMES_PYTHON_RUNTIME_VERSION}" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+ ]]',
+            unix_workflow,
+        )
+        self.assertIn("python-runtime-version must identify a Python patch release.", unix_workflow)
+
     def test_python_runtime_default_gate_rejects_missing_release_decision_details(self):
         module = _load_default_gate_module()
         repo_root = Path(__file__).resolve().parents[2]
