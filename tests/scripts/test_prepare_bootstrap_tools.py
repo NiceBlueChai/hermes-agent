@@ -300,6 +300,16 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             output_dir.rmdir()
             root.rmdir()
 
+    def test_bootstrap_archive_inputs_reject_https_url_without_host(self):
+        module = _load_script_module()
+        sha256 = "a" * 64
+        archive_name = "uv-x86_64-pc-windows-msvc.zip"
+
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            module.parse_local_archive_arg(f"{archive_name}=https:///uv.zip")
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            module.parse_audited_archive_arg(f"{archive_name}=https:///uv.zip={sha256}")
+
     def test_prepare_playwright_browser_archive_runs_install_and_manifests_cache(self):
         module = _load_script_module()
         root = Path("tmp-bootstrap-tools-playwright-cache-test")
@@ -729,6 +739,44 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
                             "platform": "windows",
                             "name": "uv-x86_64-pc-windows-msvc.zip",
                             "url": "http://example.invalid/uv.zip",
+                            "sizeBytes": len(b"uv archive"),
+                            "sha256": module.sha256_file(archive),
+                        }
+                    ],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        try:
+            with self.assertRaisesRegex(RuntimeError, "invalid url"):
+                module.validate_manifest(output_dir)
+        finally:
+            if archive.exists():
+                archive.unlink()
+            if manifest.exists():
+                manifest.unlink()
+            output_dir.rmdir()
+            root.rmdir()
+
+        root = Path("tmp-bootstrap-tools-url-host-test")
+        output_dir = root / "bootstrap-tools"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        archive = output_dir / "uv-x86_64-pc-windows-msvc.zip"
+        archive.write_bytes(b"uv archive")
+        manifest = output_dir / "bootstrap-tools-manifest.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "archives": [
+                        {
+                            "arch": "x64",
+                            "platform": "windows",
+                            "name": "uv-x86_64-pc-windows-msvc.zip",
+                            "url": "https:///uv.zip",
                             "sizeBytes": len(b"uv archive"),
                             "sha256": module.sha256_file(archive),
                         }

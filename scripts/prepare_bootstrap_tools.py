@@ -24,6 +24,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -330,6 +331,13 @@ def archive_name_is_plain_file(name: str) -> bool:
     return bool(name.strip()) and name == name.strip() and Path(name).name == name and name not in {".", ".."}
 
 
+def is_https_url_with_host(url: str) -> bool:
+    """Return whether an archive URL is HTTPS and has a host."""
+
+    parsed = urlsplit(url)
+    return parsed.scheme == "https" and bool(parsed.netloc)
+
+
 def required_tool_kinds_for_target(platform: str, arch: str) -> set[str]:
     """Return runtime tool kinds that must be bundled for one release target."""
 
@@ -363,7 +371,7 @@ def parse_local_archive_arg(value: str) -> tuple[Path, ArchiveSpec, tuple[str, s
     source_text, separator, url = value.partition("=")
     if not separator or not source_text or not url:
         raise ValueError("local archive must use PATH=HTTPS_URL")
-    if not url.startswith("https://"):
+    if not is_https_url_with_host(url):
         raise ValueError("local archive URL must be HTTPS")
     source = Path(source_text)
     name = source.name
@@ -384,7 +392,7 @@ def parse_audited_archive_arg(value: str) -> tuple[ArchiveSpec, tuple[str, str],
     name, url, expected_sha256 = parts
     if not archive_name_is_plain_file(name):
         raise ValueError(f"audited archive has unsafe name: {name}")
-    if not url.startswith("https://"):
+    if not is_https_url_with_host(url):
         raise ValueError("audited archive URL must be HTTPS")
     if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
         raise ValueError(f"audited archive has invalid sha256: {name}")
@@ -879,7 +887,7 @@ def validate_manifest(
         url = archive.get("url")
         if not isinstance(url, str) or not url:
             raise RuntimeError(f"manifest archive is missing url: {name}")
-        if not url.startswith("https://"):
+        if not is_https_url_with_host(url):
             raise RuntimeError(f"manifest archive has invalid url: {name}")
         path = output_dir / name
         if not path.is_file():

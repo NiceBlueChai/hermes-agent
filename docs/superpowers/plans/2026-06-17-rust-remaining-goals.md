@@ -359,6 +359,8 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   default validation cannot silently ignore unrelated release artifacts.
 - Local Python runtime tests now reject audited runtime archive inputs and generated runtime manifests whose archive URL
   lacks an HTTPS host, aligning manifest generation with the runtime default evidence gate.
+- Local bootstrap tool tests now reject audited/local bootstrap archive inputs and generated bootstrap manifests whose
+  archive URL lacks an HTTPS host, aligning tool bundle provenance with the runtime archive gate.
 - [Unsigned Windows smoke run 27736466116](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27736466116)
   passed on head `08af161d34e20287aa89c99a631809ac9d2a05bd`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
