@@ -922,7 +922,7 @@ fn full_bootstrap_release_evidence_complete(entry: &FallbackBurnDownEntry) -> bo
         return false;
     }
 
-    let mut shared_release_keys: Option<BTreeSet<(String, String)>> = None;
+    let mut shared_release_keys: Option<BTreeSet<(String, String, String)>> = None;
     for platform in FULL_BOOTSTRAP_RELEASE_PLATFORMS {
         let Some(required_checks) = required.get(platform) else {
             return false;
@@ -979,7 +979,7 @@ fn complete_release_evidence_keys(
     entry: &FallbackBurnDownEntry,
     platform: &str,
     required_checks: &BTreeSet<String>,
-) -> BTreeSet<(String, String)> {
+) -> BTreeSet<(String, String, String)> {
     let mut checks_by_artifact: BTreeMap<(&str, &str, &str), BTreeSet<String>> = BTreeMap::new();
     let mut release_notes_by_artifact: BTreeMap<(&str, &str, &str), &str> = BTreeMap::new();
     let mut conflicted_artifacts: BTreeSet<(&str, &str, &str)> = BTreeSet::new();
@@ -1026,8 +1026,8 @@ fn complete_release_evidence_keys(
             {
                 return None;
             }
-            let (release, _url, commit) = *artifact;
-            Some((release.to_owned(), commit.to_owned()))
+            let (release, url, commit) = *artifact;
+            github_release_repo(url).map(|repo| (repo, release.to_owned(), commit.to_owned()))
         })
         .collect()
 }
@@ -4163,6 +4163,58 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": required_evidence,
+                    "evidence": evidence
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_platforms_from_different_repositories() {
+        let required_platforms = ["windows", "macos", "linux"];
+        let required_evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "checks": ["can-run-full-bootstrap", "release-notes"]
+                })
+            })
+            .collect::<Vec<_>>();
+        let evidence = [
+            ("windows", "NiceBlueChai/hermes-agent"),
+            ("macos", "nousresearch/hermes-agent"),
+            ("linux", "nousresearch/hermes-agent"),
+        ]
+        .into_iter()
+        .map(|(platform, repo)| {
+            let url = format!("https://github.com/{repo}/releases/tag/v9.9.9");
+            serde_json::json!({
+                "platform": platform,
+                "release": "v9.9.9",
+                "url": url,
+                "releaseNotes": url,
+                "commit": "a".repeat(40),
+                "signed": true,
+                "signature": full_bootstrap_signature_for_platform(platform),
+                "checks": ["can-run-full-bootstrap", "release-notes"]
+            })
+        })
+        .collect::<Vec<_>>();
         let registry = serde_json::json!({
             "schemaVersion": 1,
             "entries": [

@@ -24,6 +24,8 @@ Use this only for a real signed release. Unsigned smoke runs keep proving packag
   `installer-python-runtime-download-fallback` must be recorded only after the signed artifacts prove the corresponding
   registry checks in `docs/release/fallback-burn-down.json`. If a `signature` field is recorded for those entries, it
   must match the platform signing type.
+- Complete fallback burn-down evidence for Windows, macOS, and Linux must point at the same GitHub owner/repository,
+  release tag, and commit SHA.
 
 ## Dispatch Signed Workflows
 

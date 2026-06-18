@@ -426,7 +426,7 @@ def validate_complete_evidence(
 ) -> None:
     """Validate that one fallback entry has complete signed evidence for every required check."""
 
-    complete_release_keys_by_platform: list[set[tuple[str, str]]] = []
+    complete_release_keys_by_platform: list[set[tuple[str, str, str]]] = []
     for platform, required_checks in required_evidence.items():
         complete_release_keys = complete_evidence_release_keys(entry, platform, required_checks)
         if not complete_release_keys:
@@ -458,8 +458,8 @@ def complete_evidence_release_keys(
     entry: dict[str, Any],
     platform: str,
     required_checks: set[str],
-) -> set[tuple[str, str]]:
-    """Return release and commit keys for complete signed artifacts on one platform."""
+) -> set[tuple[str, str, str]]:
+    """Return repository, release, and commit keys for complete signed artifacts."""
 
     checks_by_artifact: dict[tuple[str, str, str], set[str]] = {}
     for item in entry.get("evidence", []):
@@ -504,8 +504,8 @@ def complete_evidence_release_keys(
             check for check in checks if isinstance(check, str)
         )
     return {
-        (release, commit)
-        for (release, _url, commit), checks in checks_by_artifact.items()
+        (github_release_repo(url), release, commit)
+        for (release, url, commit), checks in checks_by_artifact.items()
         if required_checks.issubset(checks)
     }
 

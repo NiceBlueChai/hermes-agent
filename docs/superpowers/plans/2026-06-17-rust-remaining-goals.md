@@ -746,6 +746,8 @@ runbook is recorded in `docs/release/native-bootstrap-signed-release-runbook.md`
   the final `canRunFullBootstrap` gate points at one unambiguous published release-note target.
 - Local validator and manager tests now reject cross-platform evidence assembled from different signed release tags or
   commits, so the final gate requires one shared signed release across Windows, macOS, and Linux.
+- Local validator and manager tests now reject cross-platform evidence assembled from different GitHub repositories, so
+  a fork or upstream release cannot be stitched together with another repository's artifacts.
 - Local validator tests now prove `--print-template` does not hide mixed-release platform evidence; when every platform
   is complete but no shared release and commit exists, it still prints replacement skeletons for all platforms.
 - Local validator and manager tests now reject release evidence whose `url` or `releaseNotes` is not a GitHub release
