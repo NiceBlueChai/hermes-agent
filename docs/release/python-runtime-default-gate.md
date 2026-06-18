@@ -60,6 +60,11 @@ python scripts/validate_python_runtime_default_gate.py `
   --python-version <python-patch-version> `
   --with-runtime-artifact <signed-installer-with-runtime> `
   --without-runtime-bytes <signed-installer-size-without-runtime> `
+  --release <tag> `
+  --url <https-github-release-tag-url> `
+  --release-notes <https-github-release-tag-url> `
+  --commit <40-char-sha> `
+  --signature <authenticode|developer-id-notarized|sigstore> `
   > signed-runtime-evidence.json
 ```
 
@@ -67,8 +72,11 @@ The evidence file must include:
 
 - `pythonRuntime.version`, `sourceUrl`, `archiveSha256`, `securityUpdatePolicy`, and the actual
   `python-runtime-manifest.json` payload.
-- `signedInstaller.platform`, `withRuntimeBytes`, `withoutRuntimeBytes`, and `sizeDeltaBytes`.
+- `signedInstaller.platform`, `release`, `url`, `releaseNotes`, `commit`, `signature`, `withRuntimeBytes`,
+  `withoutRuntimeBytes`, and `sizeDeltaBytes`.
 
 The validator requires the runtime source and manifest file URLs to be HTTPS, the runtime archive SHA-256 to match a
-manifest file, `signedInstaller.platform` to match the manifest platform, `sizeDeltaBytes` to equal
+manifest file, `signedInstaller.platform` to match the manifest platform, release URLs to be GitHub release tag URLs
+for `signedInstaller.release` in the same repository, `signedInstaller.commit` to be a 40-character SHA,
+`signedInstaller.signature` to match the platform signing method, `sizeDeltaBytes` to equal
 `withRuntimeBytes - withoutRuntimeBytes`, and that delta to be positive.

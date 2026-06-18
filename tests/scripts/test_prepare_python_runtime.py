@@ -295,6 +295,21 @@ class PreparePythonRuntimeTests(unittest.TestCase):
         self.assertIn("Upload signed Python runtime default evidence", unix_workflow)
         self.assertIn("python-runtime-default-evidence-${{ matrix.platform }}.json", unix_workflow)
         self.assertIn("--print-evidence", unix_workflow)
+        runtime_evidence_steps = [
+            section for section in windows_workflow.split("\n      - name: ")
+            if section.startswith("Print signed Python runtime default evidence")
+        ]
+        runtime_evidence_steps.extend(
+            section for section in unix_workflow.split("\n            - name: ")
+            if section.startswith("Print signed Python runtime default evidence")
+        )
+        self.assertEqual(len(runtime_evidence_steps), 3)
+        for step in runtime_evidence_steps:
+            self.assertIn("--release", step)
+            self.assertIn("--url", step)
+            self.assertIn("--release-notes", step)
+            self.assertIn("--commit", step)
+            self.assertIn("--signature", step)
 
     def test_signed_release_workflows_require_audited_python_runtime_archives(self):
         repo_root = Path(__file__).resolve().parents[2]
@@ -353,6 +368,10 @@ class PreparePythonRuntimeTests(unittest.TestCase):
                 "signedInstaller.platform",
                 "signedInstaller.target",
             ),
+            "signed installer release identity": doc_text.replace(
+                "signedInstaller.release",
+                "signedInstaller.tag",
+            ),
             "security rebuild policy": doc_text.replace(
                 "must be rebuilt when the bundled Python patch release receives a security update",
                 "must be reviewed when the bundled Python patch release receives a security update",
@@ -399,6 +418,11 @@ class PreparePythonRuntimeTests(unittest.TestCase):
             },
             "signedInstaller": {
                 "platform": "windows",
+                "release": "v1.0.0",
+                "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                "commit": "a" * 40,
+                "signature": "authenticode",
                 "withRuntimeBytes": 400,
                 "withoutRuntimeBytes": 250,
                 "sizeDeltaBytes": 150,
@@ -451,6 +475,91 @@ class PreparePythonRuntimeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "signedInstaller.platform"):
                 module.validate_release_evidence(evidence_path)
 
+    def test_python_runtime_default_gate_rejects_missing_signed_release_identity(self):
+        module = _load_default_gate_module()
+        evidence = {
+            "pythonRuntime": {
+                "version": "3.11.9",
+                "sourceUrl": "https://example.invalid/python-runtime-windows-x64.zip",
+                "archiveSha256": "a" * 64,
+                "securityUpdatePolicy": (
+                    "Runtime archive must be rebuilt when the bundled Python patch release "
+                    "receives a security update."
+                ),
+                "manifest": {
+                    "platform": "windows",
+                    "arch": "x64",
+                    "pythonTag": "cp311",
+                    "files": [
+                        {
+                            "name": "python-runtime-windows-x64.zip",
+                            "url": "https://example.invalid/python-runtime-windows-x64.zip",
+                            "sizeBytes": 100,
+                            "sha256": "a" * 64,
+                        }
+                    ],
+                },
+            },
+            "signedInstaller": {
+                "platform": "windows",
+                "withRuntimeBytes": 400,
+                "withoutRuntimeBytes": 250,
+                "sizeDeltaBytes": 150,
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_path = Path(tmp) / "evidence.json"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "signedInstaller.release"):
+                module.validate_release_evidence(evidence_path)
+
+    def test_python_runtime_default_gate_rejects_release_notes_from_different_repo(self):
+        module = _load_default_gate_module()
+        evidence = {
+            "pythonRuntime": {
+                "version": "3.11.9",
+                "sourceUrl": "https://example.invalid/python-runtime-windows-x64.zip",
+                "archiveSha256": "a" * 64,
+                "securityUpdatePolicy": (
+                    "Runtime archive must be rebuilt when the bundled Python patch release "
+                    "receives a security update."
+                ),
+                "manifest": {
+                    "platform": "windows",
+                    "arch": "x64",
+                    "pythonTag": "cp311",
+                    "files": [
+                        {
+                            "name": "python-runtime-windows-x64.zip",
+                            "url": "https://example.invalid/python-runtime-windows-x64.zip",
+                            "sizeBytes": 100,
+                            "sha256": "a" * 64,
+                        }
+                    ],
+                },
+            },
+            "signedInstaller": {
+                "platform": "windows",
+                "release": "v1.0.0",
+                "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                "releaseNotes": "https://github.com/OTHER/REPO/releases/tag/v1.0.0",
+                "commit": "a" * 40,
+                "signature": "authenticode",
+                "withRuntimeBytes": 400,
+                "withoutRuntimeBytes": 250,
+                "sizeDeltaBytes": 150,
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_path = Path(tmp) / "evidence.json"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "same GitHub repository"):
+                module.validate_release_evidence(evidence_path)
+
     def test_python_runtime_default_gate_builds_structured_release_evidence_from_manifest(self):
         module = _load_default_gate_module()
         manifest = {
@@ -477,6 +586,11 @@ class PreparePythonRuntimeTests(unittest.TestCase):
                 ),
                 with_runtime_bytes=400,
                 without_runtime_bytes=250,
+                release="v1.0.0",
+                release_url="https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                release_notes="https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                commit="a" * 40,
+                signature="authenticode",
             )
             evidence_path = Path(tmp) / "runtime-evidence.json"
             evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
@@ -484,6 +598,9 @@ class PreparePythonRuntimeTests(unittest.TestCase):
             self.assertEqual(evidence["pythonRuntime"]["sourceUrl"], manifest["files"][0]["url"])
             self.assertEqual(evidence["pythonRuntime"]["archiveSha256"], manifest["files"][0]["sha256"])
             self.assertEqual(evidence["signedInstaller"]["platform"], "windows")
+            self.assertEqual(evidence["signedInstaller"]["release"], "v1.0.0")
+            self.assertEqual(evidence["signedInstaller"]["commit"], "a" * 40)
+            self.assertEqual(evidence["signedInstaller"]["signature"], "authenticode")
             self.assertEqual(evidence["signedInstaller"]["sizeDeltaBytes"], 150)
             module.validate_release_evidence(evidence_path)
 
@@ -511,6 +628,11 @@ class PreparePythonRuntimeTests(unittest.TestCase):
             },
             "signedInstaller": {
                 "platform": "windows",
+                "release": "v1.0.0",
+                "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                "commit": "a" * 40,
+                "signature": "authenticode",
                 "withRuntimeBytes": 400,
                 "withoutRuntimeBytes": 250,
                 "sizeDeltaBytes": 149,
@@ -548,6 +670,11 @@ class PreparePythonRuntimeTests(unittest.TestCase):
             },
             "signedInstaller": {
                 "platform": "windows",
+                "release": "v1.0.0",
+                "url": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                "releaseNotes": "https://github.com/OWNER/REPO/releases/tag/v1.0.0",
+                "commit": "a" * 40,
+                "signature": "authenticode",
                 "withRuntimeBytes": 250,
                 "withoutRuntimeBytes": 250,
                 "sizeDeltaBytes": 0,

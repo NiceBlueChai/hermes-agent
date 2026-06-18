@@ -20,6 +20,7 @@ REQUIRED_MARKERS = {
     ),
     "signed installer size comparison": "compare the signed installer size with and without the runtime bundle",
     "signed installer platform": "signedInstaller.platform",
+    "signed installer release identity": "signedInstaller.release",
     "security gate heading": "## Security-Update Gate",
     "checksum-pinned source": "HTTPS and checksum-pinned",
     "security rebuild policy": "must be rebuilt when the bundled Python patch release receives a security update",
@@ -35,6 +36,13 @@ REQUIRED_MARKERS = {
 }
 
 HEX_SHA256_RE = re.compile(r"[0-9a-fA-F]{64}")
+HEX_COMMIT_RE = re.compile(r"[0-9a-fA-F]{40}")
+GITHUB_RELEASE_TAG_RE = re.compile(r"^https://github\.com/([^/\s]+)/([^/\s]+)/releases/tag/([^/\s]+)$")
+PLATFORM_SIGNATURES = {
+    "windows": "authenticode",
+    "macos": "developer-id-notarized",
+    "linux": "sigstore",
+}
 DEFAULT_RUNTIME_MANIFEST = Path(
     "apps/bootstrap-installer/src-tauri/python-runtime/python-runtime-manifest.json"
 )
@@ -73,6 +81,22 @@ def require_positive_int(value: object, label: str) -> int:
     return value
 
 
+def github_release_tag(url: str) -> str | None:
+    """Return the GitHub release tag segment when the URL has the expected release shape."""
+    match = GITHUB_RELEASE_TAG_RE.fullmatch(url)
+    if match is None:
+        return None
+    return match.group(3)
+
+
+def github_release_repo(url: str) -> str | None:
+    """Return OWNER/REPO when the URL has the expected GitHub release shape."""
+    match = GITHUB_RELEASE_TAG_RE.fullmatch(url)
+    if match is None:
+        return None
+    return f"{match.group(1)}/{match.group(2)}"
+
+
 def validate_release_evidence_payload(payload: object) -> None:
     """Validate structured evidence before the bundled Python runtime can become default."""
     root = require_mapping(payload, "root")
@@ -105,6 +129,27 @@ def validate_release_evidence_payload(payload: object) -> None:
         raise RuntimeError("signedInstaller.platform must be windows, linux, or macos")
     if installer_platform != platform:
         raise RuntimeError("signedInstaller.platform must match pythonRuntime.manifest.platform")
+    release = require_non_empty_string(installer.get("release"), "signedInstaller.release")
+    if release != release.strip() or "/" in release:
+        raise RuntimeError("signedInstaller.release must be a single GitHub tag segment")
+    release_url = require_non_empty_string(installer.get("url"), "signedInstaller.url")
+    release_notes = require_non_empty_string(installer.get("releaseNotes"), "signedInstaller.releaseNotes")
+    if not release_url.startswith("https://"):
+        raise RuntimeError("signedInstaller.url must be HTTPS")
+    if not release_notes.startswith("https://"):
+        raise RuntimeError("signedInstaller.releaseNotes must be HTTPS")
+    if github_release_tag(release_url) != release:
+        raise RuntimeError("signedInstaller.url must be a GitHub release tag URL for signedInstaller.release")
+    if github_release_tag(release_notes) != release:
+        raise RuntimeError("signedInstaller.releaseNotes must be a GitHub release tag URL for signedInstaller.release")
+    if github_release_repo(release_notes) != github_release_repo(release_url):
+        raise RuntimeError("signedInstaller.releaseNotes must reference the same GitHub repository")
+    commit = require_non_empty_string(installer.get("commit"), "signedInstaller.commit")
+    if not HEX_COMMIT_RE.fullmatch(commit):
+        raise RuntimeError("signedInstaller.commit must be a 40-character commit SHA")
+    signature = require_non_empty_string(installer.get("signature"), "signedInstaller.signature")
+    if signature != PLATFORM_SIGNATURES[platform]:
+        raise RuntimeError("signedInstaller.signature must match signedInstaller.platform")
     arch = require_non_empty_string(manifest.get("arch"), "pythonRuntime.manifest.arch")
     if arch not in {"x64", "arm64"}:
         raise RuntimeError("pythonRuntime.manifest.arch must be x64 or arm64")
@@ -163,6 +208,11 @@ def build_release_evidence(
     security_update_policy: str,
     with_runtime_bytes: int,
     without_runtime_bytes: int,
+    release: str,
+    release_url: str,
+    release_notes: str,
+    commit: str,
+    signature: str,
 ) -> dict:
     """Build validated structured evidence from a runtime manifest and installer sizes."""
     files = manifest.get("files")
@@ -179,6 +229,11 @@ def build_release_evidence(
         },
         "signedInstaller": {
             "platform": manifest.get("platform"),
+            "release": release,
+            "url": release_url,
+            "releaseNotes": release_notes,
+            "commit": commit,
+            "signature": signature,
             "withRuntimeBytes": with_runtime_bytes,
             "withoutRuntimeBytes": without_runtime_bytes,
             "sizeDeltaBytes": with_runtime_bytes - without_runtime_bytes,
@@ -207,6 +262,15 @@ def print_release_evidence(args: argparse.Namespace) -> None:
         raise RuntimeError("--with-runtime-artifact is required with --print-evidence")
     if args.without_runtime_bytes is None:
         raise RuntimeError("--without-runtime-bytes is required with --print-evidence")
+    for attr, flag in (
+        ("release", "--release"),
+        ("url", "--url"),
+        ("release_notes", "--release-notes"),
+        ("commit", "--commit"),
+        ("signature", "--signature"),
+    ):
+        if not getattr(args, attr):
+            raise RuntimeError(f"{flag} is required with --print-evidence")
 
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     artifact = resolve_single_artifact(args.with_runtime_artifact)
@@ -216,6 +280,11 @@ def print_release_evidence(args: argparse.Namespace) -> None:
         security_update_policy=args.security_update_policy,
         with_runtime_bytes=artifact.stat().st_size,
         without_runtime_bytes=args.without_runtime_bytes,
+        release=args.release,
+        release_url=args.url,
+        release_notes=args.release_notes,
+        commit=args.commit,
+        signature=args.signature,
     )
     print(json.dumps(evidence, indent=2, sort_keys=True))
 
@@ -260,6 +329,32 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Signed installer size in bytes from the matching build without the runtime bundle.",
+    )
+    parser.add_argument(
+        "--release",
+        default="",
+        help="Signed release tag recorded by --print-evidence.",
+    )
+    parser.add_argument(
+        "--url",
+        default="",
+        help="HTTPS GitHub release tag URL for the signed installer artifact.",
+    )
+    parser.add_argument(
+        "--release-notes",
+        default="",
+        dest="release_notes",
+        help="HTTPS GitHub release tag URL for the published release notes.",
+    )
+    parser.add_argument(
+        "--commit",
+        default="",
+        help="40-character commit SHA for the signed release artifact.",
+    )
+    parser.add_argument(
+        "--signature",
+        default="",
+        help="Platform signature type for the signed release artifact.",
     )
     parser.add_argument(
         "--evidence",

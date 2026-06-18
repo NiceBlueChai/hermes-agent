@@ -448,8 +448,11 @@ jobs:
         env:
           HERMES_PYTHON_RUNTIME_VERSION: ${{ inputs['python-runtime-version'] }}
           HERMES_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['python-runtime-without-bytes'] }}
+          HERMES_RELEASE_TAG: ${{ inputs['release-tag'] }}
+          HERMES_RELEASE_NOTES_URL: ${{ inputs['release-notes-url'] }}
         run: |
           $evidenceDir = ".release-evidence"
+          $releaseUrl = "https://github.com/${{ github.repository }}/releases/tag/$env:HERMES_RELEASE_TAG"
           New-Item -ItemType Directory -Force -Path $evidenceDir | Out-Null
           python scripts/validate_python_runtime_default_gate.py `
             --print-evidence `
@@ -457,6 +460,11 @@ jobs:
             --python-version "$env:HERMES_PYTHON_RUNTIME_VERSION" `
             --with-runtime-artifact "apps/bootstrap-installer/src-tauri/target/release/bundle/nsis/*.exe" `
             --without-runtime-bytes "$env:HERMES_PYTHON_RUNTIME_WITHOUT_BYTES" `
+            --release "$env:HERMES_RELEASE_TAG" `
+            --url "$releaseUrl" `
+            --release-notes "$env:HERMES_RELEASE_NOTES_URL" `
+            --commit "${{ github.sha }}" `
+            --signature authenticode `
             > "$evidenceDir/python-runtime-default-evidence-windows.json"
 
       - name: Upload signed Python runtime default evidence
@@ -1018,14 +1026,19 @@ jobs:
           HERMES_PYTHON_RUNTIME_VERSION: ${{ inputs['python-runtime-version'] }}
           HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['linux-python-runtime-without-bytes'] }}
           HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['macos-python-runtime-without-bytes'] }}
+          HERMES_RELEASE_TAG: ${{ inputs['release-tag'] }}
+          HERMES_RELEASE_NOTES_URL: ${{ inputs['release-notes-url'] }}
         run: |
           set -euo pipefail
           without_runtime_bytes="${HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES}"
           with_runtime_artifact="apps/bootstrap-installer/src-tauri/target/release/bundle/appimage/*.AppImage"
+          signature="sigstore"
           if [ "${{ matrix.platform }}" = "macos" ]; then
             without_runtime_bytes="${HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES}"
             with_runtime_artifact="apps/bootstrap-installer/src-tauri/target/release/bundle/dmg/*.dmg"
+            signature="developer-id-notarized"
           fi
+          release_url="https://github.com/${{ github.repository }}/releases/tag/${HERMES_RELEASE_TAG}"
           mkdir -p .release-evidence
           python scripts/validate_python_runtime_default_gate.py \
             --print-evidence \
@@ -1033,6 +1046,11 @@ jobs:
             --python-version "${HERMES_PYTHON_RUNTIME_VERSION}" \
             --with-runtime-artifact "${with_runtime_artifact}" \
             --without-runtime-bytes "${without_runtime_bytes}" \
+            --release "${HERMES_RELEASE_TAG}" \
+            --url "${release_url}" \
+            --release-notes "${HERMES_RELEASE_NOTES_URL}" \
+            --commit "${{ github.sha }}" \
+            --signature "${signature}" \
             > ".release-evidence/python-runtime-default-evidence-${{ matrix.platform }}.json"
 
       - name: Upload signed Python runtime default evidence
