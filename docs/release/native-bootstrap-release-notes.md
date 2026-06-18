@@ -6,7 +6,8 @@
 
 This draft is the release-note text for the first signed release that enables the native packaged bootstrap path.
 Do not publish this behavior as the default until `docs/release/fallback-burn-down.json` records signed Windows, macOS,
-and Linux evidence for `desktop-bootstrap-script-fallback`.
+and Linux evidence for `desktop-bootstrap-script-fallback`, `installer-source-archive-download-fallback`, and
+`installer-python-runtime-download-fallback`.
 
 ## Install Behavior Change
 
@@ -39,3 +40,5 @@ and Linux evidence for `desktop-bootstrap-script-fallback`.
 - Signed Linux packaged smoke reports `canRunFullBootstrap=true`.
 - Packaged smoke covers the native bridge, repair/uninstall cleanup, and fallback registry validation on all three
   platforms.
+- Fallback burn-down evidence is complete for the retained desktop bootstrap, source archive download, and Python
+  runtime download script fallbacks.
