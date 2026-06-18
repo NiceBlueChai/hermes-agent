@@ -342,6 +342,14 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   build starts; archive inputs must use HTTPS and a 64-character SHA-256 in `NAME=HTTPS_URL=SHA256` form.
 - A local CLI smoke generated runtime default evidence from a temporary manifest and artifact, parsed it with
   `python -m json.tool`, and validated it again with `validate_python_runtime_default_gate.py --evidence`.
+- [Unsigned Windows smoke run 27729840045](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27729840045)
+  passed on head `187d4f1f7fba7099893d6c4663e2fd0dab8540b2`, revalidating Windows build, Python runtime default gate,
+  runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
+  upload, and Python runtime artifact validation after structured runtime default evidence began carrying release tag,
+  release URL, release notes URL, commit SHA, and platform signature type.
+- [Unix smoke run 27729840028](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27729840028) passed on head
+  `187d4f1f7fba7099893d6c4663e2fd0dab8540b2`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  structured runtime default evidence began carrying signed release identity fields.
 - [Unsigned Windows smoke run 27728649935](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27728649935)
   failed on head `d796a0c59815a39ece7457e2c273a2d4cfdc2e03` after the Python runtime default gate and lifecycle
   smokes passed; the later unsigned artifact validation step exited with Windows process code `-1073741502` without a
