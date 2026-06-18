@@ -518,6 +518,13 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
 - [Unix smoke run 27726801272](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27726801272) failed on head
   `13ed8d349ac62486f4d71a9c9673646152e108906` when the Linux Tauri dependency install was still making progress
   through package setup but hit the 20-minute step timeout, proving the timeout still needed more hosted-runner margin.
+- [Unsigned Windows smoke run 27728046087](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27728046087)
+  passed on head `a088e63471edce7eed7f0b4afe0e10a1117c4357`, revalidating fallback burn-down validation and Windows
+  packaged runtime lifecycle smoke after Linux Tauri dependency installation was widened to a 30-minute step timeout.
+- [Unix smoke run 27728046068](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27728046068) passed on head
+  `a088e63471edce7eed7f0b4afe0e10a1117c4357`, revalidating Linux and macOS packaged runtime lifecycle smoke after the
+  Linux dependency install timeout was widened to 30 minutes; the Linux job completed successfully instead of timing out
+  during apt package setup.
 - Local workflow tests now require both Unix release entry points to support signed macOS and Linux release artifacts:
   `unsigned-smoke-only` keeps fork smoke unsigned, signed macOS jobs require Apple signing/notarization configuration and
   notarization verification, and signed Linux jobs use Sigstore and upload `*.sigstore.json` bundles.
