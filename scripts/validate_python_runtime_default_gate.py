@@ -253,6 +253,13 @@ def validate_release_evidence_files(
         values = {installers[platform].get(field) for platform in required}
         if len(values) != 1:
             raise RuntimeError("runtime default evidence must share one signed release and commit")
+    versions = {
+        require_mapping(payload.get("pythonRuntime"), "pythonRuntime").get("version")
+        for payload in payloads
+        if require_mapping(payload.get("signedInstaller"), "signedInstaller").get("platform") in required
+    }
+    if len(versions) != 1:
+        raise RuntimeError("runtime default evidence must share the same Python runtime version")
 
 
 def build_release_evidence(

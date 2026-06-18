@@ -52,7 +52,7 @@ python scripts/validate_python_runtime_default_gate.py --evidence <signed-runtim
 ```
 
 For a release that promotes bundled runtimes across all packaged desktop platforms, validate all generated evidence
-together so Windows, macOS, and Linux prove the same signed release and commit:
+together so Windows, macOS, and Linux prove the same signed release, commit, and Python runtime version:
 
 ```powershell
 python scripts/validate_python_runtime_default_gate.py `

@@ -715,6 +715,65 @@ class PreparePythonRuntimeTests(unittest.TestCase):
                     required_platforms=("windows", "windows"),
                 )
 
+    def test_python_runtime_default_gate_rejects_mixed_runtime_versions(self):
+        module = _load_default_gate_module()
+
+        def evidence_for(platform, signature, version):
+            return {
+                "pythonRuntime": {
+                    "version": version,
+                    "sourceUrl": f"https://example.invalid/python-runtime-{platform}-x64.zip",
+                    "archiveSha256": "a" * 64,
+                    "securityUpdatePolicy": (
+                        "Runtime archive must be rebuilt when the bundled Python patch release "
+                        "receives a security update."
+                    ),
+                    "manifest": {
+                        "platform": platform,
+                        "arch": "x64",
+                        "pythonTag": "cp311",
+                        "files": [
+                            {
+                                "name": f"python-runtime-{platform}-x64.zip",
+                                "url": f"https://example.invalid/python-runtime-{platform}-x64.zip",
+                                "sizeBytes": 100,
+                                "sha256": "a" * 64,
+                            }
+                        ],
+                    },
+                },
+                "signedInstaller": {
+                    "platform": platform,
+                    "release": "v1.0.0",
+                    "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v1.0.0",
+                    "releaseNotes": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v1.0.0",
+                    "commit": "a" * 40,
+                    "signature": signature,
+                    "withRuntimeBytes": 400,
+                    "withoutRuntimeBytes": 250,
+                    "sizeDeltaBytes": 150,
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            windows_evidence = root / "windows.json"
+            linux_evidence = root / "linux.json"
+            windows_evidence.write_text(
+                json.dumps(evidence_for("windows", "authenticode", "3.11.9")),
+                encoding="utf-8",
+            )
+            linux_evidence.write_text(
+                json.dumps(evidence_for("linux", "sigstore", "3.11.10")),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "same Python runtime version"):
+                module.validate_release_evidence_files(
+                    [windows_evidence, linux_evidence],
+                    required_platforms=("windows", "linux"),
+                )
+
     def test_python_runtime_default_gate_cli_rejects_required_platforms_without_evidence(self):
         repo_root = Path(__file__).resolve().parents[2]
         result = subprocess.run(
