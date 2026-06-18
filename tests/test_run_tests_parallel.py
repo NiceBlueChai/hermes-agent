@@ -236,7 +236,7 @@ def test_exit4_no_retry_when_file_genuinely_missing(tmp_path, monkeypatch):
     """Exit 4 on a file that does NOT exist must fail fast without retrying.
 
     Guards the narrowing: we only retry while the file is present on disk, so a
-    real typo / deleted file surfaces immediately instead of looping.
+    real typo / deleted untracked file surfaces immediately instead of looping.
     """
     rtp = _load_runner_module()
     missing = tmp_path / "test_does_not_exist.py"  # never created
@@ -253,6 +253,33 @@ def test_exit4_no_retry_when_file_genuinely_missing(tmp_path, monkeypatch):
     file, rc, output, summary, _wall = rtp._run_one_file(missing, [], tmp_path, 30.0)
     assert rc == 4, f"genuinely-missing file should keep rc=4, got {rc}"
     assert calls["n"] == 1, f"missing file must NOT be retried, got {calls['n']} calls"
+
+
+def test_exit4_restores_tracked_file_deleted_by_parallel_test(tmp_path, monkeypatch):
+    """Exit 4 recovers when a tracked test file vanishes after discovery."""
+    rtp = _load_runner_module()
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
+    tracked = tmp_path / "test_deleted_after_discovery.py"
+    tracked.write_text("def test_ok():\n    assert True\n")
+    subprocess.run(["git", "add", tracked.name], cwd=tmp_path, check=True, capture_output=True, text=True)
+    tracked.unlink()
+
+    calls = {"n": 0}
+
+    def fake_spawn(cmd, repo_root, file_timeout, *, timeout_note="per-file timeout"):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return 4, "ERROR: file or directory not found"
+        return 0, "1 passed"
+
+    monkeypatch.setattr(rtp, "_spawn_pytest_once", fake_spawn)
+    monkeypatch.setattr(rtp, "_EXIT4_RETRY_BACKOFF_SECONDS", 0.0)
+
+    file, rc, output, summary, _wall = rtp._run_one_file(tracked, [], tmp_path, 30.0)
+
+    assert rc == 0, output
+    assert tracked.exists()
+    assert calls["n"] == 2
 
 
 def test_exit4_retry_gives_up_after_max_attempts(tmp_path, monkeypatch):

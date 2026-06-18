@@ -195,12 +195,21 @@ fn build_command(script_path: &Path, args: &[String]) -> Command {
 fn build_command(script_path: &Path, args: &[String]) -> Command {
     // install.sh expects bash. /bin/bash is fine on macOS (Apple still
     // ships an old 3.2 bash; install.sh is written to that baseline).
-    let mut cmd = Command::new("bash");
+    let mut cmd = Command::new(unix_bash_exe());
     cmd.arg(script_path);
     for a in args {
         cmd.arg(a);
     }
     cmd
+}
+
+#[cfg(not(target_os = "windows"))]
+fn unix_bash_exe() -> &'static str {
+    if Path::new("/bin/bash").is_file() {
+        "/bin/bash"
+    } else {
+        "bash"
+    }
 }
 
 /// Canonical PowerShell 5.1 location under a Windows root (`%SystemRoot%`).
@@ -254,7 +263,7 @@ fn interpreter_label() -> String {
 
 #[cfg(not(target_os = "windows"))]
 fn interpreter_label() -> String {
-    "bash".to_string()
+    unix_bash_exe().to_string()
 }
 
 /// Parses the LAST line of stdout that looks like a JSON object matching
@@ -356,6 +365,14 @@ info line
             normalized.ends_with("System32/WindowsPowerShell/v1.0/powershell.exe"),
             "unexpected powershell path: {normalized}"
         );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn unix_bash_exe_prefers_absolute_system_bash() {
+        if Path::new("/bin/bash").is_file() {
+            assert_eq!(unix_bash_exe(), "/bin/bash");
+        }
     }
 
     #[tokio::test]

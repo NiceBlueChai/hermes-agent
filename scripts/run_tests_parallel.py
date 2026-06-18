@@ -338,6 +338,37 @@ def _file_present(file: Path, *, attempts: int = 3, delay: float = 0.2) -> bool:
     return False
 
 
+def _restore_tracked_file_if_missing(file: Path, repo_root: Path) -> bool:
+    """Restore a tracked test file from the git index if another test deleted it.
+
+    The runner shares one checkout across per-file subprocesses. A destructive
+    test can remove a not-yet-run test file after discovery; when that happens
+    pytest exits 4 even though the original file was valid. Restoring only from
+    the index keeps true typos/deleted untracked files failing.
+    """
+    if file.exists():
+        return True
+    try:
+        rel = file.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return False
+
+    blob = subprocess.run(
+        ["git", "show", f":{rel}"],
+        cwd=repo_root,
+        capture_output=True,
+        timeout=10,
+    )
+    if blob.returncode != 0:
+        return False
+    try:
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_bytes(blob.stdout)
+    except OSError:
+        return False
+    return file.exists()
+
+
 def _run_one_file(
     file: Path,
     pytest_args: List[str],
@@ -373,6 +404,12 @@ def _run_one_file(
     cmd = [sys.executable, "-m", "pytest", str(file), *pytest_args]
     subproc_start = time.monotonic()
     rc, output = _spawn_pytest_once(cmd, repo_root, file_timeout)
+    if rc == 4 and not _file_present(file) and _restore_tracked_file_if_missing(file, repo_root):
+        time.sleep(_EXIT4_RETRY_BACKOFF_SECONDS)
+        rc, output = _spawn_pytest_once(
+            cmd, repo_root, file_timeout,
+            timeout_note="per-file timeout after git-index restore",
+        )
 
     # pytest exit 4 = "file or directory not found" at exec time. On loaded
     # shared CI runners we have seen the planner enumerate a file (its tests
