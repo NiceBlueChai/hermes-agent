@@ -221,6 +221,15 @@ def validate_release_evidence_files(
     if not required_platforms:
         return
 
+    seen_required = set()
+    duplicate_required = set()
+    for platform in required_platforms:
+        if platform in seen_required:
+            duplicate_required.add(platform)
+        seen_required.add(platform)
+    if duplicate_required:
+        details = ", ".join(sorted(duplicate_required))
+        raise RuntimeError(f"duplicate required platform(s): {details}")
     required = set(required_platforms)
     unknown_platforms = required - set(PLATFORM_SIGNATURES)
     if not required or unknown_platforms:

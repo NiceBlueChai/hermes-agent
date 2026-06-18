@@ -667,6 +667,54 @@ class PreparePythonRuntimeTests(unittest.TestCase):
                 required_platforms=("windows", "macos", "linux"),
             )
 
+    def test_python_runtime_default_gate_rejects_duplicate_required_platforms(self):
+        module = _load_default_gate_module()
+        evidence = {
+            "pythonRuntime": {
+                "version": "3.11.9",
+                "sourceUrl": "https://example.invalid/python-runtime-windows-x64.zip",
+                "archiveSha256": "a" * 64,
+                "securityUpdatePolicy": (
+                    "Runtime archive must be rebuilt when the bundled Python patch release "
+                    "receives a security update."
+                ),
+                "manifest": {
+                    "platform": "windows",
+                    "arch": "x64",
+                    "pythonTag": "cp311",
+                    "files": [
+                        {
+                            "name": "python-runtime-windows-x64.zip",
+                            "url": "https://example.invalid/python-runtime-windows-x64.zip",
+                            "sizeBytes": 100,
+                            "sha256": "a" * 64,
+                        }
+                    ],
+                },
+            },
+            "signedInstaller": {
+                "platform": "windows",
+                "release": "v1.0.0",
+                "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v1.0.0",
+                "releaseNotes": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v1.0.0",
+                "commit": "a" * 40,
+                "signature": "authenticode",
+                "withRuntimeBytes": 400,
+                "withoutRuntimeBytes": 250,
+                "sizeDeltaBytes": 150,
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_path = Path(tmp) / "windows.json"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "duplicate required platform"):
+                module.validate_release_evidence_files(
+                    [evidence_path],
+                    required_platforms=("windows", "windows"),
+                )
+
     def test_python_runtime_default_gate_cli_rejects_required_platforms_without_evidence(self):
         repo_root = Path(__file__).resolve().parents[2]
         result = subprocess.run(
