@@ -14,6 +14,8 @@ Use this only for a real signed release. Unsigned smoke runs keep proving packag
 - `python-runtime-version`: the bundled Python patch version.
 - `python-runtime-archive`, `linux-python-runtime-archive`, and `macos-python-runtime-archive`:
   `NAME=HTTPS_URL=SHA256` audited runtime archives.
+- `source-archive`, `linux-source-archive`, and `macos-source-archive`: `NAME=HTTPS_URL=SHA256` audited Hermes
+  source archives.
 - `python-runtime-without-bytes`, `linux-python-runtime-without-bytes`, and
   `macos-python-runtime-without-bytes`: signed installer sizes from matching no-runtime baseline builds.
 - Signing configuration: Azure Artifact Signing for Windows, Apple signing/notarization for macOS, and Sigstore for
@@ -39,6 +41,7 @@ gh workflow run build-windows-installer.yml `
   -f release-notes-url=https://github.com/<owner>/<repo>/releases/tag/<release-tag> `
   -f python-runtime-version=<python-patch-version> `
   -f python-runtime-archive=<name=https-url=sha256> `
+  -f source-archive=<name=https-url=sha256> `
   -f python-runtime-without-bytes=<signed-no-runtime-size>
 ```
 
@@ -54,6 +57,7 @@ gh workflow run build-windows-installer.yml `
   -f python-runtime-version=<python-patch-version> `
   -f linux-python-runtime-archive=<name=https-url=sha256> `
   -f macos-python-runtime-archive=<name=https-url=sha256> `
+  -f source-archive=<name=https-url=sha256> `
   -f linux-python-runtime-without-bytes=<signed-linux-no-runtime-size> `
   -f macos-python-runtime-without-bytes=<signed-macos-no-runtime-size>
 ```
@@ -65,8 +69,8 @@ Do not pass `unsigned-smoke-only=true` for signed evidence.
 Download these artifacts from the completed signed runs:
 
 - `*-python-runtime-default-evidence` JSON files for Windows, macOS, and Linux.
-- `*-fallback-evidence` command and JSON artifacts for Windows, macOS, and Linux. These cover
-  `desktop-bootstrap-script-fallback`.
+- `*-fallback-evidence` command and JSON artifacts for Windows, macOS, and Linux. These cover every retained entry in
+  `docs/release/fallback-burn-down.json`.
 - Signed installer artifacts and signature/notarization outputs.
 
 Validate the runtime default evidence together:
@@ -84,18 +88,15 @@ artifacts directly:
 
 ```powershell
 python scripts/validate_fallback_burn_down.py `
-  --add-evidence-json <fallback-evidence-windows.json> `
-  --add-evidence-json <fallback-evidence-macos.json> `
-  --add-evidence-json <fallback-evidence-linux.json>
-```
-
-For the installer source archive and Python runtime download fallbacks, generate the missing evidence shape and record
-the signed release fields only after the matching artifact smoke, direct-install coverage, cleanup, and release-note
-checks have been verified:
-
-```powershell
-python scripts/validate_fallback_burn_down.py --print-template installer-source-archive-download-fallback
-python scripts/validate_fallback_burn_down.py --print-template installer-python-runtime-download-fallback
+  --add-evidence-json <fallback-burn-down-windows-desktop-bootstrap-script-fallback.json> `
+  --add-evidence-json <fallback-burn-down-windows-installer-source-archive-download-fallback.json> `
+  --add-evidence-json <fallback-burn-down-windows-installer-python-runtime-download-fallback.json> `
+  --add-evidence-json <fallback-burn-down-macos-desktop-bootstrap-script-fallback.json> `
+  --add-evidence-json <fallback-burn-down-macos-installer-source-archive-download-fallback.json> `
+  --add-evidence-json <fallback-burn-down-macos-installer-python-runtime-download-fallback.json> `
+  --add-evidence-json <fallback-burn-down-linux-desktop-bootstrap-script-fallback.json> `
+  --add-evidence-json <fallback-burn-down-linux-installer-source-archive-download-fallback.json> `
+  --add-evidence-json <fallback-burn-down-linux-installer-python-runtime-download-fallback.json>
 ```
 
 Verify the desktop bootstrap gate before using `canRunFullBootstrap=true`:

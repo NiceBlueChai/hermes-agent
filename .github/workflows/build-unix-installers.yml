@@ -35,11 +35,11 @@ on:
                 required: false
                 type: string
             linux-source-archive:
-                description: Optional Linux source archive, in NAME=HTTPS_URL=SHA256 form.
+                description: Linux source archive required for signed builds, in NAME=HTTPS_URL=SHA256 form.
                 required: false
                 type: string
             macos-source-archive:
-                description: Optional macOS source archive, in NAME=HTTPS_URL=SHA256 form.
+                description: macOS source archive required for signed builds, in NAME=HTTPS_URL=SHA256 form.
                 required: false
                 type: string
             release-tag:
@@ -119,6 +119,8 @@ jobs:
                   HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['macos-python-runtime-archive'] }}
                   HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['linux-python-runtime-without-bytes'] }}
                   HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['macos-python-runtime-without-bytes'] }}
+                  HERMES_LINUX_SOURCE_ARCHIVE: ${{ inputs['linux-source-archive'] }}
+                  HERMES_MACOS_SOURCE_ARCHIVE: ${{ inputs['macos-source-archive'] }}
               run: |
                   set -euo pipefail
                   missing=()
@@ -132,15 +134,20 @@ jobs:
                   fi
                   python_runtime_archive="${HERMES_LINUX_PYTHON_RUNTIME_ARCHIVE}"
                   without_runtime_bytes="${HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES}"
+                  source_archive="${HERMES_LINUX_SOURCE_ARCHIVE}"
                   if [ "${{ matrix.platform }}" = "macos" ]; then
                       python_runtime_archive="${HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE}"
                       without_runtime_bytes="${HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES}"
+                      source_archive="${HERMES_MACOS_SOURCE_ARCHIVE}"
                   fi
                   if [ -z "${python_runtime_archive}" ]; then
                       missing+=(HERMES_${{ matrix.platform }}_PYTHON_RUNTIME_ARCHIVE)
                   fi
                   if [ -z "${without_runtime_bytes}" ]; then
                       missing+=(HERMES_${{ matrix.platform }}_PYTHON_RUNTIME_WITHOUT_BYTES)
+                  fi
+                  if [ -z "${source_archive}" ]; then
+                      missing+=(HERMES_${{ matrix.platform }}_SOURCE_ARCHIVE)
                   fi
                   if [ "${#missing[@]}" -gt 0 ]; then
                       echo "::error::Missing signed release evidence metadata: ${missing[*]}"
@@ -149,6 +156,10 @@ jobs:
                   archive_pattern='^[^=[:space:]]+=https://[^/=[:space:]][^=[:space:]]*=[0-9a-fA-F]{64}$'
                   if ! [[ "${python_runtime_archive}" =~ ${archive_pattern} ]]; then
                       echo "::error::python runtime archive must use NAME=HTTPS_URL=SHA256."
+                      exit 1
+                  fi
+                  if ! [[ "${source_archive}" =~ ${archive_pattern} ]]; then
+                      echo "::error::source archive must use NAME=HTTPS_URL=SHA256."
                       exit 1
                   fi
                   if ! [[ "${HERMES_PYTHON_RUNTIME_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
@@ -690,8 +701,16 @@ jobs:
                   echo "${command[*]}"
                   mkdir -p .release-evidence
                   printf '%s\n' "${command[*]}" > ".release-evidence/fallback-burn-down-${{ matrix.platform }}.sh"
-                  "${command[@]/--add-evidence/--print-evidence-item}" \
-                      > ".release-evidence/fallback-burn-down-${{ matrix.platform }}.json"
+                  for entry in \
+                      desktop-bootstrap-script-fallback \
+                      installer-source-archive-download-fallback \
+                      installer-python-runtime-download-fallback
+                  do
+                      command[3]="${entry}"
+                      printf '%s\n' "${command[*]}" >> ".release-evidence/fallback-burn-down-${{ matrix.platform }}.sh"
+                      "${command[@]/--add-evidence/--print-evidence-item}" \
+                          > ".release-evidence/fallback-burn-down-${{ matrix.platform }}-${entry}.json"
+                  done
 
             - name: Upload signed fallback evidence command
               if: ${{ !inputs['unsigned-smoke-only'] }}
@@ -700,7 +719,7 @@ jobs:
                   name: ${{ matrix.artifact-name }}-fallback-evidence
                   path: |
                       .release-evidence/fallback-burn-down-${{ matrix.platform }}.sh
-                      .release-evidence/fallback-burn-down-${{ matrix.platform }}.json
+                      .release-evidence/fallback-burn-down-${{ matrix.platform }}-*.json
                   if-no-files-found: error
 
             - name: Upload installer artifacts

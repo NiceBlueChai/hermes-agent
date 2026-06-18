@@ -36,7 +36,7 @@ on:
         required: false
         type: string
       source-archive:
-        description: Optional audited Hermes source archive, in NAME=HTTPS_URL=SHA256 form.
+        description: Audited Hermes source archive, required for signed builds, in NAME=HTTPS_URL=SHA256 form.
         required: false
         type: string
       release-tag:
@@ -109,6 +109,7 @@ jobs:
           HERMES_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['python-runtime-archive'] }}
           HERMES_PYTHON_RUNTIME_VERSION: ${{ inputs['python-runtime-version'] }}
           HERMES_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['python-runtime-without-bytes'] }}
+          HERMES_SOURCE_ARCHIVE: ${{ inputs['source-archive'] }}
         run: |
           $required = @{
             HERMES_RELEASE_TAG = $env:HERMES_RELEASE_TAG
@@ -116,6 +117,7 @@ jobs:
             HERMES_PYTHON_RUNTIME_ARCHIVE = $env:HERMES_PYTHON_RUNTIME_ARCHIVE
             HERMES_PYTHON_RUNTIME_VERSION = $env:HERMES_PYTHON_RUNTIME_VERSION
             HERMES_PYTHON_RUNTIME_WITHOUT_BYTES = $env:HERMES_PYTHON_RUNTIME_WITHOUT_BYTES
+            HERMES_SOURCE_ARCHIVE = $env:HERMES_SOURCE_ARCHIVE
           }
           $missing = @(
             $required.GetEnumerator() |
@@ -129,6 +131,10 @@ jobs:
           $archivePattern = '^[^=\s]+=https://[^/=\s][^=\s]*=[0-9a-fA-F]{64}$'
           if ($env:HERMES_PYTHON_RUNTIME_ARCHIVE -notmatch $archivePattern) {
             Write-Error "python-runtime-archive must use NAME=HTTPS_URL=SHA256."
+            exit 1
+          }
+          if ($env:HERMES_SOURCE_ARCHIVE -notmatch $archivePattern) {
+            Write-Error "source-archive must use NAME=HTTPS_URL=SHA256."
             exit 1
           }
           if ($env:HERMES_PYTHON_RUNTIME_VERSION -notmatch '^\d+\.\d+\.\d+') {
@@ -502,16 +508,22 @@ jobs:
           $evidenceDir = ".release-evidence"
           New-Item -ItemType Directory -Force -Path $evidenceDir | Out-Null
           Set-Content -Path "$evidenceDir/fallback-burn-down-windows.ps1" -Value $command -Encoding utf8NoBOM
-          python scripts/validate_fallback_burn_down.py `
-            --print-evidence-item desktop-bootstrap-script-fallback `
-            --platform windows `
-            --release "$env:HERMES_RELEASE_TAG" `
-            --url "$releaseUrl" `
-            --release-notes "$env:HERMES_RELEASE_NOTES_URL" `
-            --commit "${{ github.sha }}" `
-            --all-required-checks `
-            --signature authenticode `
-            > "$evidenceDir/fallback-burn-down-windows.json"
+          foreach ($entry in @(
+            "desktop-bootstrap-script-fallback",
+            "installer-source-archive-download-fallback",
+            "installer-python-runtime-download-fallback"
+          )) {
+            python scripts/validate_fallback_burn_down.py `
+              --print-evidence-item $entry `
+              --platform windows `
+              --release "$env:HERMES_RELEASE_TAG" `
+              --url "$releaseUrl" `
+              --release-notes "$env:HERMES_RELEASE_NOTES_URL" `
+              --commit "${{ github.sha }}" `
+              --all-required-checks `
+              --signature authenticode `
+              > "$evidenceDir/fallback-burn-down-windows-$entry.json"
+          }
 
       - name: Upload signed fallback evidence command
         if: ${{ !inputs['unsigned-smoke-only'] }}
@@ -520,7 +532,7 @@ jobs:
           name: Hermes-Setup-fallback-evidence
           path: |
             .release-evidence/fallback-burn-down-windows.ps1
-            .release-evidence/fallback-burn-down-windows.json
+            .release-evidence/fallback-burn-down-windows-*.json
           if-no-files-found: error
 
       - name: Validate Hermes source archive artifacts
@@ -625,6 +637,7 @@ jobs:
           HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['macos-python-runtime-archive'] }}
           HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['linux-python-runtime-without-bytes'] }}
           HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['macos-python-runtime-without-bytes'] }}
+          HERMES_SOURCE_ARCHIVE: ${{ inputs['source-archive'] }}
         run: |
           set -euo pipefail
           missing=()
@@ -635,6 +648,9 @@ jobs:
           done
           if [ -z "${HERMES_PYTHON_RUNTIME_VERSION}" ]; then
             missing+=(HERMES_PYTHON_RUNTIME_VERSION)
+          fi
+          if [ -z "${HERMES_SOURCE_ARCHIVE}" ]; then
+            missing+=(HERMES_SOURCE_ARCHIVE)
           fi
           python_runtime_archive="${HERMES_LINUX_PYTHON_RUNTIME_ARCHIVE}"
           without_runtime_bytes="${HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES}"
@@ -655,6 +671,10 @@ jobs:
           archive_pattern='^[^=[:space:]]+=https://[^/=[:space:]][^=[:space:]]*=[0-9a-fA-F]{64}$'
           if ! [[ "${python_runtime_archive}" =~ ${archive_pattern} ]]; then
             echo "::error::python runtime archive must use NAME=HTTPS_URL=SHA256."
+            exit 1
+          fi
+          if ! [[ "${HERMES_SOURCE_ARCHIVE}" =~ ${archive_pattern} ]]; then
+            echo "::error::source archive must use NAME=HTTPS_URL=SHA256."
             exit 1
           fi
           if ! [[ "${HERMES_PYTHON_RUNTIME_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
@@ -859,6 +879,24 @@ jobs:
 
       - name: Validate Python runtime default gate
         run: python scripts/validate_python_runtime_default_gate.py
+
+      - name: Bundle Hermes source archive
+        env:
+          HERMES_SOURCE_ARCHIVE: ${{ inputs['source-archive'] }}
+        run: >
+          python scripts/prepare_source_archive.py
+          --archive-ref "${{ github.sha }}"
+          --commit "${{ github.sha }}"
+          --branch "${{ github.ref_name }}"
+          --force
+          --audited-archive "$HERMES_SOURCE_ARCHIVE"
+
+      - name: Validate Hermes source archive
+        run: >
+          python scripts/prepare_source_archive.py
+          --validate-only
+          --archive-ref "${{ github.sha }}"
+          --max-archive-bytes 268435456
 
       - name: Build installer
         env:
@@ -1106,8 +1144,16 @@ jobs:
           echo "${command[*]}"
           mkdir -p .release-evidence
           printf '%s\n' "${command[*]}" > ".release-evidence/fallback-burn-down-${{ matrix.platform }}.sh"
-          "${command[@]/--add-evidence/--print-evidence-item}" \
-            > ".release-evidence/fallback-burn-down-${{ matrix.platform }}.json"
+          for entry in \
+            desktop-bootstrap-script-fallback \
+            installer-source-archive-download-fallback \
+            installer-python-runtime-download-fallback
+          do
+            command[3]="${entry}"
+            printf '%s\n' "${command[*]}" >> ".release-evidence/fallback-burn-down-${{ matrix.platform }}.sh"
+            "${command[@]/--add-evidence/--print-evidence-item}" \
+              > ".release-evidence/fallback-burn-down-${{ matrix.platform }}-${entry}.json"
+          done
 
       - name: Upload signed fallback evidence command
         if: ${{ !inputs['unsigned-smoke-only'] }}
@@ -1116,7 +1162,7 @@ jobs:
           name: ${{ matrix.artifact-name }}-fallback-evidence
           path: |
             .release-evidence/fallback-burn-down-${{ matrix.platform }}.sh
-            .release-evidence/fallback-burn-down-${{ matrix.platform }}.json
+            .release-evidence/fallback-burn-down-${{ matrix.platform }}-*.json
           if-no-files-found: error
 
       - name: Upload Unix installer artifacts
@@ -1147,6 +1193,13 @@ jobs:
         with:
           name: ${{ matrix.artifact-name }}-python-runtime
           path: apps/bootstrap-installer/src-tauri/python-runtime/*
+          if-no-files-found: error
+
+      - name: Upload Unix source archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ matrix.artifact-name }}-source-archive
+          path: apps/bootstrap-installer/src-tauri/source-archive/*
           if-no-files-found: error
 
       - name: Upload Linux Sigstore bundles
