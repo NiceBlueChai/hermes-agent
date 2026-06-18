@@ -365,6 +365,13 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   inputs before packaging starts, keeping workflow dispatch validation aligned with the archive validators.
 - Local source archive tests now reject audited source archive inputs and generated source archive manifests whose archive
   URL lacks an HTTPS host, aligning the optional source snapshot provenance gate with runtime and bootstrap archives.
+- [Unsigned Windows smoke run 27739136009](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27739136009)
+  passed on head `23d87bcbf269c8a4a654085832928d55924b903c`, revalidating Windows build, Python runtime default gate,
+  runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
+  upload, and Python runtime artifact validation after release tag validation began rejecting backslashes.
+- [Unix smoke run 27739136044](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27739136044) passed on head
+  `23d87bcbf269c8a4a654085832928d55924b903c`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  release tag validation began rejecting backslashes.
 - [Unsigned Windows smoke run 27738121419](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27738121419)
   passed on head `44d6c7b75a97f9d65c4d83c8dec2484d8b6f513c`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
