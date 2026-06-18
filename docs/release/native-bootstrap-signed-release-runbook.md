@@ -20,6 +20,9 @@ Use this only for a real signed release. Unsigned smoke runs keep proving packag
   Linux.
 - Fallback burn-down evidence for `desktop-bootstrap-script-fallback` must include the matching `--signature` value:
   `authenticode`, `developer-id-notarized`, or `sigstore`.
+- Fallback burn-down evidence for `installer-source-archive-download-fallback` and
+  `installer-python-runtime-download-fallback` must be recorded only after the signed artifacts prove the corresponding
+  registry checks in `docs/release/fallback-burn-down.json`.
 
 ## Dispatch Signed Workflows
 
@@ -59,7 +62,8 @@ Do not pass `unsigned-smoke-only=true` for signed evidence.
 Download these artifacts from the completed signed runs:
 
 - `*-python-runtime-default-evidence` JSON files for Windows, macOS, and Linux.
-- `*-fallback-evidence` command and JSON artifacts for Windows, macOS, and Linux.
+- `*-fallback-evidence` command and JSON artifacts for Windows, macOS, and Linux. These cover
+  `desktop-bootstrap-script-fallback`.
 - Signed installer artifacts and signature/notarization outputs.
 
 Validate the runtime default evidence together:
@@ -73,10 +77,23 @@ python scripts/validate_python_runtime_default_gate.py `
 ```
 
 Record the fallback evidence using the generated `fallback-burn-down-*.sh` command files, or use the generated JSON to
-copy the same fields into `docs/release/fallback-burn-down.json`. Then verify:
+copy the same fields into `docs/release/fallback-burn-down.json`.
+
+For the installer source archive and Python runtime download fallbacks, generate the missing evidence shape and record
+the signed release fields only after the matching artifact smoke, direct-install coverage, cleanup, and release-note
+checks have been verified:
+
+```powershell
+python scripts/validate_fallback_burn_down.py --print-template installer-source-archive-download-fallback
+python scripts/validate_fallback_burn_down.py --print-template installer-python-runtime-download-fallback
+```
+
+Then verify every retained fallback entry before removing any script fallback:
 
 ```powershell
 python scripts/validate_fallback_burn_down.py --require-complete desktop-bootstrap-script-fallback
+python scripts/validate_fallback_burn_down.py --require-complete installer-source-archive-download-fallback
+python scripts/validate_fallback_burn_down.py --require-complete installer-python-runtime-download-fallback
 ```
 
 Only after those checks pass may `hermes-manager bootstrap-capabilities` report `canRunFullBootstrap=true` for the
