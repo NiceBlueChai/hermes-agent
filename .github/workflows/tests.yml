@@ -171,9 +171,9 @@ jobs:
         shell: bash
         run: |
           if [[ "${RUNNER_OS}" == "Windows" ]]; then
-              export HERMES_MANAGER_SMOKE_BIN="apps/hermes-manager/target/release/hermes-manager.exe"
+              export HERMES_MANAGER_SMOKE_BIN="target/release/hermes-manager.exe"
           else
-              export HERMES_MANAGER_SMOKE_BIN="apps/hermes-manager/target/release/hermes-manager"
+              export HERMES_MANAGER_SMOKE_BIN="target/release/hermes-manager"
           fi
           cargo test --manifest-path apps/hermes-manager/Cargo.toml \
               cli_smoke_manages_runtime_metadata_repair_and_lite_uninstall

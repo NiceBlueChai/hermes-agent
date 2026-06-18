@@ -360,8 +360,14 @@ info line
 
     #[tokio::test]
     async fn run_script_propagates_extra_env() {
-        let root =
-            std::env::temp_dir().join(format!("hermes-run-script-env-{}", std::process::id()));
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "hermes-run-script-env-{}-{nonce}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&root).unwrap();
         let script = root.join(if cfg!(target_os = "windows") {
             "env-test.ps1"

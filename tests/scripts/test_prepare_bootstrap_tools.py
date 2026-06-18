@@ -1686,6 +1686,14 @@ class PrepareBootstrapToolsTests(unittest.TestCase):
             workflow.index("- name: Build bootstrap release binary"),
         )
 
+    def test_lifecycle_workflow_uses_workspace_manager_release_binary(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        workflow = (repo_root / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+
+        self.assertIn('export HERMES_MANAGER_SMOKE_BIN="target/release/hermes-manager.exe"', workflow)
+        self.assertIn('export HERMES_MANAGER_SMOKE_BIN="target/release/hermes-manager"', workflow)
+        self.assertNotIn("apps/hermes-manager/target/release/hermes-manager", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

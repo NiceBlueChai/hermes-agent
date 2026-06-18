@@ -20,7 +20,7 @@ test('buildCargoArgs builds the release manager cargo arguments', () => {
     'build',
     '--release',
     '--manifest-path',
-    'D:\\repo\\apps\\hermes-manager\\Cargo.toml'
+    path.join('D:\\repo', 'apps', 'hermes-manager', 'Cargo.toml')
   ])
 })
 

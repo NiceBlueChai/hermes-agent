@@ -6685,6 +6685,22 @@ mod tests {
         }
     }
 
+    fn test_bin_tool(name: &str) -> String {
+        if cfg!(target_os = "windows") {
+            format!("{name}.exe")
+        } else {
+            name.to_string()
+        }
+    }
+
+    fn test_cmd_tool(name: &str) -> String {
+        if cfg!(target_os = "windows") {
+            format!("{name}.cmd")
+        } else {
+            name.to_string()
+        }
+    }
+
     fn write_test_zip(path: &Path, entries: &[(&str, &[u8])]) {
         let file = std::fs::File::create(path).unwrap();
         let mut zip = zip::ZipWriter::new(file);
@@ -7244,11 +7260,11 @@ mod tests {
         let tools = root.join("tools");
         std::fs::create_dir_all(hermes_home.join("bin")).unwrap();
         std::fs::create_dir_all(&tools).unwrap();
-        std::fs::write(hermes_home.join("bin").join("uv.exe"), b"uv").unwrap();
-        std::fs::write(tools.join("git.exe"), b"git").unwrap();
-        std::fs::write(tools.join("node.exe"), b"node").unwrap();
-        std::fs::write(tools.join("npm.cmd"), b"npm").unwrap();
-        std::fs::write(tools.join("rg.exe"), b"rg").unwrap();
+        std::fs::write(hermes_home.join("bin").join(test_bin_tool("uv")), b"uv").unwrap();
+        std::fs::write(tools.join(test_bin_tool("git")), b"git").unwrap();
+        std::fs::write(tools.join(test_bin_tool("node")), b"node").unwrap();
+        std::fs::write(tools.join(test_cmd_tool("npm")), b"npm").unwrap();
+        std::fs::write(tools.join(test_bin_tool("rg")), b"rg").unwrap();
 
         let uv = stage_info("uv", "Installing uv package manager", "prereqs", false);
         let git = stage_info("git", "Installing Git", "prereqs", false);
@@ -7296,7 +7312,7 @@ mod tests {
             ".EXE"
         )
         .is_none());
-        std::fs::write(tools.join("ffmpeg.exe"), b"ffmpeg").unwrap();
+        std::fs::write(tools.join(test_bin_tool("ffmpeg")), b"ffmpeg").unwrap();
         assert!(satisfied_tool_stage_skip_result(
             &system_packages,
             &hermes_home,
@@ -7327,7 +7343,7 @@ mod tests {
         assert_eq!(skipped.ok, true);
         assert_eq!(skipped.skipped, true);
         assert_eq!(skipped.reason.as_deref(), Some("npm not available"));
-        std::fs::write(tools.join("npm.cmd"), b"npm").unwrap();
+        std::fs::write(tools.join(test_cmd_tool("npm")), b"npm").unwrap();
         assert!(node_deps_skip_result(&node_deps, &hermes_home, &tools, ".EXE;.CMD").is_none());
 
         let _ = std::fs::remove_dir_all(&root);
@@ -9790,8 +9806,8 @@ mod tests {
         let path_tools = root.join("tools");
         std::fs::create_dir_all(hermes_home.join("bin")).unwrap();
         std::fs::create_dir_all(&path_tools).unwrap();
-        std::fs::write(hermes_home.join("bin").join("uv.exe"), b"managed uv").unwrap();
-        std::fs::write(path_tools.join("uv.exe"), b"path uv").unwrap();
+        std::fs::write(hermes_home.join("bin").join(test_bin_tool("uv")), b"managed uv").unwrap();
+        std::fs::write(path_tools.join(test_bin_tool("uv")), b"path uv").unwrap();
 
         let plan = python_runtime_stage_plan_for_layout(
             &hermes_home,
@@ -9802,7 +9818,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(plan.uv, hermes_home.join("bin").join("uv.exe"));
+        assert_eq!(plan.uv, hermes_home.join("bin").join(test_bin_tool("uv")));
         assert_eq!(plan.uv_cache_dir, hermes_home.join("uv-cache"));
         assert_eq!(plan.python_install_dir, hermes_home.join("python"));
         assert_eq!(plan.python_bin_dir, hermes_home.join("bin"));
@@ -9824,8 +9840,8 @@ mod tests {
         std::fs::create_dir_all(hermes_home.join("bin")).unwrap();
         std::fs::create_dir_all(&path_tools).unwrap();
         std::fs::create_dir_all(&runtime_dir).unwrap();
-        std::fs::write(hermes_home.join("bin").join("uv.exe"), b"managed uv").unwrap();
-        std::fs::write(path_tools.join("uv.exe"), b"path uv").unwrap();
+        std::fs::write(hermes_home.join("bin").join(test_bin_tool("uv")), b"managed uv").unwrap();
+        std::fs::write(path_tools.join(test_bin_tool("uv")), b"path uv").unwrap();
         std::fs::write(&archive, b"runtime archive").unwrap();
         std::fs::write(
             runtime_dir.join("python-runtime-manifest.json"),
@@ -9881,7 +9897,7 @@ mod tests {
         std::fs::create_dir_all(hermes_home.join("bin")).unwrap();
         std::fs::create_dir_all(&path_tools).unwrap();
         std::fs::create_dir_all(&runtime_dir).unwrap();
-        std::fs::write(hermes_home.join("bin").join("uv.exe"), b"managed uv").unwrap();
+        std::fs::write(hermes_home.join("bin").join(test_bin_tool("uv")), b"managed uv").unwrap();
         std::fs::write(&archive, b"runtime archive").unwrap();
         std::fs::write(
             runtime_dir.join("python-runtime-manifest.json"),
@@ -10135,7 +10151,7 @@ mod tests {
         let install_root = hermes_home.join("hermes-agent");
         std::fs::create_dir_all(hermes_home.join("bin")).unwrap();
         std::fs::create_dir_all(&install_root).unwrap();
-        std::fs::write(hermes_home.join("bin").join("uv.exe"), b"managed uv").unwrap();
+        std::fs::write(hermes_home.join("bin").join(test_bin_tool("uv")), b"managed uv").unwrap();
 
         let plan = python_venv_stage_plan(&install_root, &hermes_home, "", ".EXE").unwrap();
 
@@ -10572,13 +10588,13 @@ mod tests {
         std::fs::create_dir_all(hermes_home.join("bin")).unwrap();
         std::fs::create_dir_all(&install_root).unwrap();
         std::fs::create_dir_all(&path_tools).unwrap();
-        std::fs::write(hermes_home.join("bin").join("uv.exe"), b"managed uv").unwrap();
-        std::fs::write(path_tools.join("uv.exe"), b"path uv").unwrap();
+        std::fs::write(hermes_home.join("bin").join(test_bin_tool("uv")), b"managed uv").unwrap();
+        std::fs::write(path_tools.join(test_bin_tool("uv")), b"path uv").unwrap();
 
         let plan = python_venv_stage_plan(&install_root, &hermes_home, &path_tools, ".EXE")
             .unwrap();
 
-        assert_eq!(plan.uv, hermes_home.join("bin").join("uv.exe"));
+        assert_eq!(plan.uv, hermes_home.join("bin").join(test_bin_tool("uv")));
         assert_eq!(plan.venv, install_root.join("venv"));
         assert_eq!(plan.cwd, install_root);
 
@@ -10594,7 +10610,7 @@ mod tests {
         std::fs::create_dir_all(hermes_home.join("bin")).unwrap();
         std::fs::create_dir_all(&install_root).unwrap();
         std::fs::create_dir_all(&path_tools).unwrap();
-        std::fs::write(hermes_home.join("bin").join("uv.exe"), b"managed uv").unwrap();
+        std::fs::write(hermes_home.join("bin").join(test_bin_tool("uv")), b"managed uv").unwrap();
 
         let missing_lock =
             python_dependencies_stage_plan(&install_root, &hermes_home, &path_tools, ".EXE")
@@ -10606,7 +10622,7 @@ mod tests {
             python_dependencies_stage_plan(&install_root, &hermes_home, &path_tools, ".EXE")
                 .unwrap();
 
-        assert_eq!(plan.uv, hermes_home.join("bin").join("uv.exe"));
+        assert_eq!(plan.uv, hermes_home.join("bin").join(test_bin_tool("uv")));
         assert_eq!(plan.cwd, install_root);
         assert_eq!(plan.venv, plan.cwd.join("venv"));
         assert_eq!(plan.python, venv_python_path(&plan.venv));

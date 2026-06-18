@@ -129,7 +129,10 @@ pub fn uninstall_lite(hermes_home: &Path) -> Result<Vec<String>> {
     uninstall_lite_with_extra_roots(hermes_home, &extra_roots)
 }
 
-fn uninstall_lite_with_extra_roots(hermes_home: &Path, extra_roots: &[PathBuf]) -> Result<Vec<String>> {
+fn uninstall_lite_with_extra_roots(
+    hermes_home: &Path,
+    extra_roots: &[PathBuf],
+) -> Result<Vec<String>> {
     let manifest_path = paths::installed_manifest_path(hermes_home);
     let manifest = read_installed_manifest_or_default(hermes_home, &manifest_path)?;
     validate_manifest_home(hermes_home, &manifest)?;
@@ -165,7 +168,10 @@ pub fn uninstall_lite_plan(hermes_home: &Path) -> Result<Vec<String>> {
     uninstall_lite_plan_with_extra_roots(hermes_home, &extra_roots)
 }
 
-fn uninstall_lite_plan_with_extra_roots(hermes_home: &Path, extra_roots: &[PathBuf]) -> Result<Vec<String>> {
+fn uninstall_lite_plan_with_extra_roots(
+    hermes_home: &Path,
+    extra_roots: &[PathBuf],
+) -> Result<Vec<String>> {
     let manifest_path = paths::installed_manifest_path(hermes_home);
     let manifest = read_installed_manifest_or_default(hermes_home, &manifest_path)?;
     validate_manifest_home(hermes_home, &manifest)?;
@@ -409,9 +415,9 @@ fn ensure_lite_uninstall_entry_safe(
         .iter()
         .find(|root| crate::ownership::is_inside_root(root, candidate))
     {
-        let parent = root.parent().ok_or_else(|| {
-            ManagerError::UnsafePath(candidate.to_path_buf())
-        })?;
+        let parent = root
+            .parent()
+            .ok_or_else(|| ManagerError::UnsafePath(candidate.to_path_buf()))?;
         return ensure_safe_to_delete(parent, candidate);
     }
     ensure_safe_to_delete(hermes_home, candidate)
@@ -1334,11 +1340,9 @@ mod tests {
             .write_atomic(&paths::installed_manifest_path(&hermes_home))
             .expect("manifest should be written");
 
-        let removed = super::uninstall_lite_with_extra_roots(
-            &hermes_home,
-            &[external_agent_root.clone()],
-        )
-        .expect("external agent root should be removed");
+        let removed =
+            super::uninstall_lite_with_extra_roots(&hermes_home, &[external_agent_root.clone()])
+                .expect("external agent root should be removed");
 
         assert_eq!(removed, vec![external_agent_root.display().to_string()]);
         assert!(!external_agent_root.exists());
