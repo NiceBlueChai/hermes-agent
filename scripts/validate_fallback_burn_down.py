@@ -74,6 +74,56 @@ def validate_registry(
     return len(entries)
 
 
+def release_status(registry_path: Path, repo_root: Path) -> dict[str, Any]:
+    """Return machine-readable completion status for every fallback entry."""
+
+    payload = load_registry(registry_path)
+    if payload.get("schemaVersion") != 1:
+        raise RuntimeError("schemaVersion must be 1")
+
+    entries = payload.get("entries")
+    if not isinstance(entries, list) or not entries:
+        raise RuntimeError("entries must be a non-empty list")
+
+    seen_ids: set[str] = set()
+    status_entries: list[dict[str, Any]] = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise RuntimeError(f"entry {index} must be an object")
+        required = validate_entry(entry, index, repo_root, seen_ids)
+        entry_id = entry["id"]
+        collected = collected_evidence_checks(entry, required)
+        complete_keys = {
+            platform: complete_evidence_release_keys(entry, platform, checks)
+            for platform, checks in required.items()
+        }
+        shared_keys = (
+            set.intersection(*complete_keys.values())
+            if complete_keys and all(complete_keys.values())
+            else set()
+        )
+        platforms = [
+            {
+                "platform": platform,
+                "completeArtifact": bool(complete_keys[platform]),
+                "missingChecks": sorted(checks - collected.get(platform, set())),
+            }
+            for platform, checks in sorted(required.items())
+        ]
+        status_entries.append(
+            {
+                "id": entry_id,
+                "complete": bool(shared_keys),
+                "sharedRelease": bool(shared_keys),
+                "platforms": platforms,
+            }
+        )
+    return {
+        "allComplete": all(entry["complete"] for entry in status_entries),
+        "entries": status_entries,
+    }
+
+
 def evidence_template(registry_path: Path, entry_id: str) -> dict[str, Any]:
     """Return a signed release evidence skeleton for one fallback entry."""
 
@@ -695,6 +745,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Print a JSON skeleton for missing signed evidence on one fallback entry.",
     )
     parser.add_argument(
+        "--print-status",
+        action="store_true",
+        help="Print JSON completion status for every fallback entry.",
+    )
+    parser.add_argument(
         "--add-evidence",
         metavar="ENTRY_ID",
         default=None,
@@ -754,8 +809,17 @@ def main(argv: list[str] | None = None) -> int:
             or args.require_complete
             or args.require_all_complete
             or args.print_template
+            or args.print_status
         ):
             raise RuntimeError("--add-evidence-json cannot be combined with other actions")
+        if args.print_status and (
+            args.add_evidence
+            or args.print_evidence_item
+            or args.require_complete
+            or args.require_all_complete
+            or args.print_template
+        ):
+            raise RuntimeError("--print-status cannot be combined with other actions")
         if args.add_evidence and args.print_evidence_item:
             raise RuntimeError("--add-evidence cannot be combined with --print-evidence-item")
         if args.add_evidence_json:
@@ -812,6 +876,9 @@ def main(argv: list[str] | None = None) -> int:
                 args.all_required_checks,
             )
             print(json.dumps({"entryId": entry_id, "evidence": [new_item]}, indent=4))
+            return 0
+        if args.print_status:
+            print(json.dumps(release_status(args.registry, args.repo_root), indent=4))
             return 0
 
         count = validate_registry(

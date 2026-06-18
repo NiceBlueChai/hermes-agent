@@ -108,6 +108,7 @@ python scripts/validate_fallback_burn_down.py --require-complete desktop-bootstr
 Then verify every retained fallback entry before removing any script fallback:
 
 ```powershell
+python scripts/validate_fallback_burn_down.py --print-status
 python scripts/validate_fallback_burn_down.py --require-all-complete
 ```
 

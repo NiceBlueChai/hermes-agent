@@ -36,9 +36,11 @@ signed release evidence proves parity. Direct source installs through `install.p
 The route is complete when these commands pass on the release branch with real signed evidence:
 
 ```bash
+python scripts/validate_fallback_burn_down.py --print-status
 python scripts/validate_fallback_burn_down.py --require-all-complete
 python -m unittest tests.scripts.test_validate_fallback_burn_down -v
 python -m unittest tests.scripts.test_prepare_bootstrap_tools -v
 ```
 
-The GitHub branch checks must also be green. Until then, the route is still in progress.
+`--print-status` must report `"allComplete": true`. The GitHub branch checks must also be green. Until then, the route
+is still in progress.
