@@ -1858,6 +1858,75 @@ class ValidateFallbackBurnDownTests(unittest.TestCase):
         self.assertIn("added evidence JSON: add-evidence-json", result.stdout)
         self.assertEqual(payload["entries"][0]["evidence"][0]["commit"], "f" * 40)
 
+    def test_add_evidence_json_accepts_multiple_files(self) -> None:
+        """Release operators can import platform evidence artifacts in one command."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "entry.js"
+            source.parent.mkdir(parents=True)
+            marker = "HERMES-FALLBACK-BURN-DOWN: add-many-evidence-json"
+            source.write_text(f"// {marker}\n", encoding="utf-8")
+            registry = root / "fallback.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": [
+                            {
+                                "id": "add-many-evidence-json",
+                                "owner": "desktop",
+                                "file": "src/entry.js",
+                                "marker": marker,
+                                "fallback": "Fallback description.",
+                                "removalGate": "Release evidence gate.",
+                                "requiredEvidence": [
+                                    {"platform": "windows", "checks": ["release-notes"]},
+                                    {"platform": "linux", "checks": ["release-notes"]},
+                                ],
+                                "evidence": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            windows = root / "windows.json"
+            linux = root / "linux.json"
+            for platform, path in (("windows", windows), ("linux", linux)):
+                path.write_text(
+                    json.dumps(
+                        {
+                            "entryId": "add-many-evidence-json",
+                            "evidence": [
+                                {
+                                    "platform": platform,
+                                    "release": "v1.0.0",
+                                    "url": VALID_RELEASE_V1_URL,
+                                    "releaseNotes": VALID_RELEASE_V1_URL,
+                                    "commit": "a" * 40,
+                                    "signed": True,
+                                    "checks": ["release-notes"],
+                                }
+                            ],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            result = run_validator(
+                registry,
+                root,
+                "--add-evidence-json",
+                str(windows),
+                "--add-evidence-json",
+                str(linux),
+            )
+            payload = json.loads(registry.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(len(payload["entries"][0]["evidence"]), 2)
+        self.assertIn("added evidence JSON: add-many-evidence-json", result.stdout)
+
     def test_add_evidence_requires_release_notes_for_all_required_checks(self) -> None:
         """Release operators get an immediate error when release notes would be recorded."""
         with tempfile.TemporaryDirectory() as tmp:

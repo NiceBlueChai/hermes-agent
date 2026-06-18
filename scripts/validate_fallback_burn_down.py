@@ -701,8 +701,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--add-evidence-json",
         metavar="PATH",
         type=Path,
+        action="append",
         default=None,
-        help="Append or merge signed release evidence from a workflow-generated JSON file.",
+        help="Append or merge signed release evidence from a workflow-generated JSON file. Repeat for multiple files.",
     )
     parser.add_argument("--platform", choices=sorted(VALID_PLATFORMS), default=None)
     parser.add_argument("--release", default=None)
@@ -748,8 +749,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.add_evidence and args.print_evidence_item:
             raise RuntimeError("--add-evidence cannot be combined with --print-evidence-item")
         if args.add_evidence_json:
-            entry_id = add_evidence_json(args.registry, args.repo_root, args.add_evidence_json)
-            print(f"added evidence JSON: {entry_id}")
+            for evidence_path in args.add_evidence_json:
+                entry_id = add_evidence_json(args.registry, args.repo_root, evidence_path)
+                print(f"added evidence JSON: {entry_id}")
             return 0
         if args.add_evidence or args.print_evidence_item:
             command_name = "--add-evidence" if args.add_evidence else "--print-evidence-item"

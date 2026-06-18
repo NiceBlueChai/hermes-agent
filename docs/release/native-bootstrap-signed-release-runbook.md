@@ -83,9 +83,10 @@ Record the fallback evidence using the generated `fallback-burn-down-*.sh` comma
 artifacts directly:
 
 ```powershell
-python scripts/validate_fallback_burn_down.py --add-evidence-json <fallback-evidence-windows.json>
-python scripts/validate_fallback_burn_down.py --add-evidence-json <fallback-evidence-macos.json>
-python scripts/validate_fallback_burn_down.py --add-evidence-json <fallback-evidence-linux.json>
+python scripts/validate_fallback_burn_down.py `
+  --add-evidence-json <fallback-evidence-windows.json> `
+  --add-evidence-json <fallback-evidence-macos.json> `
+  --add-evidence-json <fallback-evidence-linux.json>
 ```
 
 For the installer source archive and Python runtime download fallbacks, generate the missing evidence shape and record
