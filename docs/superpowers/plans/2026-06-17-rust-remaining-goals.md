@@ -777,6 +777,14 @@ runbook is recorded in `docs/release/native-bootstrap-signed-release-runbook.md`
   entries, not only `desktop-bootstrap-script-fallback`, before any script fallback is removed.
 - Local fallback burn-down validator tests now reject optional signature fields that do not match the evidence platform,
   so installer fallback evidence cannot claim the wrong signed-artifact proof type.
+- [Unsigned Windows smoke run 27742360725](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27742360725)
+  passed on head `07100fcb89b5820bd65ea1a85a674adfe7148bb8`, revalidating Windows build, Python runtime default gate,
+  runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
+  upload, source archive validation, and Python runtime artifact validation after fallback evidence signature type
+  validation was tightened.
+- [Unix smoke run 27742360791](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27742360791) passed on head
+  `07100fcb89b5820bd65ea1a85a674adfe7148bb8`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  fallback evidence signature type validation was tightened.
 - [Unsigned Windows smoke run 27741586603](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27741586603)
   passed on head `09ee22560ee052e478903df7ea26f88232f65517`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
