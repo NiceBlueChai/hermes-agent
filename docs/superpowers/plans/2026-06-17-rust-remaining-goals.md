@@ -339,6 +339,13 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
 - Local Python runtime tests now validate repeated `--evidence` files with
   `--require-platforms windows,macos,linux`, so runtime default promotion can prove all packaged desktop platforms came
   from one signed release and commit.
+- [Unsigned Windows smoke run 27731042152](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27731042152)
+  passed on head `75838e76e84a438fe95b5f2cc59f115b683c1136`, revalidating Windows build, Python runtime default gate,
+  runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
+  upload, and Python runtime artifact validation after `--require-platforms` multi-evidence validation was added.
+- [Unix smoke run 27731042223](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27731042223) passed on head
+  `75838e76e84a438fe95b5f2cc59f115b683c1136`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  `--require-platforms` multi-evidence validation was added.
 - [Unsigned Windows smoke run 27730366737](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27730366737)
   passed on head `e6681e73e8f66a6b3d88b8f9177a8040797a1ef7`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
