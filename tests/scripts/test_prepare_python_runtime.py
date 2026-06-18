@@ -111,6 +111,23 @@ class PreparePythonRuntimeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "invalid url"):
                 module.validate_payload(output_dir, "macos", "arm64")
 
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "python-runtime"
+            output_dir.mkdir()
+            archive = output_dir / "python-runtime.zip"
+            archive.write_bytes(b"runtime archive")
+            record = module.prepared_runtime_record(
+                platform="macos",
+                arch="arm64",
+                python_tag="cp311",
+                source_url="https:///python-runtime.zip",
+                path=archive,
+            )
+            module.write_manifest(output_dir, [record])
+
+            with self.assertRaisesRegex(RuntimeError, "invalid url"):
+                module.validate_payload(output_dir, "macos", "arm64")
+
     def test_parse_audited_archive_rejects_bad_shape_or_non_https_url(self):
         module = _load_script_module()
         sha256 = "a" * 64
@@ -126,6 +143,8 @@ class PreparePythonRuntimeTests(unittest.TestCase):
             module.parse_audited_archive_arg("python-runtime.zip=https://example.invalid/runtime.zip")
         with self.assertRaisesRegex(ValueError, "HTTPS"):
             module.parse_audited_archive_arg(f"python-runtime.zip=http://example.invalid/runtime.zip={sha256}")
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            module.parse_audited_archive_arg(f"python-runtime.zip=https:///runtime.zip={sha256}")
         with self.assertRaisesRegex(ValueError, "invalid sha256"):
             module.parse_audited_archive_arg("python-runtime.zip=https://example.invalid/runtime.zip=bad")
 

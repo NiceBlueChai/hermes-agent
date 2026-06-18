@@ -24,7 +24,7 @@ This note keeps the bundled Python runtime as an explicit release decision, not 
 
 ## Security-Update Gate
 
-- The runtime archive source must be HTTPS and checksum-pinned in `python-runtime-manifest.json`.
+- The runtime archive source must be an HTTPS URL with a host and checksum-pinned in `python-runtime-manifest.json`.
 - Signed release workflows must receive the runtime archive as `NAME=HTTPS_URL=SHA256` input. The workflow may build a
   temporary runtime archive only for unsigned smoke validation.
 - The runtime must be rebuilt when the bundled Python patch release receives a security update.

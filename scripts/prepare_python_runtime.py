@@ -19,6 +19,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -66,6 +67,13 @@ def name_is_plain_file(name: str) -> bool:
     return bool(name.strip()) and name == name.strip() and Path(name).name == name and name not in {".", ".."}
 
 
+def is_https_url_with_host(url: str) -> bool:
+    """Return whether a runtime archive URL is HTTPS and has a host."""
+
+    parsed = urlsplit(url)
+    return parsed.scheme == "https" and bool(parsed.netloc)
+
+
 def prepared_runtime_record(
     platform: str,
     arch: str,
@@ -103,7 +111,7 @@ def prepare_runtime_archive(
         raise RuntimeError(f"missing Python runtime archive: {archive_path}")
     if not name_is_plain_file(archive_path.name):
         raise RuntimeError(f"unsafe Python runtime archive name: {archive_path.name}")
-    if not source_url.startswith("https://"):
+    if not is_https_url_with_host(source_url):
         raise RuntimeError(f"python runtime archive has invalid url: {archive_path.name}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -135,7 +143,7 @@ def parse_audited_archive_arg(value: str) -> AuditedRuntimeArchiveSpec:
         raise ValueError("audited runtime archive must use NAME=HTTPS_URL=SHA256")
     if not name_is_plain_file(name):
         raise ValueError(f"audited runtime archive has unsafe name: {name}")
-    if not url.startswith("https://"):
+    if not is_https_url_with_host(url):
         raise ValueError("audited runtime archive URL must be HTTPS")
     if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
         raise ValueError(f"audited runtime archive has invalid sha256: {name}")
@@ -297,7 +305,7 @@ def validate_manifest(
             raise RuntimeError(f"duplicate python runtime file: {name}")
         seen_names.add(name)
         url = file.get("url")
-        if not isinstance(url, str) or not url.startswith("https://"):
+        if not isinstance(url, str) or not is_https_url_with_host(url):
             raise RuntimeError(f"python runtime file has invalid url: {name}")
         expected_size = file.get("sizeBytes")
         if type(expected_size) is not int or expected_size <= 0:

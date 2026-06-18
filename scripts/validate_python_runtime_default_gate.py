@@ -23,7 +23,7 @@ REQUIRED_MARKERS = {
     "signed installer platform": "signedInstaller.platform",
     "signed installer release identity": "signedInstaller.release",
     "security gate heading": "## Security-Update Gate",
-    "checksum-pinned source": "HTTPS and checksum-pinned",
+    "checksum-pinned source": "HTTPS URL with a host and checksum-pinned",
     "security rebuild policy": "must be rebuilt when the bundled Python patch release receives a security update",
     "release notes runtime source": (
         "identify the Python runtime version and the archive source used for the signed build"
