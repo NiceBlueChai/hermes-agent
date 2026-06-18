@@ -313,6 +313,9 @@ runbook is recorded in `docs/release/native-bootstrap-signed-release-runbook.md`
   `aeb9a2ea4e4c6ab7fca1074297c145d33a240d32e`, including `bootstrap-installer-rust`, `rust-manager`,
   `desktop-platforms`, `test (1)` through `test (6)`, three-platform installer lifecycle smoke, Nix, typecheck, ruff,
   docs, and supply-chain checks. This proves the current branch gates are green, but it is not signed release evidence.
+- Draft PR #1 checks passed again on head `f8559584cc2c5f0d78fe7be2a4bc9e7cc390b2d0` after adding a bounded Linux
+  Tauri dependency install step. The branch gates remain green, but the final release gate still requires signed
+  artifacts and complete cross-platform evidence.
 - Local manager and desktop tests prove the new gate remains `false` with the checked-in empty evidence registry and
   becomes `true` only when Windows, macOS, and Linux evidence cover every required check.
 - [Unsigned Windows smoke run 27683435614](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27683435614)
