@@ -787,6 +787,14 @@ runbook is recorded in `docs/release/native-bootstrap-signed-release-runbook.md`
 - [Unix smoke run 27742360791](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27742360791) passed on head
   `07100fcb89b5820bd65ea1a85a674adfe7148bb8`, revalidating Linux and macOS packaged runtime lifecycle smoke after
   fallback evidence signature type validation was tightened.
+- [Unsigned Windows smoke run 27743309024](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27743309024)
+  passed on head `67f4f7d30f08f0000c2b9c7a7490c55438a573fe`, revalidating Windows build, Python runtime default gate,
+  runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
+  upload, source archive validation, and Python runtime artifact validation after cross-repository release evidence was
+  rejected.
+- [Unix smoke run 27743308971](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27743308971) passed on head
+  `67f4f7d30f08f0000c2b9c7a7490c55438a573fe`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  cross-repository release evidence was rejected.
 - [Unsigned Windows smoke run 27741586603](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27741586603)
   passed on head `09ee22560ee052e478903df7ea26f88232f65517`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
