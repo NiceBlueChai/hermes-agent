@@ -343,6 +343,14 @@ release evidence handoff does not depend on scraping workflow logs or hand-autho
   operators from accidentally running only the documentation gate while skipping platform evidence validation.
 - Local Python runtime tests now reject multiple `--evidence` files without `--require-platforms`, preventing
   multi-platform runtime evidence from being validated as unrelated single-platform files.
+- [Unsigned Windows smoke run 27732210386](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27732210386)
+  passed on head `85310ff19ec1ac34a6e4f6a31cbb5ef84f4ccde2`, revalidating Windows build, Python runtime default gate,
+  runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
+  upload, and Python runtime artifact validation after multiple `--evidence` files began requiring
+  `--require-platforms`.
+- [Unix smoke run 27732210399](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27732210399) passed on head
+  `85310ff19ec1ac34a6e4f6a31cbb5ef84f4ccde2`, revalidating Linux and macOS packaged runtime lifecycle smoke after
+  multiple `--evidence` files began requiring `--require-platforms`.
 - [Unsigned Windows smoke run 27731639049](https://github.com/NiceBlueChai/hermes-agent/actions/runs/27731639049)
   passed on head `4c8dfcc47cc1d9e786837b25748dfe326f7ca1bd`, revalidating Windows build, Python runtime default gate,
   runtime resource smoke, lifecycle smoke, unsigned artifact validation, fallback burn-down validation, runtime artifact
