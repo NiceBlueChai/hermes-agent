@@ -1135,7 +1135,7 @@ fn is_config_template_stage(stage_name: &str) -> bool {
 }
 
 fn should_use_native_repository_archive(install_root: &std::path::Path) -> bool {
-    !install_root.exists()
+    crate::orchestrator::install_root_needs_archive_fresh_install(install_root)
 }
 
 fn should_defer_git_stage_for_archive_install(
@@ -1729,7 +1729,7 @@ mod tests {
         assert!(!should_fallback_repository_archive("git", &install_root));
 
         std::fs::create_dir_all(&install_root).unwrap();
-        assert!(!should_defer_git_stage_for_archive_install(
+        assert!(should_defer_git_stage_for_archive_install(
             "git",
             &install_root
         ));
@@ -1737,7 +1737,7 @@ mod tests {
             "repository",
             &install_root
         ));
-        assert!(!should_fallback_repository_archive(
+        assert!(should_fallback_repository_archive(
             "repository",
             &install_root
         ));
@@ -1828,17 +1828,18 @@ mod tests {
         assert_eq!(
             stage_script_extra_env("prerequisites", &install_root, None, None, None),
             vec![
+                ("HERMES_NATIVE_REPOSITORY_ARCHIVE".to_string(), "1".to_string()),
                 ("HERMES_NATIVE_NODE_STAGE".to_string(), "1".to_string()),
                 ("HERMES_NATIVE_PYTHON_STAGE".to_string(), "1".to_string()),
                 ("HERMES_NATIVE_SYSTEM_PACKAGES_STAGE".to_string(), "1".to_string()),
                 ("HERMES_NATIVE_UV_STAGE".to_string(), "1".to_string())
             ]
         );
-        assert!(!should_try_native_repository_archive(
+        assert!(should_try_native_repository_archive(
             "repository",
             &install_root
         ));
-        assert!(!should_fallback_repository_archive("repository", &install_root));
+        assert!(should_fallback_repository_archive("repository", &install_root));
 
         let _ = std::fs::remove_dir_all(&root);
     }

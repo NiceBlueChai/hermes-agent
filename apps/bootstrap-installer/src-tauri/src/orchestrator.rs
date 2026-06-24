@@ -152,6 +152,12 @@ struct DesktopPackResult {
     purged_paths: Vec<PathBuf>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DesktopBuildStampEnv {
+    commit: String,
+    branch: Option<String>,
+}
+
 /// Native desktop build stage execution plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopBuildStagePlan {
@@ -4472,6 +4478,20 @@ pub fn repository_archive_spec(commit: Option<&str>, branch: Option<&str>) -> cr
     }
 }
 
+/// Return true when the install root should be recreated from a repository archive.
+pub fn install_root_needs_archive_fresh_install(install_root: &Path) -> bool {
+    if !install_root.exists() {
+        return true;
+    }
+    if !install_root.is_dir() {
+        return false;
+    }
+    if !install_root.join(".git").exists() {
+        return true;
+    }
+    !git_checkout_has_head(install_root)
+}
+
 /// Download a GitHub archive into a fresh install root and prepare best-effort Git metadata.
 pub async fn install_repository_archive_fresh(
     install_root: &Path,
@@ -4480,10 +4500,7 @@ pub async fn install_repository_archive_fresh(
     bundled_source_dir: Option<&Path>,
 ) -> Result<serde_json::Value> {
     if install_root.exists() {
-        return Err(anyhow!(
-            "install root already exists; native archive fallback is fresh-install only: {}",
-            install_root.display()
-        ));
+        move_broken_install_root_aside(install_root)?;
     }
 
     let spec = repository_archive_spec(commit, branch);
@@ -4509,6 +4526,37 @@ pub async fn install_repository_archive_fresh(
         "gitInitialized": git_initialized,
         "source": source_marker,
     }))
+}
+
+fn move_broken_install_root_aside(install_root: &Path) -> Result<PathBuf> {
+    if !install_root.is_dir() || !install_root_needs_archive_fresh_install(install_root) {
+        return Err(anyhow!(
+            "install root already exists; native archive fallback is fresh-install only: {}",
+            install_root.display()
+        ));
+    }
+    let stamp = Utc::now().format("%Y%m%d-%H%M%S").to_string();
+    let backup = install_root.with_file_name(format!(
+        "{}.broken-{stamp}",
+        install_root
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("hermes-agent")
+    ));
+    fs::rename(install_root, &backup).with_context(|| {
+        format!(
+            "moving broken install root {} aside to {}",
+            install_root.display(),
+            backup.display()
+        )
+    })?;
+    Ok(backup)
+}
+
+fn git_checkout_has_head(install_root: &Path) -> bool {
+    run_git(install_root, ["rev-parse", "--is-inside-work-tree"])
+        && run_git(install_root, ["status", "--short"])
+        && run_git(install_root, ["rev-parse", "--verify", "HEAD"])
 }
 
 fn initialize_archive_git_repo(install_root: &Path) -> bool {
@@ -6450,6 +6498,12 @@ fn run_desktop_pack_attempt(
         .env("CSC_IDENTITY_AUTO_DISCOVERY", "false")
         .env("WIN_CSC_LINK", "")
         .env("WIN_CSC_KEY_PASSWORD", "");
+    if let Some(stamp) = desktop_build_stamp_env(desktop_dir) {
+        child.env("GITHUB_SHA", stamp.commit);
+        if let Some(branch) = stamp.branch {
+            child.env("GITHUB_REF_NAME", branch);
+        }
+    }
     if let Some(mirror) = electron_mirror {
         child.env("ELECTRON_MIRROR", mirror);
     } else if clear_electron_mirror {
@@ -6460,6 +6514,71 @@ fn run_desktop_pack_attempt(
         .stderr(Stdio::null())
         .status()
         .with_context(|| format!("running {} run pack", npm.display()))
+}
+
+fn desktop_build_stamp_env(desktop_dir: &Path) -> Option<DesktopBuildStampEnv> {
+    let install_root = desktop_dir.parent()?.parent()?;
+    desktop_build_stamp_env_from_source_marker(install_root)
+        .or_else(|| desktop_build_stamp_env_from_git(install_root))
+}
+
+fn desktop_build_stamp_env_from_source_marker(install_root: &Path) -> Option<DesktopBuildStampEnv> {
+    let marker_path = install_root.join(".hermes-source.json");
+    let marker: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(marker_path).ok()?).ok()?;
+    let commit = marker
+        .get("commit")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            marker
+                .get("archive")
+                .and_then(|value| value.as_str())
+                .and_then(commit_from_archive_path)
+        })?;
+    let branch = marker
+        .get("branch")
+        .or_else(|| marker.get("ref"))
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string);
+    Some(DesktopBuildStampEnv { commit, branch })
+}
+
+fn commit_from_archive_path(path: &str) -> Option<String> {
+    let name = Path::new(path).file_name()?.to_str()?;
+    for candidate in name.as_bytes().windows(40) {
+        if candidate.iter().all(|byte| byte.is_ascii_hexdigit()) {
+            return String::from_utf8(candidate.to_vec()).ok();
+        }
+    }
+    None
+}
+
+fn desktop_build_stamp_env_from_git(install_root: &Path) -> Option<DesktopBuildStampEnv> {
+    let commit = git_output(install_root, ["rev-parse", "HEAD"])?;
+    let branch = git_output(install_root, ["rev-parse", "--abbrev-ref", "HEAD"])
+        .filter(|value| value != "HEAD");
+    Some(DesktopBuildStampEnv { commit, branch })
+}
+
+fn git_output<const N: usize>(install_root: &Path, args: [&str; N]) -> Option<String> {
+    let output = Command::new("git")
+        .args(["-c", "windows.appendAtomically=false"])
+        .args(args)
+        .current_dir(install_root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 fn find_built_desktop_app(install_root: &Path, target_os: &str) -> Option<PathBuf> {
@@ -6769,7 +6888,9 @@ fn executable_candidates(name: &str, pathext: &str) -> Vec<String> {
         }
         out.push(format!("{name}{ext}"));
     }
-    if !cfg!(target_os = "windows") {
+    if cfg!(target_os = "windows") {
+        out.push(name.to_string());
+    } else {
         out.insert(0, name.to_string());
     }
     out
@@ -6810,10 +6931,10 @@ mod tests {
 
     fn write_test_version_tool(path: &Path) {
         if cfg!(target_os = "windows") {
-            let path_env = std::env::var_os("PATH").unwrap_or_default();
-            let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
-            let node = find_executable_on_path("node", path_env, &pathext).unwrap();
-            std::fs::copy(node, path).unwrap();
+            let cmd = std::env::var_os("COMSPEC")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(r"C:\Windows\System32\cmd.exe"));
+            std::fs::copy(cmd, path).unwrap();
         } else {
             std::fs::write(path, "#!/usr/bin/env sh\nexit 0\n").unwrap();
             make_executable(path).unwrap();
@@ -6973,6 +7094,22 @@ mod tests {
         let found = find_executable_on_path("npm", &root, ".COM;.EXE;.BAT;.CMD").unwrap();
 
         assert_eq!(found, cmd);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn install_root_needs_archive_fresh_install_for_missing_or_broken_root() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-orchestrator-archive-root-{}",
+            std::process::id()
+        ));
+        let install_root = root.join("hermes-agent");
+
+        assert!(install_root_needs_archive_fresh_install(&install_root));
+
+        std::fs::create_dir_all(install_root.join(".git")).unwrap();
+        assert!(install_root_needs_archive_fresh_install(&install_root));
+
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -9400,15 +9537,30 @@ mod tests {
             "hermes-desktop-pack-env-test-{}",
             std::process::id()
         ));
-        let desktop_dir = root.join("desktop");
+        let desktop_dir = root.join("apps").join("desktop");
         let npm_cache = root.join("npm-cache");
         let electron_cache = root.join("electron-cache");
         let electron_config_output = root.join("electron-config-cache.txt");
         let electron_output = root.join("electron-cache.txt");
         let builder_output = root.join("electron-builder-cache.txt");
+        let github_sha_output = root.join("github-sha.txt");
+        let github_ref_output = root.join("github-ref.txt");
         std::fs::create_dir_all(&desktop_dir).unwrap();
         std::fs::create_dir_all(&npm_cache).unwrap();
         std::fs::create_dir_all(&electron_cache).unwrap();
+        std::fs::write(
+            root.join(".hermes-source.json"),
+            serde_json::json!({
+                "schemaVersion": 1,
+                "method": "github_archive",
+                "ref": "docs/rust-self-contained-release",
+                "branch": "docs/rust-self-contained-release",
+                "commit": null,
+                "archive": "hermes-agent-0123456789abcdef0123456789abcdef01234567.zip"
+            })
+            .to_string(),
+        )
+        .unwrap();
 
         #[cfg(target_os = "windows")]
         let command = {
@@ -9419,11 +9571,15 @@ mod tests {
                     "> \"{electron_config}\" echo(%electron_config_cache%\r\n",
                     "> \"{electron}\" echo(%ELECTRON_CACHE%\r\n",
                     "> \"{builder}\" echo(%ELECTRON_BUILDER_CACHE%\r\n",
+                    "> \"{github_sha}\" echo(%GITHUB_SHA%\r\n",
+                    "> \"{github_ref}\" echo(%GITHUB_REF_NAME%\r\n",
                     "exit /b 0\r\n"
                 ),
                 electron_config = electron_config_output.display(),
                 electron = electron_output.display(),
                 builder = builder_output.display(),
+                github_sha = github_sha_output.display(),
+                github_ref = github_ref_output.display(),
             );
             std::fs::write(&command, script).unwrap();
             command
@@ -9438,11 +9594,15 @@ mod tests {
                     "printf '%s' \"$electron_config_cache\" > '{electron_config}'\n",
                     "printf '%s' \"$ELECTRON_CACHE\" > '{electron}'\n",
                     "printf '%s' \"$ELECTRON_BUILDER_CACHE\" > '{builder}'\n",
+                    "printf '%s' \"$GITHUB_SHA\" > '{github_sha}'\n",
+                    "printf '%s' \"$GITHUB_REF_NAME\" > '{github_ref}'\n",
                     "exit 0\n"
                 ),
                 electron_config = electron_config_output.display(),
                 electron = electron_output.display(),
                 builder = builder_output.display(),
+                github_sha = github_sha_output.display(),
+                github_ref = github_ref_output.display(),
             );
             std::fs::write(&command, script).unwrap();
             make_executable(&command).unwrap();
@@ -9461,6 +9621,14 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&electron_config_output).unwrap().trim(), expected);
         assert_eq!(std::fs::read_to_string(&electron_output).unwrap().trim(), expected);
         assert_eq!(std::fs::read_to_string(&builder_output).unwrap().trim(), expected);
+        assert_eq!(
+            std::fs::read_to_string(&github_sha_output).unwrap().trim(),
+            "0123456789abcdef0123456789abcdef01234567"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&github_ref_output).unwrap().trim(),
+            "docs/rust-self-contained-release"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
