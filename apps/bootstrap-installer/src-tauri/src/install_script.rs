@@ -3,10 +3,10 @@
 //! Resolution order:
 //!   1. Dev shortcut: a sibling repo checkout via $HERMES_SETUP_DEV_REPO_ROOT
 //!      env var. Lets devs iterate without re-publishing the script.
-//!   2. Bundled fallback: commit-pinned release installers serve the script
-//!      compiled into this binary, avoiding a first-run network dependency.
-//!   3. Cache/network: branch-following builds download from GitHub raw.
-//!      Commit pins are immutable; branch pins are HEAD-tracking.
+//!   2. Bundled fallback: installers serve the script compiled into this
+//!      binary, avoiding a first-run network dependency.
+//!   3. Cache/network: download from GitHub raw only when no local script can
+//!      be used.
 //!
 //! Mirrors `apps/desktop/electron/bootstrap-runner.cjs`'s `resolveInstallScript`,
 //! but the dev-checkout resolution is driven by an env var rather than the
@@ -88,7 +88,9 @@ pub async fn resolve(
 ) -> Result<ResolvedScript> {
     // 1. Dev shortcut.
     if let Ok(repo_root) = std::env::var("HERMES_SETUP_DEV_REPO_ROOT") {
-        let candidate = PathBuf::from(repo_root).join("scripts").join(kind.filename());
+        let candidate = PathBuf::from(repo_root)
+            .join("scripts")
+            .join(kind.filename());
         if candidate.exists() {
             emit_log(&format!(
                 "[bootstrap] dev mode — using local {} at {}",
@@ -104,15 +106,14 @@ pub async fn resolve(
         }
     }
 
-    // 2. Bundled fallback. Commit-pinned installers should not need network
-    // just to obtain the small orchestration script shipped with this binary.
-    if should_use_bundled_script(pin) {
-        let commit = pin.commit.as_deref().expect("validated by should_use_bundled_script");
-        let bundled = bundled_cached_path(kind, commit);
+    // 2. Bundled fallback. Installers should not need network just to obtain
+    // the small orchestration script shipped with this binary.
+    if let Some(ref_name) = bundled_script_ref(pin) {
+        let bundled = bundled_cached_path(kind, ref_name);
         emit_log(&format!(
             "[bootstrap] using bundled {} for {}",
             kind.filename(),
-            truncate_ref(commit)
+            truncate_ref(ref_name)
         ));
         crate::artifact::write_atomic_verified(&bundled, bundled_script_bytes(kind), None)
             .await
@@ -222,10 +223,11 @@ fn bundled_script_resource(kind: ScriptKind) -> BundledScriptResource {
     }
 }
 
-fn should_use_bundled_script(pin: &Pin) -> bool {
-    match pin.commit.as_deref() {
-        Some(commit) => is_valid_commit(commit),
-        None => false,
+fn bundled_script_ref(pin: &Pin) -> Option<&str> {
+    match (&pin.commit, &pin.branch) {
+        (Some(commit), _) if is_valid_commit(commit) => Some(commit.as_str()),
+        (None, Some(branch)) if !branch.trim().is_empty() => Some(branch.as_str()),
+        _ => None,
     }
 }
 
@@ -261,9 +263,8 @@ async fn download(kind: ScriptKind, commit_or_ref: &str, dest_path: &Path) -> Re
     );
 
     if let Some(parent) = dest_path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!("creating bootstrap-cache parent dir {}", parent.display())
-        })?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating bootstrap-cache parent dir {}", parent.display()))?;
     }
 
     crate::artifact::download_to_cache(
@@ -307,15 +308,28 @@ mod tests {
     }
 
     #[test]
-    fn bundled_script_is_used_only_for_commit_pins() {
-        assert!(should_use_bundled_script(&Pin {
-            commit: Some("02d26981d3d4ad50e142399b8476f59ad5953ff0".into()),
-            branch: Some("main".into()),
-        }));
-        assert!(!should_use_bundled_script(&Pin {
-            commit: None,
-            branch: Some("main".into()),
-        }));
+    fn bundled_script_ref_accepts_commit_and_branch_pins() {
+        assert_eq!(
+            bundled_script_ref(&Pin {
+                commit: Some("02d26981d3d4ad50e142399b8476f59ad5953ff0".into()),
+                branch: Some("main".into()),
+            }),
+            Some("02d26981d3d4ad50e142399b8476f59ad5953ff0")
+        );
+        assert_eq!(
+            bundled_script_ref(&Pin {
+                commit: None,
+                branch: Some("main".into()),
+            }),
+            Some("main")
+        );
+        assert_eq!(
+            bundled_script_ref(&Pin {
+                commit: Some("not-a-sha".into()),
+                branch: Some("main".into()),
+            }),
+            None
+        );
     }
 
     #[test]
@@ -336,8 +350,12 @@ mod tests {
         let manifest = bundled_script_manifest();
 
         assert_eq!(manifest.len(), 2);
-        assert!(manifest.iter().any(|resource| resource.filename == "install.ps1"));
-        assert!(manifest.iter().any(|resource| resource.filename == "install.sh"));
+        assert!(manifest
+            .iter()
+            .any(|resource| resource.filename == "install.ps1"));
+        assert!(manifest
+            .iter()
+            .any(|resource| resource.filename == "install.sh"));
         for resource in manifest {
             assert!(resource.size_bytes > 0);
             assert_eq!(resource.sha256.len(), 64);
