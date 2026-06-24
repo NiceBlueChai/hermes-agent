@@ -6761,13 +6761,16 @@ fn executable_candidates(name: &str, pathext: &str) -> Vec<String> {
         return vec![name.to_string()];
     }
 
-    let mut out = vec![name.to_string()];
+    let mut out = Vec::new();
     for ext in pathext.split(';') {
         let ext = ext.trim();
         if ext.is_empty() {
             continue;
         }
         out.push(format!("{name}{ext}"));
+    }
+    if !cfg!(target_os = "windows") {
+        out.insert(0, name.to_string());
     }
     out
 }
@@ -6952,6 +6955,24 @@ mod tests {
         let found = find_executable_on_path("uv", &root, ".COM;.EXE;.BAT").unwrap();
 
         assert_eq!(found, exe);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn find_executable_on_path_prefers_windows_cmd_over_bare_shim() {
+        let root = std::env::temp_dir().join(format!(
+            "hermes-orchestrator-path-cmd-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let bare = root.join("npm");
+        let cmd = root.join("npm.CMD");
+        std::fs::write(&bare, b"sh").unwrap();
+        std::fs::write(&cmd, b"cmd").unwrap();
+
+        let found = find_executable_on_path("npm", &root, ".COM;.EXE;.BAT;.CMD").unwrap();
+
+        assert_eq!(found, cmd);
         let _ = std::fs::remove_dir_all(&root);
     }
 
