@@ -1095,6 +1095,13 @@ async fn run_bootstrap(
         ));
     }
 
+    if let Err(err) = write_windows_uninstall_script(&hermes_home_path, &install_root) {
+        tracing::warn!(?err, "failed to write uninstall script (non-fatal)");
+        emit_log(&format!(
+            "[bootstrap] warning: could not write uninstall script: {err}"
+        ));
+    }
+
     if !record_manager_install_metadata(&hermes_home_path, &install_root) {
         emit_log("[bootstrap] warning: could not record manager install metadata");
     }
@@ -1337,7 +1344,10 @@ fn default_windows_desktop_dir() -> PathBuf {
         .join("Desktop")
 }
 
-fn record_manager_install_metadata(hermes_home: &std::path::Path, install_root: &std::path::Path) -> bool {
+fn record_manager_install_metadata(
+    hermes_home: &std::path::Path,
+    install_root: &std::path::Path,
+) -> bool {
     match write_manager_install_metadata(hermes_home, install_root) {
         Ok(()) => {
             tracing::info!(
@@ -1392,6 +1402,53 @@ fn write_manager_install_metadata(
         }
     }
     manifest.write_atomic(&manifest_path)
+}
+
+fn write_windows_uninstall_script(
+    hermes_home: &std::path::Path,
+    install_root: &std::path::Path,
+) -> Result<()> {
+    if !cfg!(target_os = "windows") {
+        return Ok(());
+    }
+    let script_path = hermes_home.join("uninstall-hermes.cmd");
+    std::fs::write(
+        &script_path,
+        windows_uninstall_script_content(hermes_home, install_root),
+    )
+    .map_err(|err| anyhow!("writing {} failed: {err}", script_path.display()))
+}
+
+fn windows_uninstall_script_content(
+    hermes_home: &std::path::Path,
+    install_root: &std::path::Path,
+) -> String {
+    let manager = install_root
+        .join("apps")
+        .join("hermes-manager")
+        .join("target")
+        .join("release")
+        .join("hermes-manager.exe");
+    format!(
+        "@echo off\r\n\
+         setlocal\r\n\
+         set \"HERMES_HOME={home}\"\r\n\
+         set \"MANAGER={manager}\"\r\n\
+         if not exist \"%MANAGER%\" (\r\n\
+         \techo Hermes manager not found: %MANAGER%\r\n\
+         \texit /b 1\r\n\
+         )\r\n\
+         set \"TEMP_MANAGER=%TEMP%\\hermes-manager-uninstall-%RANDOM%-%RANDOM%.exe\"\r\n\
+         copy /Y \"%MANAGER%\" \"%TEMP_MANAGER%\" >nul\r\n\
+         if errorlevel 1 exit /b 1\r\n\
+         \"%TEMP_MANAGER%\" --hermes-home \"%HERMES_HOME%\" uninstall-lite --shortcuts\r\n\
+         set \"STATUS=%ERRORLEVEL%\"\r\n\
+         del /f /q \"%TEMP_MANAGER%\" >nul 2>nul\r\n\
+         if \"%STATUS%\"==\"0\" del /f /q \"%~f0\" >nul 2>nul\r\n\
+         exit /b %STATUS%\r\n",
+        home = hermes_home.display(),
+        manager = manager.display()
+    )
 }
 
 async fn cancellation_signalled(holder: &Arc<Mutex<Option<mpsc::Receiver<()>>>>) -> bool {
@@ -1689,6 +1746,20 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&hermes_home);
+    }
+
+    #[test]
+    fn windows_uninstall_script_runs_temp_manager_with_shortcut_cleanup() {
+        let hermes_home = PathBuf::from(r"C:\Users\test\AppData\Local\hermes");
+        let install_root = hermes_home.join("hermes-agent");
+        let script = windows_uninstall_script_content(&hermes_home, &install_root);
+
+        assert!(script.contains("set \"TEMP_MANAGER=%TEMP%\\hermes-manager-uninstall-"));
+        assert!(script.contains("copy /Y \"%MANAGER%\" \"%TEMP_MANAGER%\" >nul"));
+        assert!(
+            script.contains("\"%TEMP_MANAGER%\" --hermes-home \"%HERMES_HOME%\" uninstall-lite --shortcuts")
+        );
+        assert!(script.contains("del /f /q \"%~f0\""));
     }
 
     #[test]
