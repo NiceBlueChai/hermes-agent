@@ -52,6 +52,7 @@ AUTHOR_MAP = {
     "philipadsouza@gmail.com": "PhilipAD",
     "zhuhaoyu0909@icloud.com": "underthestars-zhy",
     "raysun12142006@gmail.com": "yanxue06",
+    "bluechai@qq.com": "NiceBlueChai",
     "alberto.regalado@ymail.com": "ARegalado1",
     "alchemistchaos@protonmail.com": "AlchemistChaos",  # co-author only
     "gilad@smiti.ai": "giladbau",

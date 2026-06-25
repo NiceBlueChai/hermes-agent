@@ -102,6 +102,10 @@ config/mcporter.json
 
 hermes_cli/tui_dist/*
 hermes_cli/scripts/
+
+# Rust build output for the self-contained install manager.
+apps/hermes-manager/target/**
+
 docs/superpowers/*
 # Working directory for the Hermes Agent's session state (~/.hermes/ at runtime;
 # also created in-repo when an agent operates in this checkout). Plans, audit

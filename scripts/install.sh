@@ -202,6 +202,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$HERMES_HOME/uv-cache}"
+export PIP_CACHE_DIR="${PIP_CACHE_DIR:-$HERMES_HOME/pip-cache}"
+
 # ============================================================================
 # Helper functions
 # ============================================================================
@@ -268,7 +271,28 @@ emit_manifest() {
     if [ "$INCLUDE_DESKTOP" = true ]; then
         desktop_stage='{"name":"desktop","title":"Build desktop app","category":"runtime","needs_user_input":false},'
     fi
-    printf '%s' '{"protocol_version":1,"stages":[{"name":"prerequisites","title":"System prerequisites","category":"runtime","needs_user_input":false},{"name":"repository","title":"Download Hermes Agent","category":"runtime","needs_user_input":false},{"name":"venv","title":"Create Python virtual environment","category":"runtime","needs_user_input":false},{"name":"python-deps","title":"Install Python dependencies","category":"runtime","needs_user_input":false},{"name":"node-deps","title":"Install browser-tool dependencies","category":"runtime","needs_user_input":false},{"name":"path","title":"Install hermes command","category":"runtime","needs_user_input":false},{"name":"config","title":"Prepare config and skills","category":"configuration","needs_user_input":false},{"name":"setup","title":"Configure API keys and settings","category":"configuration","needs_user_input":true},{"name":"gateway","title":"Configure gateway service","category":"configuration","needs_user_input":true},'"$desktop_stage"'{"name":"complete","title":"Finish install","category":"runtime","needs_user_input":false}]}'
+    printf '%s' \
+        '{"protocol_version":1,"stages":[' \
+        '{"name":"uv","title":"Install uv package manager","category":"runtime","needs_user_input":false},' \
+        '{"name":"node","title":"Detect Node.js","category":"runtime","needs_user_input":false},' \
+        '{"name":"python","title":"Verify Python 3.11","category":"runtime","needs_user_input":false},' \
+        '{"name":"system-packages","title":"Install system packages","category":"runtime",' \
+        '"needs_user_input":false},' \
+        '{"name":"repository","title":"Download Hermes Agent","category":"runtime","needs_user_input":false},' \
+        '{"name":"venv","title":"Create Python virtual environment","category":"runtime","needs_user_input":false},' \
+        '{"name":"python-deps","title":"Install Python dependencies","category":"runtime","needs_user_input":false},' \
+        '{"name":"node-deps","title":"Install browser-tool dependencies","category":"runtime",' \
+        '"needs_user_input":false},' \
+        '{"name":"path","title":"Install hermes command","category":"runtime","needs_user_input":false},' \
+        '{"name":"config","title":"Prepare config and skills","category":"configuration","needs_user_input":false},' \
+        '{"name":"platform-sdks","title":"Install messaging platform SDKs","category":"configuration",' \
+        '"needs_user_input":false},' \
+        '{"name":"setup","title":"Configure API keys and settings","category":"configuration",' \
+        '"needs_user_input":true},' \
+        '{"name":"gateway","title":"Configure gateway service","category":"configuration","needs_user_input":true},' \
+        "$desktop_stage" \
+        '{"name":"bootstrap-marker","title":"Mark install complete","category":"runtime","needs_user_input":false},' \
+        '{"name":"complete","title":"Finish install","category":"runtime","needs_user_input":false}]}'
     printf '\n'
 }
 
@@ -536,7 +560,9 @@ check_python() {
         log_info "Checking Termux Python..."
         if command -v python >/dev/null 2>&1; then
             PYTHON_PATH="$(command -v python)"
-            if "$PYTHON_PATH" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+            if "$PYTHON_PATH" \
+                -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
+                2>/dev/null; then
                 PYTHON_FOUND_VERSION="$("$PYTHON_PATH" --version 2>/dev/null)"
                 log_success "Python found: $PYTHON_FOUND_VERSION"
                 return 0
@@ -586,7 +612,7 @@ attempt_install_git() {
             if command -v brew >/dev/null 2>&1; then
                 log_info "Installing Git via Homebrew..."
                 brew install git >/dev/null 2>&1 || true
-                command -v git >/dev/null 2>&1 && return 0
+                command -v git >/dev/null 2>&1 && git --version >/dev/null 2>&1 && return 0
             fi
             # Fall back to Apple Command Line Tools, which provide git AND the
             # compiler some Python wheels need. `xcode-select --install` pops a
@@ -634,7 +660,7 @@ attempt_install_git() {
                     return 1
                     ;;
             esac
-            command -v git >/dev/null 2>&1 && return 0
+            command -v git >/dev/null 2>&1 && git --version >/dev/null 2>&1 && return 0
             return 1
             ;;
     esac
@@ -656,7 +682,7 @@ check_git() {
     if [ "$DISTRO" = "termux" ]; then
         log_info "Installing Git via pkg..."
         pkg install -y git >/dev/null
-        if command -v git >/dev/null 2>&1; then
+        if command -v git >/dev/null 2>&1 && git --version >/dev/null 2>&1; then
             GIT_VERSION=$(git --version | awk '{print $3}')
             log_success "Git $GIT_VERSION installed"
             return 0
@@ -737,7 +763,8 @@ check_node() {
     fi
 
     if command -v node &> /dev/null; then
-        log_warn "Node.js $(node --version) is too old for the desktop build (need ^20.19 or >=22.12) — installing Hermes-managed Node $NODE_VERSION LTS..."
+        log_warn "Node.js $(node --version) is too old for the desktop build (need ^20.19 or >=22.12)"
+        log_warn "Installing Hermes-managed Node $NODE_VERSION LTS..."
     elif [ "$DISTRO" = "termux" ]; then
         log_info "Node.js not found — installing Node.js via pkg..."
     else
@@ -1012,7 +1039,8 @@ install_system_packages() {
         elif command -v sudo &> /dev/null; then
             if [ "$IS_INTERACTIVE" = true ]; then
                 echo ""
-                log_info "sudo is needed ONLY to install optional system packages (${pkgs[*]}) via your package manager."
+                log_info "sudo is needed ONLY to install optional system packages (${pkgs[*]})"
+                log_info "via your package manager."
                 log_info "Hermes Agent itself does not require or retain root access."
                 if prompt_yes_no "Install ${description}? (requires sudo)" "no"; then
                     if sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a $install_cmd; then
@@ -1028,7 +1056,8 @@ install_system_packages() {
                 # in Docker builds where the device node is in the mount namespace
                 # but opening fails with ENXIO. See #16746.
                 echo ""
-                log_info "sudo is needed ONLY to install optional system packages (${pkgs[*]}) via your package manager."
+                log_info "sudo is needed ONLY to install optional system packages (${pkgs[*]})"
+                log_info "via your package manager."
                 log_info "Hermes Agent itself does not require or retain root access."
                 if prompt_yes_no "Install ${description}?" "yes"; then
                     if sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a $install_cmd < /dev/tty; then
@@ -1148,7 +1177,8 @@ clone_repo() {
                         log_warn "Local changes were restored on top of the updated codebase."
                         log_warn "Review git diff / git status if Hermes behaves unexpectedly."
                     else
-                        log_error "Update succeeded, but restoring local changes failed. Your changes are still preserved in git stash."
+                        log_error "Update succeeded, but restoring local changes failed."
+                        log_error "Your changes are still preserved in git stash."
                         log_info "Resolve manually with: git stash apply $autostash_ref"
                         exit 1
                     fi
@@ -1239,6 +1269,274 @@ setup_venv() {
     log_success "Virtual environment ready (Python $PYTHON_VERSION)"
 }
 
+get_wheelhouse_platform() {
+    case "$OS" in
+        linux) echo "linux" ;;
+        macos) echo "macos" ;;
+        *) echo "" ;;
+    esac
+}
+
+get_wheelhouse_arch() {
+    case "$(uname -m)" in
+        x86_64|amd64) echo "x64" ;;
+        aarch64|arm64) echo "arm64" ;;
+        i386|i686) echo "x86" ;;
+        *) echo "" ;;
+    esac
+}
+
+local_wheelhouse_manifest_is_valid() {
+    local wheelhouse_dir="$1"
+    local manifest="$wheelhouse_dir/wheelhouse-manifest.json"
+    local expected_platform expected_arch validation_error
+
+    if [ ! -d "$wheelhouse_dir" ]; then
+        return 1
+    fi
+
+    if [ ! -f "$manifest" ]; then
+        find "$wheelhouse_dir" -maxdepth 1 -type f -name '*.whl' | grep -q .
+        return $?
+    fi
+
+    expected_platform="$(get_wheelhouse_platform)"
+    expected_arch="$(get_wheelhouse_arch)"
+    if [ -z "$expected_platform" ] || [ -z "$expected_arch" ]; then
+        log_warn "Skipping local wheelhouse: unsupported target for bundled wheels"
+        return 1
+    fi
+
+    validation_error="$(
+        HERMES_WHEELHOUSE_DIR="$wheelhouse_dir" \
+        HERMES_WHEELHOUSE_REPO_ROOT="$INSTALL_DIR" \
+        HERMES_WHEELHOUSE_PLATFORM="$expected_platform" \
+        HERMES_WHEELHOUSE_ARCH="$expected_arch" \
+        "$PYTHON_PATH" - <<'PY' 2>&1
+import hashlib
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ["HERMES_WHEELHOUSE_DIR"])
+repo_root = Path(os.environ["HERMES_WHEELHOUSE_REPO_ROOT"])
+expected_platform = os.environ["HERMES_WHEELHOUSE_PLATFORM"]
+expected_arch = os.environ["HERMES_WHEELHOUSE_ARCH"]
+manifest = root / "wheelhouse-manifest.json"
+payload = json.loads(manifest.read_text(encoding="utf-8"))
+if payload.get("schemaVersion") != 1:
+    raise SystemExit("unsupported wheelhouse manifest schema")
+wheels = payload.get("wheels") or []
+if not wheels:
+    raise SystemExit("wheelhouse manifest has no wheels")
+source_files = payload.get("sourceFiles") or []
+if not source_files:
+    raise SystemExit("wheelhouse manifest has no sourceFiles")
+
+seen_sources = set()
+for source in source_files:
+    source_path = source.get("path")
+    if not source_path or Path(source_path).name != source_path or ".." in Path(source_path).parts:
+        raise SystemExit(f"invalid wheelhouse source path: {source_path!r}")
+    if source_path in seen_sources:
+        raise SystemExit(f"duplicate wheelhouse source path: {source_path}")
+    seen_sources.add(source_path)
+    expected_sha = source.get("sha256")
+    if not expected_sha:
+        raise SystemExit(f"missing wheelhouse source sha256 for {source_path}")
+    data = (repo_root / source_path).read_bytes()
+    if hashlib.sha256(data).hexdigest().lower() != expected_sha.lower():
+        raise SystemExit(f"wheelhouse source sha256 mismatch for {source_path}")
+
+manifested = set()
+for wheel in wheels:
+    name = wheel.get("name")
+    if not name or not name.endswith(".whl") or Path(name).name != name or ".." in Path(name).parts:
+        raise SystemExit(f"invalid wheelhouse wheel name: {name!r}")
+    if wheel.get("platform") != expected_platform:
+        raise SystemExit(f"unexpected wheelhouse platform for {name}")
+    if wheel.get("arch") != expected_arch:
+        raise SystemExit(f"unexpected wheelhouse arch for {name}")
+    path = root / name
+    data = path.read_bytes()
+    if wheel.get("sizeBytes") is not None and int(wheel["sizeBytes"]) != len(data):
+        raise SystemExit(f"wheelhouse size mismatch for {name}")
+    expected_sha = wheel.get("sha256")
+    if not expected_sha or hashlib.sha256(data).hexdigest().lower() != expected_sha.lower():
+        raise SystemExit(f"wheelhouse sha256 mismatch for {name}")
+    manifested.add(name)
+
+for path in root.glob("*.whl"):
+    if path.name not in manifested:
+        raise SystemExit(f"unmanifested wheelhouse payload: {path.name}")
+PY
+    )"
+    if [ $? -ne 0 ]; then
+        log_warn "Skipping local wheelhouse: $validation_error"
+        return 1
+    fi
+
+    return 0
+}
+
+local_wheelhouse_dir() {
+    local fallback_dir="$1"
+    if [ -n "${HERMES_BUNDLED_WHEELHOUSE_DIR:-}" ]; then
+        printf '%s\n' "$HERMES_BUNDLED_WHEELHOUSE_DIR"
+    else
+        printf '%s\n' "$fallback_dir"
+    fi
+}
+
+bundled_bootstrap_tools_dir() {
+    if [ -n "${HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR:-}" ] \
+        && [ -d "$HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR" ]; then
+        printf '%s\n' "$HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR"
+    fi
+}
+
+bootstrap_tools_python() {
+    if [ -x "$INSTALL_DIR/venv/bin/python" ]; then
+        printf '%s\n' "$INSTALL_DIR/venv/bin/python"
+    elif command -v python3 >/dev/null 2>&1; then
+        command -v python3
+    elif command -v python >/dev/null 2>&1; then
+        command -v python
+    fi
+}
+
+restore_bundled_cache_archive() {
+    local archive_name="$1"
+    local cache_root_name="$2"
+    local destination="$3"
+    local tools_dir python_path archive
+    tools_dir="$(bundled_bootstrap_tools_dir)"
+    [ -n "$tools_dir" ] || return 1
+    archive="$tools_dir/$archive_name"
+    [ -f "$archive" ] || return 1
+    python_path="$(bootstrap_tools_python)"
+    [ -n "$python_path" ] || return 1
+
+    "$python_path" - "$archive" "$cache_root_name" "$destination" <<'PY'
+import hashlib
+import json
+import os
+import shutil
+import sys
+import tarfile
+import tempfile
+import zipfile
+from pathlib import Path
+
+archive = Path(sys.argv[1])
+cache_root_name = sys.argv[2]
+destination = Path(sys.argv[3])
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+manifest_path = archive.parent / "bootstrap-tools-manifest.json"
+with manifest_path.open("r", encoding="utf-8") as fh:
+    manifest = json.load(fh)
+records = [item for item in manifest.get("archives", []) if item.get("name") == archive.name]
+if not records:
+    raise RuntimeError(f"archive missing from bootstrap tools manifest: {archive.name}")
+record = records[0]
+expected_size = record.get("sizeBytes")
+if not isinstance(expected_size, int) or expected_size != archive.stat().st_size:
+    raise RuntimeError(f"archive size mismatch: {archive.name}")
+expected_hash = str(record.get("sha256", "")).lower()
+if expected_hash != sha256_file(archive).lower():
+    raise RuntimeError(f"archive checksum mismatch: {archive.name}")
+
+def safe_member(name: str) -> bool:
+    if not name.strip():
+        return False
+    path = Path(name)
+    return not path.is_absolute() and ".." not in path.parts
+
+tmp = Path(tempfile.mkdtemp(prefix=f"{cache_root_name}-", dir=str(destination.parent)))
+try:
+    if archive.suffix == ".zip":
+        with zipfile.ZipFile(archive) as zf:
+            for member in zf.infolist():
+                if not safe_member(member.filename):
+                    raise RuntimeError(f"unsafe archive member: {member.filename}")
+            zf.extractall(tmp)
+    else:
+        with tarfile.open(archive, "r:gz") as tf:
+            for member in tf.getmembers():
+                if (
+                    not safe_member(member.name)
+                    or member.issym()
+                    or member.islnk()
+                    or not (member.isfile() or member.isdir())
+                ):
+                    raise RuntimeError(f"unsafe archive member: {member.name}")
+            tf.extractall(tmp)
+
+    source = tmp / cache_root_name
+    if not source.exists():
+        source = tmp
+    if destination.exists():
+        shutil.rmtree(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(destination))
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)
+PY
+}
+
+restore_bundled_npm_cache_if_available() {
+    local platform arch
+    platform="$(get_wheelhouse_platform)"
+    arch="$(get_wheelhouse_arch)"
+    [ -n "$platform" ] && [ -n "$arch" ] || return 1
+    restore_bundled_cache_archive "npm-cache-$platform-$arch.tar.gz" \
+        "npm-cache" "$HERMES_HOME/npm-cache"
+}
+
+restore_bundled_playwright_browsers_if_available() {
+    local platform arch
+    platform="$(get_wheelhouse_platform)"
+    arch="$(get_wheelhouse_arch)"
+    [ -n "$platform" ] && [ -n "$arch" ] || return 1
+    restore_bundled_cache_archive "playwright-browsers-$platform-$arch.tar.gz" \
+        "playwright-browsers" "$HERMES_HOME/playwright-browsers"
+}
+
+restore_bundled_electron_cache_if_available() {
+    local platform arch
+    platform="$(get_wheelhouse_platform)"
+    arch="$(get_wheelhouse_arch)"
+    [ -n "$platform" ] && [ -n "$arch" ] || return 1
+    restore_bundled_cache_archive "electron-cache-$platform-$arch.tar.gz" \
+        "electron-cache" "$HERMES_HOME/electron-cache"
+}
+
+install_local_wheelhouse_tier() {
+    local wheelhouse_dir
+    wheelhouse_dir="$(local_wheelhouse_dir "$INSTALL_DIR/resources/wheelhouse")"
+
+    if ! local_wheelhouse_manifest_is_valid "$wheelhouse_dir"; then
+        return 1
+    fi
+
+    log_info "Trying tier: local wheelhouse (all) ..."
+    if $UV_CMD pip install --no-index --find-links "$wheelhouse_dir" -e ".[all]"; then
+        log_success "Main package installed (local wheelhouse)"
+        log_success "All dependencies installed"
+        return 0
+    fi
+
+    log_warn "Local wheelhouse install failed, falling back to uv.lock/PyPI tiers..."
+    return 1
+}
+
 install_deps() {
     log_info "Installing dependencies..."
 
@@ -1280,7 +1578,8 @@ install_deps() {
             log_info "Android Python detected: prebuilding psutil compatibility shim..."
             if ! "$PIP_PYTHON" "$INSTALL_DIR/scripts/install_psutil_android.py" --pip "$PIP_PYTHON -m pip"; then
                 log_warn "psutil Android prebuild failed — package install will likely fail next."
-                log_info "Workaround: manually rerun 'python scripts/install_psutil_android.py' once your toolchain is set up."
+                log_info "Workaround: manually rerun 'python scripts/install_psutil_android.py'"
+                log_info "once your toolchain is set up."
             fi
         fi
 
@@ -1292,16 +1591,20 @@ install_deps() {
                 log_warn "Termux baseline profile (.[termux]) failed, trying base install..."
                 if ! "$PIP_PYTHON" -m pip install -e '.' -c constraints-termux.txt; then
                     log_error "Package installation failed on Termux."
-                    log_info "Ensure these packages are installed: pkg install clang rust make pkg-config libffi openssl ca-certificates curl"
-                    log_info "Then re-run: cd $INSTALL_DIR && python -m pip install -e '.[termux-all]' -c constraints-termux.txt"
+                    log_info "Ensure these packages are installed:"
+                    log_info "pkg install clang rust make pkg-config libffi openssl ca-certificates curl"
+                    log_info "Then re-run:"
+                    log_info "cd $INSTALL_DIR && python -m pip install -e '.[termux-all]' -c constraints-termux.txt"
                     exit 1
                 fi
             fi
         fi
 
         log_success "Main package installed"
-        log_info "Termux note: matrix e2ee and local faster-whisper extras are excluded from .[termux-all] due to upstream Android wheel/toolchain blockers."
-        log_info "Termux note: browser/WhatsApp tooling is not installed by default; see the Termux guide for optional follow-up steps."
+        log_info "Termux note: matrix e2ee and local faster-whisper extras are excluded from .[termux-all]"
+        log_info "due to upstream Android wheel/toolchain blockers."
+        log_info "Termux note: browser/WhatsApp tooling is not installed by default."
+        log_info "See the Termux guide for optional follow-up steps."
 
         log_success "All dependencies installed"
         return 0
@@ -1326,13 +1629,20 @@ install_deps() {
             log_info "Some build tools may be needed for Python packages..."
             if command -v sudo &> /dev/null; then
                 if sudo -n true 2>/dev/null; then
-                    sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y -qq build-essential python3-dev libffi-dev >/dev/null 2>&1 || true
+                    sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update -qq \
+                        && sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install \
+                            -y -qq build-essential python3-dev libffi-dev >/dev/null 2>&1 \
+                        || true
                     log_success "Build tools installed"
                 else
-                    log_info "sudo is needed ONLY to install build tools (build-essential, python3-dev, libffi-dev) via apt."
+                    log_info "sudo is needed ONLY to install build tools"
+                    log_info "(build-essential, python3-dev, libffi-dev) via apt."
                     log_info "Hermes Agent itself does not require or retain root access."
                     if prompt_yes_no "Install build tools?" "yes"; then
-                        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y -qq build-essential python3-dev libffi-dev >/dev/null 2>&1 || true
+                        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update -qq \
+                            && sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install \
+                                -y -qq build-essential python3-dev libffi-dev >/dev/null 2>&1 \
+                            || true
                         log_success "Build tools installed"
                     fi
                 fi
@@ -1342,6 +1652,14 @@ install_deps() {
 
     # Install the main package in editable mode with all extras.
     #
+    # Offline release-bundle install (Tier -1) -- direct script runs can use
+    # the same repository-local wheelhouse that the Rust bootstrapper bundles.
+    # A manifest with target platform, architecture, size, and SHA-256 keeps
+    # this path auditable; failure falls through to the existing network tiers.
+    if install_local_wheelhouse_tier; then
+        return 0
+    fi
+
     # Hash-verified install (Tier 0) — when uv.lock is present, prefer
     # `uv sync --locked`. The lockfile records SHA256 hashes for every
     # transitive, so a compromised transitive (different hash than what
@@ -1729,7 +2047,8 @@ SOUL_EOF
             log_success "Skills synced to ~/.hermes/skills/"
         else
             # Fallback: simple directory copy if Python sync fails
-            if [ -d "$INSTALL_DIR/skills" ] && [ ! "$(ls -A "$HERMES_HOME/skills/" 2>/dev/null | grep -v '.bundled_manifest')" ]; then
+            if [ -d "$INSTALL_DIR/skills" ] \
+                && [ ! "$(ls -A "$HERMES_HOME/skills/" 2>/dev/null | grep -v '.bundled_manifest')" ]; then
                 cp -r "$INSTALL_DIR/skills/"* "$HERMES_HOME/skills/" 2>/dev/null || true
                 log_success "Skills copied to ~/.hermes/skills/"
             fi
@@ -1737,10 +2056,122 @@ SOUL_EOF
     fi
 }
 
+install_platform_sdks() {
+    local env_file="$HERMES_HOME/.env"
+    local python_path="$INSTALL_DIR/venv/bin/python"
+    local wheelhouse_arg=""
+
+    if [ ! -f "$env_file" ]; then
+        log_info "Skipping messaging platform SDK check (no ~/.hermes/.env)"
+        return 0
+    fi
+    if [ ! -x "$python_path" ]; then
+        log_warn "Skipping messaging platform SDK check (venv Python missing)"
+        return 0
+    fi
+    wheelhouse_arg="$(local_wheelhouse_dir "$INSTALL_DIR/resources/wheelhouse")"
+    if ! local_wheelhouse_manifest_is_valid "$wheelhouse_arg"; then
+        wheelhouse_arg=""
+    fi
+
+    "$python_path" - "$env_file" "$wheelhouse_arg" <<'PY'
+import importlib.util
+import subprocess
+import sys
+from pathlib import Path
+
+SDK_MAP = [
+    ("TELEGRAM_BOT_TOKEN", "telegram", "python-telegram-bot[webhooks]>=22.6,<23"),
+    ("DISCORD_BOT_TOKEN", "discord", "discord.py[voice]>=2.7.1,<3"),
+    ("SLACK_BOT_TOKEN", "slack_sdk", "slack-sdk>=3.27.0,<4"),
+    ("SLACK_APP_TOKEN", "slack_bolt", "slack-bolt>=1.18.0,<2"),
+    ("WHATSAPP_ENABLED", "qrcode", "qrcode>=7.0,<8"),
+]
+
+
+def env_values(path):
+    values = {}
+    for raw_line in Path(path).read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
+def configured(value):
+    if not value:
+        return False
+    return value.lower() not in {"0", "false", "no", "off", "none", "null"}
+
+
+values = env_values(sys.argv[1])
+wheelhouse = Path(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else None
+required = [(module, spec) for key, module, spec in SDK_MAP if configured(values.get(key, ""))]
+if not required:
+    print("No messaging platform tokens configured; skipping SDK check.")
+    raise SystemExit(0)
+
+missing = [(module, spec) for module, spec in required if importlib.util.find_spec(module) is None]
+if not missing:
+    print(f"Messaging platform SDKs already available ({len(required)} checked).")
+    raise SystemExit(0)
+
+if subprocess.call([sys.executable, "-m", "pip", "--version"]) != 0:
+    subprocess.check_call([sys.executable, "-m", "ensurepip", "--upgrade"])
+
+for module, spec in missing:
+    installed = False
+    if wheelhouse is not None:
+        print(f"Installing {spec} for missing import {module} from local wheelhouse ...")
+        try:
+            subprocess.check_call(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--no-index",
+                    "--find-links",
+                    str(wheelhouse),
+                    spec,
+                ]
+            )
+            installed = True
+        except subprocess.CalledProcessError:
+            print(f"Local wheelhouse install failed for {spec}; trying network pip...")
+    if not installed:
+        print(f"Installing {spec} for missing import {module} ...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", spec])
+PY
+}
+
+write_bootstrap_marker() {
+    local marker_path="$INSTALL_DIR/.hermes-bootstrap-complete"
+    local commit="${INSTALL_COMMIT:-}"
+    local branch="${BRANCH:-main}"
+    local completed_at
+
+    if [ -z "$commit" ] && command -v git >/dev/null 2>&1 && [ -d "$INSTALL_DIR/.git" ]; then
+        commit="$(git -C "$INSTALL_DIR" rev-parse HEAD 2>/dev/null || true)"
+    fi
+    completed_at="$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")"
+
+    {
+        printf '{\n'
+        printf '  "schemaVersion": 1,\n'
+        printf '  "pinnedCommit": "%s",\n' "$(json_escape "$commit")"
+        printf '  "pinnedBranch": "%s",\n' "$(json_escape "$branch")"
+        printf '  "completedAt": "%s"\n' "$(json_escape "$completed_at")"
+        printf '}\n'
+    } > "$marker_path"
+    log_success "Wrote bootstrap marker: $marker_path"
+}
+
 find_system_browser() {
-    # Prefer a user-specified browser path, then common Linux/macOS Chrome and
-    # Chromium command names.  Arch-family distributions commonly ship plain
-    # `chromium`, while Debian-family systems often use `chromium-browser`.
+    # Prefer a user-specified browser path, then common Chromium-family
+    # browser command names to avoid unnecessary Playwright downloads.
     if [ -n "${AGENT_BROWSER_EXECUTABLE_PATH:-}" ]; then
         if [ -x "$AGENT_BROWSER_EXECUTABLE_PATH" ]; then
             echo "$AGENT_BROWSER_EXECUTABLE_PATH"
@@ -1753,7 +2184,10 @@ find_system_browser() {
     fi
 
     local candidate
-    for candidate in google-chrome google-chrome-stable chromium chromium-browser chrome; do
+    for candidate in \
+        google-chrome google-chrome-stable chromium chromium-browser chrome \
+        brave-browser brave-browser-stable brave \
+        microsoft-edge microsoft-edge-stable msedge; do
         if command -v "$candidate" >/dev/null 2>&1; then
             command -v "$candidate"
             return 0
@@ -1763,7 +2197,9 @@ find_system_browser() {
     if [ "$(uname)" = "Darwin" ]; then
         for app in \
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-            "/Applications/Chromium.app/Contents/MacOS/Chromium"; do
+            "/Applications/Chromium.app/Contents/MacOS/Chromium" \
+            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"; do
             if [ -x "$app" ]; then
                 echo "$app"
                 return 0
@@ -1828,12 +2264,24 @@ install_node_deps() {
         return 0
     fi
 
+    mkdir -p "$HERMES_HOME/npm-cache" "$HERMES_HOME/playwright-browsers"
+    export npm_config_cache="$HERMES_HOME/npm-cache"
+    export PLAYWRIGHT_BROWSERS_PATH="$HERMES_HOME/playwright-browsers"
+    restore_bundled_npm_cache_if_available || true
+
     if [ -f "$INSTALL_DIR/package.json" ]; then
         log_info "Installing Node.js dependencies (browser tools)..."
         cd "$INSTALL_DIR"
-        npm install --silent 2>/dev/null || {
-            log_warn "npm install failed (browser tools may not work)"
-        }
+        if [ -f "$INSTALL_DIR/package-lock.json" ]; then
+            npm ci --prefer-offline --no-audit --fund=false 2>/dev/null \
+                || npm install --silent --prefer-offline --no-audit --fund=false 2>/dev/null || {
+                    log_warn "npm install failed (browser tools may not work)"
+                }
+        else
+            npm install --silent --prefer-offline --no-audit --fund=false 2>/dev/null || {
+                log_warn "npm install failed (browser tools may not work)"
+            }
+        fi
         log_success "Node.js dependencies installed"
 
         # Install Playwright browser + system dependencies.
@@ -1852,6 +2300,8 @@ install_node_deps() {
         if [ -n "$DETECTED_BROWSER_EXECUTABLE" ]; then
             log_success "Found system Chrome/Chromium at $DETECTED_BROWSER_EXECUTABLE"
             log_info "Skipping Playwright browser download; Hermes will use the system browser."
+        elif restore_bundled_playwright_browsers_if_available; then
+            log_success "Browser engine restored from bundled Playwright cache"
         else
             case "$DISTRO" in
                 ubuntu|debian|raspbian|pop|linuxmint|elementary|zorin|kali|parrot)
@@ -1864,9 +2314,12 @@ install_node_deps() {
                     # exact command the admin needs to run separately.
                     if [ "$(id -u)" -eq 0 ] || (command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null); then
                         log_info "Installing Playwright Chromium with system dependencies..."
-                        cd "$INSTALL_DIR" && run_browser_install_with_timeout 600 npx playwright install --with-deps chromium 2>/dev/null || {
+                        cd "$INSTALL_DIR" \
+                            && run_browser_install_with_timeout \
+                                600 npx playwright install --with-deps chromium 2>/dev/null || {
                             log_warn "Playwright browser installation failed — browser tools will not work."
-                            log_warn "Try running manually: cd $INSTALL_DIR && npx playwright install --with-deps chromium"
+                            log_warn "Try running manually:"
+                            log_warn "cd $INSTALL_DIR && npx playwright install --with-deps chromium"
                         }
                     else
                         log_warn "No sudo available — skipping system-library install (--with-deps)."
@@ -1874,7 +2327,9 @@ install_node_deps() {
                         log_info "  sudo npx playwright install-deps chromium"
                         log_info "  (from $INSTALL_DIR, after Node.js deps are installed)"
                         log_info "Installing Chromium binary into this user's Playwright cache..."
-                        cd "$INSTALL_DIR" && run_browser_install_with_timeout 600 npx playwright install chromium 2>/dev/null || {
+                        cd "$INSTALL_DIR" \
+                            && run_browser_install_with_timeout \
+                                600 npx playwright install chromium 2>/dev/null || {
                             log_warn "Playwright browser installation failed — browser tools will not work."
                             log_warn "Try running manually: cd $INSTALL_DIR && npx playwright install chromium"
                         }
@@ -1885,32 +2340,40 @@ install_node_deps() {
                         log_info "Arch-family distro detected — installing Chromium system dependencies via pacman..."
                         if command -v sudo &> /dev/null && sudo -n true 2>/dev/null; then
                             sudo NEEDRESTART_MODE=a pacman -S --noconfirm --needed \
-                                nss atk at-spi2-core cups libdrm libxkbcommon mesa pango cairo alsa-lib >/dev/null 2>&1 || true
+                                nss atk at-spi2-core cups libdrm libxkbcommon mesa pango cairo alsa-lib \
+                                >/dev/null 2>&1 || true
                         elif [ "$(id -u)" -eq 0 ]; then
                             pacman -S --noconfirm --needed \
-                                nss atk at-spi2-core cups libdrm libxkbcommon mesa pango cairo alsa-lib >/dev/null 2>&1 || true
+                                nss atk at-spi2-core cups libdrm libxkbcommon mesa pango cairo alsa-lib \
+                                >/dev/null 2>&1 || true
                         else
                             log_warn "Cannot install browser deps without sudo. Run manually:"
-                            log_warn "  sudo pacman -S nss atk at-spi2-core cups libdrm libxkbcommon mesa pango cairo alsa-lib"
+                            log_warn "  sudo pacman -S nss atk at-spi2-core cups libdrm libxkbcommon"
+                            log_warn "      mesa pango cairo alsa-lib"
                         fi
                     fi
-                    cd "$INSTALL_DIR" && run_browser_install_with_timeout 600 npx playwright install chromium 2>/dev/null || {
+                    cd "$INSTALL_DIR" \
+                        && run_browser_install_with_timeout 600 npx playwright install chromium 2>/dev/null || {
                         log_warn "Playwright browser installation failed — browser tools will not work."
                     }
                     ;;
                 fedora|rhel|centos|rocky|alma)
                     log_warn "Playwright does not support automatic dependency installation on RPM-based systems."
                     log_info "Install Chromium system dependencies manually before using browser tools:"
-                    log_info "  sudo dnf install nss atk at-spi2-core cups-libs libdrm libxkbcommon mesa-libgbm pango cairo alsa-lib"
-                    cd "$INSTALL_DIR" && run_browser_install_with_timeout 600 npx playwright install chromium 2>/dev/null || {
+                    log_info "  sudo dnf install nss atk at-spi2-core cups-libs libdrm"
+                    log_info "      libxkbcommon mesa-libgbm pango cairo alsa-lib"
+                    cd "$INSTALL_DIR" \
+                        && run_browser_install_with_timeout 600 npx playwright install chromium 2>/dev/null || {
                         log_warn "Playwright browser installation failed — install dependencies above and retry."
                     }
                     ;;
                 opensuse*|sles)
                     log_warn "Playwright does not support automatic dependency installation on zypper-based systems."
                     log_info "Install Chromium system dependencies manually before using browser tools:"
-                    log_info "  sudo zypper install mozilla-nss libatk-1_0-0 at-spi2-core cups-libs libdrm2 libxkbcommon0 Mesa-libgbm1 pango cairo libasound2"
-                    cd "$INSTALL_DIR" && run_browser_install_with_timeout 600 npx playwright install chromium 2>/dev/null || {
+                    log_info "  sudo zypper install mozilla-nss libatk-1_0-0 at-spi2-core cups-libs"
+                    log_info "      libdrm2 libxkbcommon0 Mesa-libgbm1 pango cairo libasound2"
+                    cd "$INSTALL_DIR" \
+                        && run_browser_install_with_timeout 600 npx playwright install chromium 2>/dev/null || {
                         log_warn "Playwright browser installation failed — install dependencies above and retry."
                     }
                     ;;
@@ -1919,7 +2382,9 @@ install_node_deps() {
                     log_info "Install Chromium/browser system dependencies for your distribution, then run:"
                     log_info "  cd $INSTALL_DIR && npx playwright install chromium"
                     log_info "Browser tools will not work until dependencies are installed."
-                    cd "$INSTALL_DIR" && run_browser_install_with_timeout 600 npx playwright install chromium 2>/dev/null || true
+                    cd "$INSTALL_DIR" \
+                        && run_browser_install_with_timeout 600 npx playwright install chromium 2>/dev/null \
+                        || true
                     ;;
             esac
         fi
@@ -1931,7 +2396,7 @@ install_node_deps() {
     if [ -f "$INSTALL_DIR/ui-tui/package.json" ]; then
         log_info "Installing TUI dependencies..."
         cd "$INSTALL_DIR/ui-tui"
-        npm install --silent 2>/dev/null || {
+        npm install --silent --prefer-offline --no-audit --fund=false 2>/dev/null || {
             log_warn "TUI npm install failed (hermes --tui may not work)"
         }
         log_success "TUI dependencies installed"
@@ -2064,7 +2529,8 @@ maybe_start_gateway() {
             log_info "To stop: kill $GATEWAY_PID"
             log_info "To restart later: hermes gateway"
             if [ "$DISTRO" = "termux" ]; then
-                log_warn "Android may stop background processes when Termux is suspended or the system reclaims resources."
+                log_warn "Android may stop background processes when Termux is suspended"
+                log_warn "or the system reclaims resources."
             fi
         fi
     else
@@ -2105,7 +2571,8 @@ print_success() {
     echo -e "${CYAN}─────────────────────────────────────────────────────────${NC}"
     echo ""
     if [ "$DISTRO" = "termux" ]; then
-        echo -e "${YELLOW}⚡ 'hermes' was linked into $(get_command_link_display_dir), which is already on PATH in Termux.${NC}"
+        echo -e "${YELLOW}⚡ 'hermes' was linked into $(get_command_link_display_dir).${NC}"
+        echo -e "${YELLOW}It is already on PATH in Termux.${NC}"
         echo ""
     elif [ "$ROOT_FHS_LAYOUT" = true ]; then
         echo -e "${YELLOW}⚡ 'hermes' was linked into /usr/local/bin and is ready to use — no shell reload needed.${NC}"
@@ -2173,8 +2640,15 @@ ensure_browser() {
 
     log_info "Installing agent-browser..."
     local log_file
+    local npm_cache_dir browser_cache_dir
+    npm_cache_dir="$HERMES_HOME/npm-cache"
+    browser_cache_dir="$HERMES_HOME/playwright-browsers"
+    mkdir -p "$npm_cache_dir" "$browser_cache_dir"
     log_file="$(mktemp)"
-    if ! "$npm_bin" install -g --prefix "$HERMES_HOME/node" --silent --ignore-scripts \
+    if ! npm_config_cache="$HERMES_HOME/npm-cache" \
+        PLAYWRIGHT_BROWSERS_PATH="$HERMES_HOME/playwright-browsers" \
+        "$npm_bin" install -g --prefix "$HERMES_HOME/node" --silent --ignore-scripts \
+            --prefer-offline --no-audit --fund=false \
         "agent-browser@^0.26.0" \
         "@askjo/camofox-browser@^1.5.2" \
         >"$log_file" 2>&1; then
@@ -2197,7 +2671,8 @@ ensure_browser() {
     log_info "Installing Chromium via agent-browser install..."
     local ab_bin="$HERMES_HOME/node/bin/agent-browser"
     if [ -x "$ab_bin" ]; then
-        "$ab_bin" install 2>/dev/null || {
+        PLAYWRIGHT_BROWSERS_PATH="$HERMES_HOME/playwright-browsers" \
+            "$ab_bin" install 2>/dev/null || {
             log_warn "Chromium install failed. Browser tools may not work without a system browser."
 
             # OS-specific hints (detect_os sets $DISTRO)
@@ -2300,6 +2775,7 @@ clear_electron_build_cache() {
     local cache_dirs=()
     [ -n "${electron_config_cache:-}" ] && cache_dirs+=("$electron_config_cache")
     [ -n "${ELECTRON_CACHE:-}" ] && cache_dirs+=("$ELECTRON_CACHE")
+    [ -n "${ELECTRON_BUILDER_CACHE:-}" ] && cache_dirs+=("$ELECTRON_BUILDER_CACHE")
     if [ "$OS" = "macos" ]; then
         cache_dirs+=("$HOME/Library/Caches/electron")
     else
@@ -2397,6 +2873,14 @@ install_desktop() {
         return 0
     fi
 
+    mkdir -p "$HERMES_HOME/npm-cache" "$HERMES_HOME/electron-cache"
+    export npm_config_cache="$HERMES_HOME/npm-cache"
+    export electron_config_cache="$HERMES_HOME/electron-cache"
+    export ELECTRON_CACHE="$HERMES_HOME/electron-cache"
+    export ELECTRON_BUILDER_CACHE="$HERMES_HOME/electron-cache"
+    restore_bundled_npm_cache_if_available || true
+    restore_bundled_electron_cache_if_available || true
+
     # 1. Root workspace install so apps/desktop's deps (Electron, Vite,
     #    node-pty prebuilds) resolve. The browser-tools install runs in the
     #    repo-root package workspace, which does not pull apps/* deps.
@@ -2409,16 +2893,16 @@ install_desktop() {
     #    `tsc -b` failing with no obvious cause. Fall back to `npm install`
     #    only if `npm ci` is unavailable or the lockfile is out of sync.
     log_info "Installing desktop workspace dependencies (includes Electron ~150MB, 1-3min)..."
-    ( cd "$INSTALL_DIR" && npm ci ) || ( cd "$INSTALL_DIR" && npm install ) || {
+    ( cd "$INSTALL_DIR" && npm ci --prefer-offline --no-audit --fund=false ) \
+        || ( cd "$INSTALL_DIR" && npm install --prefer-offline --no-audit --fund=false ) || {
         log_error "Desktop workspace npm install failed"
-        # Common cause: a previous 'sudo npm'/'sudo npx' left root-owned files in
-        # ~/.npm, so this non-root install can't write the shared cache. npm hides
-        # it behind a confusing EEXIST / "File exists" message while the real errno
-        # is EACCES (-13). Point the user at the fix instead of a raw npm trace.
+        # Common cause: a previous privileged retry left root-owned files in
+        # Hermes' managed npm cache, so this non-root install can't write it.
+        # npm hides this behind a confusing EEXIST / "File exists" message while
+        # the real errno is EACCES (-13). Point the user at the scoped fix.
         log_info "If the errors above mention EACCES / 'permission denied' / EEXIST while"
-        log_info "writing the npm cache, your ~/.npm likely holds root-owned files from an"
-        log_info "earlier 'sudo npm' or 'sudo npx'. Reclaim ownership and retry:"
-        log_info "  sudo chown -R \"\$(id -un)\" ~/.npm && npm cache verify"
+        log_info "writing the npm cache, reclaim the Hermes-owned cache and retry:"
+        log_info "  sudo chown -R \"\$(id -un)\" \"$HERMES_HOME/npm-cache\""
         log_info "Then re-run this installer, or build manually:"
         log_info "  cd \"$INSTALL_DIR\" && npm ci && cd apps/desktop && npm run pack"
         return 1
@@ -2528,7 +3012,10 @@ install_desktop() {
     # Strip quarantine + re-apply a clean deep ad-hoc signature (no
     # hardened-runtime flag, which an ad-hoc build can't satisfy). Skipped when a
     # real signing identity is configured so a signed build isn't clobbered.
-    if [ "$OS" = "macos" ] && [ -z "${CSC_LINK:-}" ] && [ -z "${APPLE_SIGNING_IDENTITY:-}" ] && command -v codesign >/dev/null 2>&1; then
+    if [ "$OS" = "macos" ] \
+        && [ -z "${CSC_LINK:-}" ] \
+        && [ -z "${APPLE_SIGNING_IDENTITY:-}" ] \
+        && command -v codesign >/dev/null 2>&1; then
         xattr -cr "$app" 2>/dev/null || true
         codesign --force --deep --sign - "$app" >/dev/null 2>&1 || true
     fi
@@ -2557,20 +3044,70 @@ run_stage_body() {
     local stage="$1"
 
     case "$stage" in
-        prerequisites)
+        uv)
+            print_banner
+            detect_os
+            resolve_install_layout
+            install_uv
+            ;;
+        node)
+            print_banner
+            detect_os
+            resolve_install_layout
+            check_node
+            ;;
+        python)
             print_banner
             detect_os
             resolve_install_layout
             install_uv
             check_python
-            check_git
-            check_node
+            ;;
+        system-packages)
+            print_banner
+            detect_os
+            resolve_install_layout
             check_network_prerequisites
             install_system_packages
+            ;;
+        prerequisites)
+            print_banner
+            detect_os
+            resolve_install_layout
+            if [ "${HERMES_NATIVE_UV_STAGE:-}" = "1" ]; then
+                log_info "Skipping uv install; native bootstrap uv stage owns it"
+            else
+                install_uv
+            fi
+            if [ "${HERMES_NATIVE_PYTHON_STAGE:-}" = "1" ]; then
+                log_info "Skipping Python check; native bootstrap python stage owns it"
+            else
+                check_python
+            fi
+            if [ "${HERMES_NATIVE_REPOSITORY_ARCHIVE:-}" = "1" ]; then
+                log_info "Skipping Git check; native repository archive will fetch source"
+            else
+                check_git
+            fi
+            if [ "${HERMES_NATIVE_NODE_STAGE:-}" = "1" ]; then
+                log_info "Skipping Node.js check; native bootstrap node stage owns it"
+            else
+                check_node
+            fi
+            if [ "${HERMES_NATIVE_SYSTEM_PACKAGES_STAGE:-}" = "1" ]; then
+                log_info "Skipping system packages; native bootstrap system-packages stage owns it"
+            else
+                check_network_prerequisites
+                install_system_packages
+            fi
             ;;
         repository)
             detect_os
             resolve_install_layout
+            if [ "${HERMES_NATIVE_REPOSITORY_ARCHIVE:-}" = "1" ]; then
+                log_info "Repository stage handled by native bootstrap archive"
+                return 0
+            fi
             check_git
             clone_repo
             ;;
@@ -2609,6 +3146,12 @@ run_stage_body() {
             require_install_dir
             copy_config_templates
             ;;
+        platform-sdks)
+            detect_os
+            resolve_install_layout
+            require_install_dir
+            install_platform_sdks
+            ;;
         setup)
             detect_os
             resolve_install_layout
@@ -2631,6 +3174,12 @@ run_stage_body() {
             # so install_desktop can find npm instead of silently skipping.
             check_node
             install_desktop
+            ;;
+        bootstrap-marker)
+            detect_os
+            resolve_install_layout
+            require_install_dir
+            write_bootstrap_marker
             ;;
         complete)
             detect_os

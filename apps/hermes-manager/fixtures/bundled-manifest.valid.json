@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "hermes_version": "0.16.0",
+  "source_commit": "615ad9792",
+  "resources": [
+    {
+      "kind": "agent_snapshot",
+      "path": "resources/agent",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "kind": "core_wheelhouse",
+      "path": "resources/wheelhouse",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ]
+}

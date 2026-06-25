@@ -859,8 +859,7 @@ def _run_chrome_fallback_command(
 
     task_socket_dir = os.path.join(_socket_safe_tmpdir(), f"agent-browser-{tmp_session}")
     os.makedirs(task_socket_dir, mode=0o700, exist_ok=True)
-    browser_env = {**os.environ, "AGENT_BROWSER_SOCKET_DIR": task_socket_dir}
-    browser_env["PATH"] = _merge_browser_path(browser_env.get("PATH", ""))
+    browser_env = _browser_subprocess_env(os.environ, task_socket_dir)
 
     if "AGENT_BROWSER_IDLE_TIMEOUT_MS" not in browser_env:
         browser_env["AGENT_BROWSER_IDLE_TIMEOUT_MS"] = str(BROWSER_SESSION_INACTIVITY_TIMEOUT * 1000)
@@ -1993,12 +1992,9 @@ def _run_browser_command(
         logger.debug("browser cmd=%s task=%s socket_dir=%s (%d chars)",
                      command, task_id, task_socket_dir, len(task_socket_dir))
 
-        browser_env = {**os.environ}
-
         # Ensure subprocesses inherit the same browser-specific PATH fallbacks
-        # used during CLI discovery.
-        browser_env["PATH"] = _merge_browser_path(browser_env.get("PATH", ""))
-        browser_env["AGENT_BROWSER_SOCKET_DIR"] = task_socket_dir
+        # and browser cache location used during CLI discovery.
+        browser_env = _browser_subprocess_env(os.environ, task_socket_dir)
 
         # Tell the agent-browser daemon to self-terminate after being idle
         # for our configured inactivity timeout.  This is the daemon-side
@@ -3549,6 +3545,21 @@ def cleanup_all_browsers() -> None:
 _cached_chromium_installed: Optional[bool] = None
 
 
+def _managed_playwright_browsers_path() -> str:
+    """Return Hermes' managed Playwright browser download directory."""
+    return str(get_hermes_home() / "playwright-browsers")
+
+
+def _browser_subprocess_env(base_env: Dict[str, str], task_socket_dir: str) -> Dict[str, str]:
+    """Build the environment inherited by agent-browser subprocesses."""
+    browser_env = {**base_env}
+    browser_env["PATH"] = _merge_browser_path(browser_env.get("PATH", ""))
+    browser_env["AGENT_BROWSER_SOCKET_DIR"] = task_socket_dir
+    if "PLAYWRIGHT_BROWSERS_PATH" not in browser_env:
+        browser_env["PLAYWRIGHT_BROWSERS_PATH"] = _managed_playwright_browsers_path()
+    return browser_env
+
+
 def _chromium_search_roots() -> List[str]:
     """Directories to scan for a Chromium / headless-shell build.
 
@@ -3556,15 +3567,19 @@ def _chromium_search_roots() -> List[str]:
 
     1. ``PLAYWRIGHT_BROWSERS_PATH`` when set (Docker image sets this to
        ``/opt/hermes/.playwright``).
-    2. ``~/.cache/ms-playwright`` — Playwright's default on Linux/macOS.
-    3. ``~/Library/Caches/ms-playwright`` — Playwright's default on macOS.
-    4. ``%USERPROFILE%\\AppData\\Local\\ms-playwright`` — Playwright's default
+    2. Hermes-managed ``$HERMES_HOME/playwright-browsers`` when no explicit
+       Playwright browser path is configured.
+    3. ``~/.cache/ms-playwright`` — Playwright's default on Linux/macOS.
+    4. ``~/Library/Caches/ms-playwright`` — Playwright's default on macOS.
+    5. ``%USERPROFILE%\\AppData\\Local\\ms-playwright`` — Playwright's default
        on Windows.
     """
     roots: List[str] = []
     env_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
     if env_path and env_path != "0":
         roots.append(env_path)
+    elif env_path != "0":
+        roots.append(_managed_playwright_browsers_path())
     home = os.path.expanduser("~")
     roots.append(os.path.join(home, ".cache", "ms-playwright"))
     if sys.platform == "darwin":

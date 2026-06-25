@@ -20,11 +20,10 @@ pub struct StreamSink {
 }
 
 /// Outcome of a script invocation. Mirrors bootstrap-runner.cjs's
-/// `{stdout, stderr, code, signal, killed}` shape.
+/// `{stdout, code, signal, killed}` shape.
 #[derive(Debug)]
 pub struct ScriptResult {
     pub stdout: String,
-    pub stderr: String,
     pub exit_code: Option<i32>,
     pub killed: bool,
 }
@@ -41,6 +40,7 @@ pub async fn run_script(
     args: &[String],
     sink: StreamSink,
     hermes_home_override: Option<&str>,
+    extra_env: &[(String, String)],
     mut cancel_rx: Option<CancelRx>,
 ) -> Result<ScriptResult> {
     let mut cmd = build_command(script_path, args);
@@ -55,6 +55,9 @@ pub async fn run_script(
 
     if let Some(home) = hermes_home_override {
         cmd.env("HERMES_HOME", home);
+    }
+    for (key, value) in extra_env {
+        cmd.env(key, value);
     }
 
     cmd.stdin(Stdio::null())
@@ -148,7 +151,6 @@ pub async fn run_script(
 
     Ok(ScriptResult {
         stdout: combined_stdout,
-        stderr: combined_stderr,
         exit_code: status.code(),
         killed,
     })
@@ -193,12 +195,21 @@ fn build_command(script_path: &Path, args: &[String]) -> Command {
 fn build_command(script_path: &Path, args: &[String]) -> Command {
     // install.sh expects bash. /bin/bash is fine on macOS (Apple still
     // ships an old 3.2 bash; install.sh is written to that baseline).
-    let mut cmd = Command::new("bash");
+    let mut cmd = Command::new(unix_bash_exe());
     cmd.arg(script_path);
     for a in args {
         cmd.arg(a);
     }
     cmd
+}
+
+#[cfg(not(target_os = "windows"))]
+fn unix_bash_exe() -> &'static str {
+    if Path::new("/bin/bash").is_file() {
+        "/bin/bash"
+    } else {
+        "bash"
+    }
 }
 
 /// Canonical PowerShell 5.1 location under a Windows root (`%SystemRoot%`).
@@ -252,7 +263,7 @@ fn interpreter_label() -> String {
 
 #[cfg(not(target_os = "windows"))]
 fn interpreter_label() -> String {
-    "bash".to_string()
+    unix_bash_exe().to_string()
 }
 
 /// Parses the LAST line of stdout that looks like a JSON object matching
@@ -283,6 +294,7 @@ pub fn parse_stage_result(stdout: &str) -> Option<crate::events::StageResultPayl
 
 /// Same logic but for the `-Manifest` payload (the LAST line with a `stages`
 /// array). Returns the parsed manifest.
+#[cfg(test)]
 pub fn parse_manifest(stdout: &str) -> Option<crate::events::Manifest> {
     for line in stdout.lines().rev() {
         let trimmed = line.trim();
@@ -353,5 +365,54 @@ info line
             normalized.ends_with("System32/WindowsPowerShell/v1.0/powershell.exe"),
             "unexpected powershell path: {normalized}"
         );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn unix_bash_exe_prefers_absolute_system_bash() {
+        if Path::new("/bin/bash").is_file() {
+            assert_eq!(unix_bash_exe(), "/bin/bash");
+        }
+    }
+
+    #[tokio::test]
+    async fn run_script_propagates_extra_env() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "hermes-run-script-env-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let script = root.join(if cfg!(target_os = "windows") {
+            "env-test.ps1"
+        } else {
+            "env-test.sh"
+        });
+        let script_text = if cfg!(target_os = "windows") {
+            "Write-Output $env:HERMES_NATIVE_REPOSITORY_ARCHIVE\n"
+        } else {
+            "printf '%s\\n' \"$HERMES_NATIVE_REPOSITORY_ARCHIVE\"\n"
+        };
+        std::fs::write(&script, script_text).unwrap();
+        let result = run_script(
+            &script,
+            &[],
+            StreamSink {
+                on_stdout_line: Box::new(|_| {}),
+                on_stderr_line: Box::new(|_| {}),
+            },
+            None,
+            &[("HERMES_NATIVE_REPOSITORY_ARCHIVE".to_string(), "1".to_string())],
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.stdout.trim(), "1");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

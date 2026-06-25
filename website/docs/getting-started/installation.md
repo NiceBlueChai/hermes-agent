@@ -10,7 +10,7 @@ Get Hermes Agent up and running in under two minutes!
 
 ## Quick Install
 ### With the Hermes Desktop installer on macOS or Windows (recommended)
-To easily install the command-line and desktop applications, [download the Hermes Desktop installer](https://hermes-agent.nousresearch.com/desktop) from our website and run it.
+To easily install the command-line and desktop applications, [download the Hermes Desktop installer](https://hermes-agent.nousresearch.com/desktop) from our website and run it. Release builds use a Rust-backed bootstrapper first, so reviewed tool archives and Python wheels can be installed from the package before the installer falls back to online scripts.
 
 ### Without Hermes Desktop:
 For a command-line only install without Hermes Desktop, run:
@@ -35,6 +35,14 @@ hermes desktop
 ### What the Installer Does
 
 The installer handles everything automatically — all dependencies (Python, Node.js, ripgrep, ffmpeg), the repo clone, virtual environment, global `hermes` command setup, and LLM provider configuration. By the end, you're ready to chat.
+
+### Packaged Installer Behavior
+
+The macOS and Windows desktop installers are the most self-contained path. They run a native Rust bootstrapper that owns repository archive setup, PATH/profile updates, shortcuts, install metadata, repair cleanup, and the lightweight uninstall path. When the release package contains bundled bootstrap resources, the installer validates the manifest, target platform, architecture, size, SHA-256, and source metadata before using them.
+
+Packaged releases can include reviewed Node.js, `uv`, Git for Windows, ripgrep, and a Python wheelhouse. Those resources are tried before network downloads, so fresh installs spend less time resolving Python/npm dependencies and are less sensitive to PyPI, npm, GitHub, or Git-for-Windows availability. The direct `install.sh` and `install.ps1` scripts remain supported and still act as fallback paths for unsupported platforms, missing bundled resources, or failed native recovery.
+
+Browser automation keeps the existing feature set: the installer first reuses a compatible Chrome, Chromium, Edge, or Brave installation when it can find one; otherwise it falls back to Playwright Chromium setup. `ffmpeg` and Playwright browser binaries are not bundled by default unless a release explicitly accepts that size and update cadence tradeoff.
 
 #### Install Layout
 

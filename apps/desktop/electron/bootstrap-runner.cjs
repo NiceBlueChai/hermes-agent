@@ -38,7 +38,7 @@ const fs = require('node:fs')
 const fsp = require('node:fs/promises')
 const path = require('node:path')
 const https = require('node:https')
-const { spawn } = require('node:child_process')
+const { execFileSync, spawn } = require('node:child_process')
 
 const IS_WINDOWS = process.platform === 'win32'
 
@@ -609,7 +609,13 @@ async function runBootstrap(opts) {
     logRoot,
     onEvent,
     abortSignal,
-    writeMarker // callback to write the bootstrap-complete marker; main.cjs provides
+    writeMarker, // callback to write the bootstrap-complete marker; main.cjs provides
+    resourcesPath,
+    platform = process.platform,
+    _recordInstallMetadata = recordInstallMetadata,
+    _probeNativeBootstrapCapabilities = probeNativeBootstrapCapabilities,
+    _probeNativeBootstrapManifest = probeNativeBootstrapManifest,
+    _runNativeBootstrapStage = runNativeBootstrapStage
   } = opts
 
   // Bail before spawning anything if the user already cancelled — otherwise an
@@ -654,19 +660,64 @@ async function runBootstrap(opts) {
   })
 
   try {
-    // 1. Resolve the platform installer.
-    const scriptInfo = await resolveInstallScript({ installStamp, sourceRepoRoot, hermesHome, emit })
-    const installerKind = scriptInfo.kind || 'powershell'
+    const nativeProbe = _probeNativeBootstrapCapabilities({ hermesHome, resourcesPath, platform })
+    let nativeManifest = { available: false, protocolVersion: null, stages: [] }
+    let nativeStageNames = new Set()
+    if (nativeProbe.available) {
+      emit({
+        type: 'log',
+        line:
+          '[bootstrap] native bootstrap bridge available; ' +
+          `canRunFullBootstrap=${nativeProbe.canRunFullBootstrap}; ` +
+          `stages=${nativeProbe.supportedStages.join(',') || '<none>'}`
+      })
+      nativeManifest = _probeNativeBootstrapManifest({ hermesHome, resourcesPath, platform })
+      if (nativeManifest.available) {
+        const supportedStages = new Set(nativeProbe.supportedStages || [])
+        nativeStageNames = new Set(
+          nativeManifest.stages
+            .map(stage => stage.name)
+            .filter(name => supportedStages.has(name))
+        )
+        emit({
+          type: 'log',
+          line:
+            '[bootstrap] native bootstrap manifest available; ' +
+            `protocol=${nativeManifest.protocolVersion}; ` +
+            `stages=${nativeManifest.stages.map(stage => stage.name).join(',') || '<none>'}`
+        })
+      }
+    }
 
-    // 2. Fetch manifest
-    const manifest = await fetchManifest({
-      scriptPath: scriptInfo.path,
-      installerKind,
-      emit,
-      hermesHome,
-      activeRoot,
-      installStamp
-    })
+    let scriptInfo = null
+    let installerKind = null
+    let manifest = null
+    if (nativeProbe.available && nativeProbe.canRunFullBootstrap && nativeManifest.available) {
+      emit({
+        type: 'log',
+        line: '[bootstrap] using full native bootstrap manifest; script fallback is not required'
+      })
+      manifest = {
+        stages: nativeManifest.stages,
+        protocolVersion: nativeManifest.protocolVersion || null
+      }
+    } else {
+      // HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback
+      // Keep script bootstrap until the native bridge can run every first-launch stage.
+      // 1. Resolve the platform installer.
+      scriptInfo = await resolveInstallScript({ installStamp, sourceRepoRoot, hermesHome, emit })
+      installerKind = scriptInfo.kind || 'powershell'
+
+      // 2. Fetch manifest
+      manifest = await fetchManifest({
+        scriptPath: scriptInfo.path,
+        installerKind,
+        emit,
+        hermesHome,
+        activeRoot,
+        installStamp
+      })
+    }
     emit({
       type: 'manifest',
       stages: manifest.stages,
@@ -682,16 +733,67 @@ async function runBootstrap(opts) {
         emit({ type: 'failed', error: 'bootstrap cancelled by user' })
         return { ok: false, cancelled: true }
       }
-      const ev = await runStage({
-        scriptPath: scriptInfo.path,
-        installerKind,
-        stage,
-        emit,
-        hermesHome,
-        activeRoot,
-        abortSignal,
-        installStamp
-      })
+      let ev
+      if (nativeStageNames.has(stage.name)) {
+        emit({ type: 'stage', name: stage.name, state: 'running', runner: 'native' })
+        ev = await _runNativeBootstrapStage({
+          stage,
+          hermesHome,
+          activeRoot,
+          resourcesPath,
+          platform,
+          abortSignal,
+          installStamp
+        })
+        emit(ev)
+        if (ev.state === 'failed' && ev.fallbackToScript) {
+          if (!scriptInfo) {
+            ev = {
+              ...ev,
+              error: `${ev.error || 'native bootstrap stage failed'}; script fallback is unavailable`
+            }
+          } else {
+            emit({
+              type: 'log',
+              stage: stage.name,
+              line: `[bootstrap] native stage ${stage.name} unavailable; falling back to script stage ${stage.name}`,
+              stream: 'stderr'
+            })
+            ev = await runStage({
+              scriptPath: scriptInfo.path,
+              installerKind,
+              stage,
+              emit,
+              hermesHome,
+              activeRoot,
+              abortSignal,
+              installStamp
+            })
+          }
+        }
+      } else {
+        if (!scriptInfo) {
+          ev = {
+            type: 'stage',
+            name: stage.name,
+            state: 'failed',
+            durationMs: 0,
+            runner: 'native',
+            error: `native bootstrap manifest stage ${stage.name} is not supported by the native bridge`
+          }
+        } else {
+          ev = await runStage({
+            scriptPath: scriptInfo.path,
+            installerKind,
+            stage,
+            emit,
+            hermesHome,
+            activeRoot,
+            abortSignal,
+            installStamp
+          })
+        }
+      }
       if (ev.state === 'failed') {
         emit({ type: 'failed', stage: stage.name, error: ev.error || 'stage failed' })
         return { ok: false, failedStage: stage.name, error: ev.error }
@@ -704,6 +806,21 @@ async function runBootstrap(opts) {
       pinnedBranch: installStamp ? installStamp.branch : null
     }
     const marker = typeof writeMarker === 'function' ? writeMarker(markerPayload) : markerPayload
+    try {
+      const recorded = _recordInstallMetadata({ hermesHome, resourcesPath, platform })
+      emit({
+        type: 'log',
+        line: recorded
+          ? '[bootstrap] native manager install metadata recorded'
+          : '[bootstrap] native manager install metadata skipped'
+      })
+    } catch (err) {
+      emit({
+        type: 'log',
+        line: `[bootstrap] native manager install metadata failed: ${err.message || String(err)}`,
+        stream: 'stderr'
+      })
+    }
     emit({ type: 'complete', marker })
     return { ok: true, marker }
   } catch (err) {
@@ -711,17 +828,226 @@ async function runBootstrap(opts) {
     return { ok: false, error: err.message || String(err) }
   } finally {
     try {
-      runLog.stream.end()
+      await new Promise(resolve => runLog.stream.end(resolve))
     } catch {
       void 0
     }
   }
 }
 
+function resolveHermesManagerPath(resourcesPath, platform = process.platform, exists = fs.existsSync) {
+  const root = String(resourcesPath || '')
+  if (!root) return null
+  const p = platform === 'win32' ? path.win32 : path.posix
+  const exe = platform === 'win32' ? 'hermes-manager.exe' : 'hermes-manager'
+  const candidate = p.join(root, 'hermes-manager', exe)
+  return exists(candidate) ? candidate : null
+}
+
+function recordInstallMetadata({
+  hermesHome,
+  resourcesPath,
+  platform = process.platform,
+  exists = fs.existsSync,
+  _execFileSync = execFileSync
+}) {
+  const managerPath = resolveHermesManagerPath(resourcesPath, platform, exists)
+  if (!managerPath) return false
+  const stdout = _execFileSync(
+    managerPath,
+    ['--hermes-home', hermesHome, '--json', 'bootstrap-stage', 'install-metadata'],
+    hiddenWindowsChildOptions({
+      cwd: hermesHome,
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+  )
+  const parsed = JSON.parse(Buffer.isBuffer(stdout) ? stdout.toString('utf8') : String(stdout))
+  if (!parsed || parsed.ok !== true || parsed.stage !== 'install-metadata') {
+    throw new Error('native install-metadata bootstrap stage did not report success')
+  }
+  return true
+}
+
+async function runNativeBootstrapStage({
+  stage,
+  hermesHome,
+  activeRoot,
+  resourcesPath,
+  platform = process.platform,
+  abortSignal,
+  installStamp,
+  exists = fs.existsSync,
+  _execFileSync = execFileSync
+}) {
+  const startedAt = Date.now()
+  if (abortSignal && abortSignal.aborted) {
+    return { type: 'stage', name: stage.name, state: 'failed', durationMs: 0, error: 'cancelled by user' }
+  }
+
+  const managerPath = resolveHermesManagerPath(resourcesPath, platform, exists)
+  if (!managerPath) {
+    return {
+      type: 'stage',
+      name: stage.name,
+      state: 'failed',
+      durationMs: Date.now() - startedAt,
+      error: 'native bootstrap bridge is unavailable'
+    }
+  }
+
+  try {
+    const args = ['--hermes-home', hermesHome, '--json', 'bootstrap-stage', stage.name]
+    if (activeRoot) {
+      args.push('--install-root', activeRoot)
+    }
+    if (resourcesPath) {
+      const platformPath = platform === 'win32' ? path.win32 : path.posix
+      args.push('--wheelhouse-dir', platformPath.join(resourcesPath, 'wheelhouse'))
+      args.push('--bootstrap-tools-dir', platformPath.join(resourcesPath, 'bootstrap-tools'))
+    }
+    if (installStamp && installStamp.commit) {
+      args.push('--commit', installStamp.commit)
+    }
+    if (installStamp && installStamp.branch) {
+      args.push('--branch', installStamp.branch)
+    }
+    const stdout = _execFileSync(
+      managerPath,
+      args,
+      hiddenWindowsChildOptions({
+        cwd: hermesHome,
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+    )
+    const json = parseStageResult(Buffer.isBuffer(stdout) ? stdout.toString('utf8') : String(stdout))
+    const durationMs = Date.now() - startedAt
+    if (!json) {
+      return {
+        type: 'stage',
+        name: stage.name,
+        state: 'failed',
+        durationMs,
+        error: `hermes-manager bootstrap-stage ${stage.name} produced no JSON result frame`,
+        json: null
+      }
+    }
+    if (json.ok && json.skipped) {
+      return { type: 'stage', name: stage.name, state: 'skipped', durationMs, runner: 'native', json }
+    }
+    if (json.ok) {
+      return { type: 'stage', name: stage.name, state: 'succeeded', durationMs, runner: 'native', json }
+    }
+    const failureCategory = json.failureCategory || json.failure_category || null
+    return {
+      type: 'stage',
+      name: stage.name,
+      state: 'failed',
+      durationMs,
+      runner: 'native',
+      json,
+      error: json.reason || 'native bootstrap stage failed',
+      fallbackToScript: failureCategory === 'unknown-stage' || failureCategory === 'fallback-to-script'
+    }
+  } catch (err) {
+    return {
+      type: 'stage',
+      name: stage.name,
+      state: 'failed',
+      durationMs: Date.now() - startedAt,
+      runner: 'native',
+      error: err && err.message ? err.message : String(err),
+      fallbackToScript: err && err.status === 2
+    }
+  }
+}
+
+function probeNativeBootstrapCapabilities({
+  hermesHome,
+  resourcesPath,
+  platform = process.platform,
+  exists = fs.existsSync,
+  _execFileSync = execFileSync
+}) {
+  const managerPath = resolveHermesManagerPath(resourcesPath, platform, exists)
+  if (!managerPath) {
+    return { available: false, canRunFullBootstrap: false, supportedStages: [] }
+  }
+  try {
+    const stdout = _execFileSync(
+      managerPath,
+      ['--hermes-home', hermesHome, '--json', 'bootstrap-capabilities'],
+      hiddenWindowsChildOptions({
+        cwd: hermesHome,
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+    )
+    const parsed = JSON.parse(Buffer.isBuffer(stdout) ? stdout.toString('utf8') : String(stdout))
+    if (
+      parsed &&
+      parsed.ok === true &&
+      parsed.command === 'bootstrap-capabilities' &&
+      parsed.schemaVersion === 1
+    ) {
+      return {
+        available: true,
+        canRunFullBootstrap: parsed.canRunFullBootstrap === true,
+        supportedStages: Array.isArray(parsed.supportedStages) ? parsed.supportedStages.filter(Boolean) : []
+      }
+    }
+  } catch {
+    void 0
+  }
+  return { available: false, canRunFullBootstrap: false, supportedStages: [] }
+}
+
+function probeNativeBootstrapManifest({
+  hermesHome,
+  resourcesPath,
+  platform = process.platform,
+  exists = fs.existsSync,
+  _execFileSync = execFileSync
+}) {
+  const managerPath = resolveHermesManagerPath(resourcesPath, platform, exists)
+  if (!managerPath) {
+    return { available: false, protocolVersion: null, stages: [] }
+  }
+  try {
+    const stdout = _execFileSync(
+      managerPath,
+      ['--hermes-home', hermesHome, '--json', 'bootstrap-manifest'],
+      hiddenWindowsChildOptions({
+        cwd: hermesHome,
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+    )
+    const parsed = JSON.parse(Buffer.isBuffer(stdout) ? stdout.toString('utf8') : String(stdout))
+    if (
+      parsed &&
+      parsed.ok === true &&
+      parsed.command === 'bootstrap-manifest' &&
+      Array.isArray(parsed.stages)
+    ) {
+      return {
+        available: true,
+        protocolVersion: parsed.protocol_version || parsed.protocolVersion || null,
+        stages: parsed.stages.filter(stage => stage && typeof stage.name === 'string')
+      }
+    }
+  } catch {
+    void 0
+  }
+  return { available: false, protocolVersion: null, stages: [] }
+}
+
 module.exports = {
   runBootstrap,
   // Exposed for testability
   parseStageResult,
+  probeNativeBootstrapCapabilities,
+  probeNativeBootstrapManifest,
+  runNativeBootstrapStage,
+  recordInstallMetadata,
+  resolveHermesManagerPath,
   resolveLocalInstallScript,
   resolveInstallScript,
   installedAgentInstallScript,

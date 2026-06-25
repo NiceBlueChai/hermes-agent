@@ -616,6 +616,7 @@ def test_maybe_run_curator_runs_when_eligible(curator_env, monkeypatch):
     skills_dir = curator_env["home"] / "skills"
     _write_skill(skills_dir, "a")
     u.mark_agent_created("a")
+    monkeypatch.setattr(c, "run_curator_review", lambda **_kw: {"started_at": "stub"})
     # Seed last_run_at far in the past so the interval gate opens — the
     # "no state" path intentionally defers the first run now (#18373).
     long_ago = datetime.now(timezone.utc) - timedelta(hours=c.get_interval_hours() * 2)

@@ -29,6 +29,8 @@
  */
 
 const fs = require('node:fs')
+const crypto = require('node:crypto')
+const { spawnSync } = require('node:child_process')
 const path = require('node:path')
 
 const APP_ROOT = path.resolve(__dirname, '..')
@@ -38,7 +40,7 @@ const STAGE_ROOT = path.join(APP_ROOT, 'build', 'native-deps')
 // The target arch may be overridden by electron-builder via npm_config_arch
 // (e.g. `npm run dist -- --arm64`); fall back to the build host's arch.
 const TARGET_ARCH = process.env.npm_config_arch || process.arch
-const TARGET_PLATFORM = process.platform
+const TARGET_PLATFORM = normalizeTargetPlatform(process.env.HERMES_DESKTOP_TARGET_PLATFORM || process.platform)
 
 // Modules to stage. The "from" path is the hoisted location in the workspace
 // root; "to" is the layout we want inside build/native-deps/.  The "include"
@@ -72,6 +74,82 @@ function rmrf(target) {
 
 function ensureDir(target) {
   fs.mkdirSync(target, { recursive: true })
+}
+
+function normalizeTargetPlatform(platform) {
+  if (platform === 'win') return 'win32'
+  if (platform === 'mac') return 'darwin'
+  return platform
+}
+
+function readPackageVersion(appRoot = APP_ROOT) {
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'))
+    return packageJson.version || '0.0.0'
+  } catch {
+    return '0.0.0'
+  }
+}
+
+function resolveSourceCommit(repoRoot = REPO_ROOT) {
+  const result = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    windowsHide: true
+  })
+  if (result.status === 0 && result.stdout.trim()) {
+    return result.stdout.trim()
+  }
+  return 'unknown'
+}
+
+function sha256File(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
+}
+
+function embeddedInstallScripts(repoRoot = REPO_ROOT) {
+  return ['install.ps1', 'install.sh']
+    .map(name => {
+      const file = path.join(repoRoot, 'scripts', name)
+      if (!fs.existsSync(file)) return null
+      const bytes = fs.readFileSync(file)
+      return {
+        kind: 'install_script',
+        name,
+        size_bytes: bytes.length,
+        sha256: crypto.createHash('sha256').update(bytes).digest('hex')
+      }
+    })
+    .filter(Boolean)
+}
+
+function writeManagerManifest({
+  appRoot = APP_ROOT,
+  hermesVersion = readPackageVersion(appRoot),
+  managerDest,
+  platform,
+  repoRoot = REPO_ROOT,
+  sourceCommit = resolveSourceCommit(REPO_ROOT)
+}) {
+  const managerName = platform === 'win32' ? 'hermes-manager.exe' : 'hermes-manager'
+  const manifest = {
+    schema_version: 1,
+    hermes_version: hermesVersion,
+    source_commit: sourceCommit,
+    resources: [
+      {
+        kind: 'tool',
+        path: managerName,
+        sha256: sha256File(managerDest)
+      }
+    ],
+    embedded_resources: embeddedInstallScripts(repoRoot)
+  }
+  fs.writeFileSync(
+    path.join(path.dirname(managerDest), 'bundled-manifest.json'),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    'utf8'
+  )
 }
 
 function walk(root) {
@@ -148,12 +226,60 @@ function stageOne(spec) {
   console.log(`[stage-native-deps] ${path.relative(APP_ROOT, spec.to)}: ${copied} files`)
 }
 
+function stageManagerBinary({
+  appRoot = APP_ROOT,
+  hermesVersion,
+  log = console.log,
+  platform = TARGET_PLATFORM,
+  requireManager = process.env.HERMES_DESKTOP_REQUIRE_MANAGER === '1',
+  repoRoot = REPO_ROOT,
+  sourceCommit
+} = {}) {
+  platform = normalizeTargetPlatform(platform)
+  const managerName = platform === 'win32' ? 'hermes-manager.exe' : 'hermes-manager'
+  const managerSource = path.join(repoRoot, 'apps', 'hermes-manager', 'target', 'release', managerName)
+  const managerDestDir = path.join(appRoot, 'build', 'hermes-manager')
+  const managerDest = path.join(managerDestDir, managerName)
+
+  rmrf(managerDestDir)
+
+  if (fs.existsSync(managerSource)) {
+    fs.mkdirSync(managerDestDir, { recursive: true })
+    fs.copyFileSync(managerSource, managerDest)
+    writeManagerManifest({
+      appRoot,
+      hermesVersion: hermesVersion || readPackageVersion(appRoot),
+      managerDest,
+      platform,
+      repoRoot,
+      sourceCommit: sourceCommit || resolveSourceCommit(repoRoot)
+    })
+    log(`[stage-native-deps] hermes-manager: copied ${path.relative(appRoot, managerDest)}`)
+  } else if (requireManager) {
+    throw new Error(
+      `hermes-manager is required for desktop release packaging but was not found at ` +
+        `${managerSource}. Run \`npm run build:manager\` before packaging.`
+    )
+  } else {
+    log(
+      `[stage-native-deps] hermes-manager: ${path.relative(repoRoot, managerSource)} not found; ` +
+        'packaged app will use existing Python uninstall fallback'
+    )
+  }
+}
+
 function main() {
   rmrf(STAGE_ROOT)
   ensureDir(STAGE_ROOT)
   for (const spec of NATIVE_DEPS) {
     stageOne(spec)
   }
+
+  stageManagerBinary()
 }
 
-main()
+module.exports = { embeddedInstallScripts, normalizeTargetPlatform, stageManagerBinary, writeManagerManifest }
+
+if (require.main === module) {
+  main()
+}

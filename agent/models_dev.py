@@ -20,6 +20,7 @@ rather than parsing the raw JSON themselves.
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -287,6 +288,9 @@ def fetch_models_dev(force_refresh: bool = False) -> Dict[str, Any]:
                     "(%d providers, age=%.0fs)", len(disk_data), disk_age,
                 )
                 return _models_dev_cache
+
+    if os.getenv("PYTEST_HERMES_MODELS_DEV_OFFLINE") == "1":
+        return {}
 
     # Stage 3: network fetch.
     try:
@@ -644,8 +648,12 @@ def _parse_model_info(model_id: str, raw: Dict[str, Any], provider_id: str) -> M
         max_input=inp_int,
         cost_input=float(cost.get("input", 0) or 0),
         cost_output=float(cost.get("output", 0) or 0),
-        cost_cache_read=float(cost["cache_read"]) if "cache_read" in cost and cost["cache_read"] is not None else None,
-        cost_cache_write=float(cost["cache_write"]) if "cache_write" in cost and cost["cache_write"] is not None else None,
+        cost_cache_read=(
+            float(cost["cache_read"]) if "cache_read" in cost and cost["cache_read"] is not None else None
+        ),
+        cost_cache_write=(
+            float(cost["cache_write"]) if "cache_write" in cost and cost["cache_write"] is not None else None
+        ),
         knowledge_cutoff=raw.get("knowledge", "") or "",
         release_date=raw.get("release_date", "") or "",
         status=raw.get("status", "") or "",

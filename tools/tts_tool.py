@@ -53,8 +53,19 @@ from typing import Callable, Dict, Any, Optional
 from urllib.parse import urljoin
 
 from hermes_constants import display_hermes_home
+from tools.managed_binaries import find_binary_on_path_or_hermes_home
+from tools.managed_tool_gateway import resolve_managed_tool_gateway
+from tools.tool_backend_helpers import (
+    managed_nous_tools_enabled,
+    nous_tool_gateway_unavailable_message,
+    prefers_gateway,
+    resolve_openai_audio_api_key,
+)
+from tools.xai_http import hermes_xai_user_agent
 
 logger = logging.getLogger(__name__)
+
+
 def get_env_value(name, default=None):
     """Read env values through the live config module.
 
@@ -68,14 +79,6 @@ def get_env_value(name, default=None):
         return os.getenv(name, default)
     value = _get_env_value(name)
     return default if value is None else value
-from tools.managed_tool_gateway import resolve_managed_tool_gateway
-from tools.tool_backend_helpers import (
-    managed_nous_tools_enabled,
-    nous_tool_gateway_unavailable_message,
-    prefers_gateway,
-    resolve_openai_audio_api_key,
-)
-from tools.xai_http import hermes_xai_user_agent
 
 # ---------------------------------------------------------------------------
 # Lazy imports -- providers are imported only when actually used to avoid
@@ -880,7 +883,12 @@ def _has_any_command_tts_provider(tts_config: Optional[Dict[str, Any]] = None) -
 # ===========================================================================
 def _has_ffmpeg() -> bool:
     """Check if ffmpeg is available on the system."""
-    return shutil.which("ffmpeg") is not None
+    return _find_ffmpeg_binary() is not None
+
+
+def _find_ffmpeg_binary() -> Optional[str]:
+    """Find ffmpeg on PATH or under the Hermes-managed runtime bin directory."""
+    return find_binary_on_path_or_hermes_home("ffmpeg")
 
 
 def _convert_to_opus(mp3_path: str) -> Optional[str]:
@@ -898,8 +906,11 @@ def _convert_to_opus(mp3_path: str) -> Optional[str]:
 
     ogg_path = mp3_path.rsplit(".", 1)[0] + ".ogg"
     try:
+        ffmpeg = _find_ffmpeg_binary()
+        if not ffmpeg:
+            return None
         result = subprocess.run(
-            ["ffmpeg", "-i", mp3_path, "-acodec", "libopus",
+            [ffmpeg, "-i", mp3_path, "-acodec", "libopus",
              "-ac", "1", "-b:a", "64k", "-vbr", "off", ogg_path, "-y"],
             capture_output=True, timeout=30,
             stdin=subprocess.DEVNULL,
@@ -1669,7 +1680,7 @@ def _generate_gemini_tts(text: str, output_path: str, tts_config: Dict[str, Any]
         wav_path = tmp.name
 
     try:
-        ffmpeg = shutil.which("ffmpeg")
+        ffmpeg = _find_ffmpeg_binary()
         if ffmpeg:
             # For .ogg output, force libopus encoding (Telegram voice bubbles
             # require Opus specifically; ffmpeg's default for .ogg is Vorbis).
@@ -1775,7 +1786,7 @@ def _generate_neutts(text: str, output_path: str, tts_config: Dict[str, Any]) ->
 
     # If the caller wanted .mp3 or .ogg, convert from WAV
     if wav_path != output_path:
-        ffmpeg = shutil.which("ffmpeg")
+        ffmpeg = _find_ffmpeg_binary()
         if ffmpeg:
             conv_cmd = [ffmpeg, "-i", wav_path, "-y", "-loglevel", "error", output_path]
             subprocess.run(conv_cmd, check=True, timeout=30, stdin=subprocess.DEVNULL)
@@ -1934,7 +1945,7 @@ def _generate_piper_tts(text: str, output_path: str, tts_config: Dict[str, Any])
 
     # Convert to desired format if caller requested mp3/ogg
     if wav_path != output_path:
-        ffmpeg = shutil.which("ffmpeg")
+        ffmpeg = _find_ffmpeg_binary()
         if ffmpeg:
             conv_cmd = [ffmpeg, "-i", wav_path, "-y", "-loglevel", "error", output_path]
             subprocess.run(conv_cmd, check=True, timeout=30, stdin=subprocess.DEVNULL)
@@ -2000,7 +2011,7 @@ def _generate_kittentts(text: str, output_path: str, tts_config: Dict[str, Any])
 
     # Convert to desired format if needed
     if wav_path != output_path:
-        ffmpeg = shutil.which("ffmpeg")
+        ffmpeg = _find_ffmpeg_binary()
         if ffmpeg:
             conv_cmd = [ffmpeg, "-i", wav_path, "-y", "-loglevel", "error", output_path]
             subprocess.run(conv_cmd, check=True, timeout=30, stdin=subprocess.DEVNULL)
@@ -2143,7 +2154,10 @@ def text_to_speech_tool(
             except ImportError:
                 return json.dumps({
                     "success": False,
-                    "error": "ElevenLabs provider selected but 'elevenlabs' package not installed. Run: pip install elevenlabs"
+                    "error": (
+                        "ElevenLabs provider selected but 'elevenlabs' package not installed. "
+                        "Run: pip install elevenlabs"
+                    )
                 }, ensure_ascii=False)
             logger.info("Generating speech with ElevenLabs...")
             _generate_elevenlabs(text, file_str, tts_config)
@@ -2188,7 +2202,8 @@ def text_to_speech_tool(
                 return json.dumps({
                     "success": False,
                     "error": "NeuTTS provider selected but neutts is not installed. "
-                             "Run hermes setup and choose NeuTTS, or install espeak-ng and run python -m pip install -U neutts[all]."
+                             "Run hermes setup and choose NeuTTS, or install espeak-ng and run "
+                             "python -m pip install -U neutts[all]."
                 }, ensure_ascii=False)
             logger.info("Generating speech with NeuTTS (local)...")
             _generate_neutts(text, file_str, tts_config)
@@ -2201,7 +2216,8 @@ def text_to_speech_tool(
                     "success": False,
                     "error": "KittenTTS provider selected but 'kittentts' package not installed. "
                              "Run 'hermes setup tts' and choose KittenTTS, or install manually: "
-                             "pip install https://github.com/KittenML/KittenTTS/releases/download/0.8.1/kittentts-0.8.1-py3-none-any.whl"
+                             "pip install https://github.com/KittenML/KittenTTS/releases/download/"
+                             "0.8.1/kittentts-0.8.1-py3-none-any.whl"
                 }, ensure_ascii=False)
             logger.info("Generating speech with KittenTTS (local, ~25MB)...")
             _generate_kittentts(text, file_str, tts_config)
@@ -2677,15 +2693,20 @@ if __name__ == "__main__":
             return False
 
     print("\nProvider availability:")
-    print(f"  Edge TTS:   {'installed' if _check(_import_edge_tts, 'edge') else 'not installed (pip install edge-tts)'}")
-    print(f"  ElevenLabs: {'installed' if _check(_import_elevenlabs, 'el') else 'not installed (pip install elevenlabs)'}")
+    edge_status = "installed" if _check(_import_edge_tts, "edge") else "not installed (pip install edge-tts)"
+    elevenlabs_status = (
+        "installed" if _check(_import_elevenlabs, "el") else "not installed (pip install elevenlabs)"
+    )
+    print(f"  Edge TTS:   {edge_status}")
+    print(f"  ElevenLabs: {elevenlabs_status}")
     print(f"    API Key:  {'set' if get_env_value('ELEVENLABS_API_KEY') else 'not set'}")
     print(f"  OpenAI:     {'installed' if _check(_import_openai_client, 'oai') else 'not installed'}")
     print(
         "    API Key:  "
         f"{'set' if resolve_openai_audio_api_key() else 'not set (VOICE_TOOLS_OPENAI_KEY or OPENAI_API_KEY)'}"
     )
-    print(f"  MiniMax:    {'API key set' if get_env_value('MINIMAX_API_KEY') else 'not set (MINIMAX_API_KEY)'}")
+    minimax_status = "API key set" if get_env_value("MINIMAX_API_KEY") else "not set (MINIMAX_API_KEY)"
+    print(f"  MiniMax:    {minimax_status}")
     print(f"  Piper:      {'installed' if _check_piper_available() else 'not installed (pip install piper-tts)'}")
     print(f"  ffmpeg:     {'✅ found' if _has_ffmpeg() else '❌ not found (needed for Telegram Opus)'}")
     print(f"\n  Output dir: {DEFAULT_OUTPUT_DIR}")
@@ -2702,17 +2723,30 @@ from tools.registry import registry, tool_error
 
 TTS_SCHEMA = {
     "name": "text_to_speech",
-    "description": "Convert text to speech audio. Returns a MEDIA: path that the platform delivers as native audio. Compatible providers render as a voice bubble on Telegram; otherwise audio is sent as a regular attachment. In CLI mode, saves to ~/voice-memos/. Voice and provider are user-configured (built-in providers like edge/openai or custom command providers under tts.providers.<name>), not model-selected.",
+    "description": (
+        "Convert text to speech audio. Returns a MEDIA: path that the platform delivers as native audio. "
+        "Compatible providers render as a voice bubble on Telegram; otherwise audio is sent as a regular "
+        "attachment. In CLI mode, saves to ~/voice-memos/. Voice and provider are user-configured "
+        "(built-in providers like edge/openai or custom command providers under tts.providers.<name>), "
+        "not model-selected."
+    ),
     "parameters": {
         "type": "object",
         "properties": {
             "text": {
                 "type": "string",
-                "description": "The text to convert to speech. Provider-specific character caps apply and are enforced automatically (OpenAI 4096, xAI 15000, MiniMax 10000, ElevenLabs 5k-40k depending on model); over-long input is truncated."
+                "description": (
+                    "The text to convert to speech. Provider-specific character caps apply and are enforced "
+                    "automatically (OpenAI 4096, xAI 15000, MiniMax 10000, ElevenLabs 5k-40k depending on "
+                    "model); over-long input is truncated."
+                )
             },
             "output_path": {
                 "type": "string",
-                "description": f"Optional custom file path to save the audio. Defaults to {display_hermes_home()}/audio_cache/<timestamp>.mp3"
+                "description": (
+                    "Optional custom file path to save the audio. Defaults to "
+                    f"{display_hermes_home()}/audio_cache/<timestamp>.mp3"
+                )
             }
         },
         "required": ["text"]

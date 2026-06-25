@@ -1,0 +1,4545 @@
+//! Command-line entrypoint for the Hermes install manager.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
+use std::time::Instant;
+use std::{env, fs};
+
+use clap::{Parser, Subcommand};
+use serde::{Deserialize, Serialize};
+
+/// Manage Hermes runtime installation resources.
+#[derive(Debug, Parser)]
+#[command(name = "hermes-manager")]
+#[command(about = "Hermes install, repair, and uninstall manager")]
+struct Cli {
+    /// Override Hermes home for tests or isolated installs.
+    #[arg(long)]
+    hermes_home: Option<PathBuf>,
+
+    /// Optional bundled manifest path to validate.
+    #[arg(long)]
+    manifest: Option<PathBuf>,
+
+    /// Emit machine-readable JSON for cleanup commands.
+    #[arg(long)]
+    json: bool,
+
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Print the manager version.
+    Version,
+    /// Print resolved manager paths.
+    Doctor,
+    /// Create manager state and initial install metadata.
+    InstallMetadata,
+    /// Remove paths recorded in the installed-files manifest.
+    UninstallLite {
+        /// Report paths that would be removed without deleting them.
+        #[arg(long)]
+        dry_run: bool,
+        /// Also remove Hermes Start Menu/Desktop shortcuts when supported.
+        #[arg(long)]
+        shortcuts: bool,
+    },
+    /// Remove runtime checkout state so launch can repair it.
+    RepairClean {
+        /// Report paths that would be removed without deleting them.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Remove source-built desktop GUI artifacts while preserving the agent.
+    UninstallGuiBuild {
+        /// Report paths that would be removed without deleting them.
+        #[arg(long)]
+        dry_run: bool,
+        /// Also remove the Electron desktop userData directory.
+        #[arg(long)]
+        user_data: bool,
+        /// Also remove Linux desktop launcher entries.
+        #[arg(long)]
+        desktop_entries: bool,
+    },
+    /// Report native bootstrap bridge capabilities.
+    BootstrapCapabilities,
+    /// Report the native bootstrap bridge manifest.
+    BootstrapManifest,
+    /// Run one native bootstrap bridge stage.
+    BootstrapStage {
+        /// Stage name from `bootstrap-manifest`.
+        stage: String,
+        /// Override install root for path-related stages.
+        #[arg(long)]
+        install_root: Option<PathBuf>,
+        /// Current PATH value for planning or tests.
+        #[arg(long)]
+        current_path: Option<String>,
+        /// Optional bundled Python wheelhouse directory.
+        #[arg(long)]
+        wheelhouse_dir: Option<PathBuf>,
+        /// Optional bundled bootstrap-tools directory.
+        #[arg(long)]
+        bootstrap_tools_dir: Option<PathBuf>,
+        /// Plan the stage without writing OS/user state.
+        #[arg(long)]
+        dry_run: bool,
+        /// Pinned source commit for marker-producing stages.
+        #[arg(long)]
+        commit: Option<String>,
+        /// Pinned source branch for marker-producing stages.
+        #[arg(long)]
+        branch: Option<String>,
+    },
+    /// Plan PATH changes needed to expose the Hermes command.
+    PlanPath {
+        /// Override install root; defaults to HERMES_HOME/hermes-agent.
+        #[arg(long)]
+        install_root: Option<PathBuf>,
+        /// Current PATH value to plan from; defaults to the process PATH.
+        #[arg(long)]
+        current_path: Option<String>,
+        /// Plan using Windows PATH conventions.
+        #[arg(long, conflicts_with = "unix")]
+        windows: bool,
+        /// Plan using Unix PATH conventions.
+        #[arg(long, conflicts_with = "windows")]
+        unix: bool,
+    },
+    /// Write an idempotent Hermes PATH block to a shell profile file.
+    WriteProfileHint {
+        /// Shell profile path to update.
+        #[arg(long)]
+        profile: PathBuf,
+        /// Override install root; defaults to HERMES_HOME/hermes-agent.
+        #[arg(long)]
+        install_root: Option<PathBuf>,
+        /// Do not write the profile; only report what would happen.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Write Hermes to the current user's Windows PATH.
+    WriteUserPath {
+        /// Override install root; defaults to HERMES_HOME/hermes-agent.
+        #[arg(long)]
+        install_root: Option<PathBuf>,
+        /// Current user PATH value to plan from; defaults to HKCU Environment Path.
+        #[arg(long)]
+        current_path: Option<String>,
+        /// Do not write the registry; only report what would happen.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Plan Start Menu and Desktop shortcuts for the packaged desktop app.
+    PlanShortcuts {
+        /// Packaged Hermes desktop executable.
+        #[arg(long)]
+        target_exe: Option<PathBuf>,
+        /// Override install root; defaults to HERMES_HOME/hermes-agent.
+        #[arg(long)]
+        install_root: Option<PathBuf>,
+        /// Override Start Menu Programs directory.
+        #[arg(long)]
+        programs_dir: Option<PathBuf>,
+        /// Override Desktop directory.
+        #[arg(long)]
+        desktop_dir: Option<PathBuf>,
+    },
+    /// Write Start Menu and Desktop shortcuts for the packaged desktop app.
+    WriteShortcuts {
+        /// Packaged Hermes desktop executable.
+        #[arg(long)]
+        target_exe: Option<PathBuf>,
+        /// Override install root; defaults to HERMES_HOME/hermes-agent.
+        #[arg(long)]
+        install_root: Option<PathBuf>,
+        /// Override Start Menu Programs directory.
+        #[arg(long)]
+        programs_dir: Option<PathBuf>,
+        /// Override Desktop directory.
+        #[arg(long)]
+        desktop_dir: Option<PathBuf>,
+        /// Do not write shortcuts; only report what would happen.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct CommandReport {
+    ok: bool,
+    command: &'static str,
+    #[serde(rename = "dryRun")]
+    dry_run: bool,
+    paths: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ProfileReport {
+    ok: bool,
+    command: &'static str,
+    #[serde(rename = "dryRun")]
+    dry_run: bool,
+    profile: String,
+    #[serde(rename = "hermesBin")]
+    hermes_bin: String,
+    changed: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct PathApplyReport {
+    ok: bool,
+    command: &'static str,
+    #[serde(rename = "dryRun")]
+    dry_run: bool,
+    target: String,
+    #[serde(rename = "hermesBin")]
+    hermes_bin: String,
+    changed: bool,
+    applied: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ShortcutApplyReport {
+    ok: bool,
+    command: &'static str,
+    #[serde(rename = "dryRun")]
+    dry_run: bool,
+    applied: bool,
+    shortcuts: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct BootstrapCapabilitiesReport {
+    ok: bool,
+    command: &'static str,
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    #[serde(rename = "canRunFullBootstrap")]
+    can_run_full_bootstrap: bool,
+    #[serde(rename = "supportedStages")]
+    supported_stages: Vec<&'static str>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+struct BootstrapStageDescriptor {
+    name: &'static str,
+    title: &'static str,
+    category: &'static str,
+    #[serde(rename = "needs_user_input")]
+    needs_user_input: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct BootstrapManifestReport {
+    ok: bool,
+    command: &'static str,
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    protocol_version: u32,
+    stages: Vec<BootstrapStageDescriptor>,
+}
+
+#[derive(Debug, Serialize)]
+struct BootstrapStageReport {
+    ok: bool,
+    command: &'static str,
+    stage: String,
+    skipped: bool,
+    reason: Option<String>,
+    #[serde(rename = "duration_ms")]
+    duration_ms: u128,
+    #[serde(rename = "failureCategory", skip_serializing_if = "Option::is_none")]
+    failure_category: Option<&'static str>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BootstrapToolsManifest {
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    archives: Vec<BootstrapToolsManifestArchive>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BootstrapToolsManifestArchive {
+    name: String,
+    sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FallbackBurnDownRegistry {
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    entries: Vec<FallbackBurnDownEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FallbackBurnDownEntry {
+    id: String,
+    #[serde(rename = "requiredEvidence")]
+    required_evidence: Vec<FallbackEvidenceRequirement>,
+    evidence: Vec<FallbackEvidence>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FallbackEvidenceRequirement {
+    platform: String,
+    checks: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FallbackEvidence {
+    platform: String,
+    release: String,
+    url: String,
+    #[serde(rename = "releaseNotes")]
+    release_notes: Option<String>,
+    signature: Option<String>,
+    commit: String,
+    signed: bool,
+    checks: Vec<String>,
+}
+
+const FALLBACK_BURN_DOWN_REGISTRY: &str =
+    include_str!("../../../docs/release/fallback-burn-down.json");
+const FULL_BOOTSTRAP_FALLBACK_ID: &str = "desktop-bootstrap-script-fallback";
+const FULL_BOOTSTRAP_RELEASE_PLATFORMS: [&str; 3] = ["windows", "macos", "linux"];
+const FULL_BOOTSTRAP_SIGNATURES: [(&str, &str); 3] = [
+    ("windows", "authenticode"),
+    ("macos", "developer-id-notarized"),
+    ("linux", "sigstore"),
+];
+
+const BASE_NATIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
+    BootstrapStageDescriptor {
+        name: "install-metadata",
+        title: "Record install metadata",
+        category: "finalize",
+        needs_user_input: false,
+    },
+    BootstrapStageDescriptor {
+        name: "bootstrap-marker",
+        title: "Mark install complete",
+        category: "finalize",
+        needs_user_input: false,
+    },
+];
+
+const WINDOWS_PATH_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "path",
+    title: "Add Hermes to PATH",
+    category: "finalize",
+    needs_user_input: false,
+};
+
+const WINDOWS_CONFIG_TEMPLATES_BOOTSTRAP_STAGE: BootstrapStageDescriptor =
+    BootstrapStageDescriptor {
+        name: "config-templates",
+        title: "Write configuration templates",
+        category: "finalize",
+        needs_user_input: false,
+    };
+
+const WINDOWS_PLATFORM_SDKS_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "platform-sdks",
+    title: "Install messaging platform SDKs",
+    category: "finalize",
+    needs_user_input: false,
+};
+
+const WINDOWS_NODE_DEPS_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "node-deps",
+    title: "Install Node.js dependencies",
+    category: "install",
+    needs_user_input: false,
+};
+
+const WINDOWS_SYSTEM_PACKAGES_BOOTSTRAP_STAGE: BootstrapStageDescriptor =
+    BootstrapStageDescriptor {
+        name: "system-packages",
+        title: "Install ripgrep and ffmpeg",
+        category: "prereqs",
+        needs_user_input: false,
+    };
+
+const WINDOWS_NODE_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "node",
+    title: "Detect Node.js",
+    category: "prereqs",
+    needs_user_input: false,
+};
+
+const WINDOWS_UV_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "uv",
+    title: "Install uv package manager",
+    category: "prereqs",
+    needs_user_input: false,
+};
+
+const WINDOWS_GIT_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "git",
+    title: "Install Git",
+    category: "prereqs",
+    needs_user_input: false,
+};
+
+const WINDOWS_PYTHON_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "python",
+    title: "Verify Python 3.11",
+    category: "prereqs",
+    needs_user_input: false,
+};
+
+const WINDOWS_REPOSITORY_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "repository",
+    title: "Clone Hermes repository",
+    category: "install",
+    needs_user_input: false,
+};
+
+const WINDOWS_VENV_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "venv",
+    title: "Create Python virtual environment",
+    category: "install",
+    needs_user_input: false,
+};
+
+const WINDOWS_DEPENDENCIES_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "dependencies",
+    title: "Install Python dependencies",
+    category: "install",
+    needs_user_input: false,
+};
+
+const WINDOWS_DESKTOP_BOOTSTRAP_STAGE: BootstrapStageDescriptor = BootstrapStageDescriptor {
+    name: "desktop",
+    title: "Build desktop app",
+    category: "install",
+    needs_user_input: false,
+};
+
+const WINDOWS_INTERACTIVE_BOOTSTRAP_STAGES: [BootstrapStageDescriptor; 2] = [
+    BootstrapStageDescriptor {
+        name: "configure",
+        title: "Configure API keys and models",
+        category: "post-install",
+        needs_user_input: true,
+    },
+    BootstrapStageDescriptor {
+        name: "gateway",
+        title: "Start messaging gateway",
+        category: "post-install",
+        needs_user_input: true,
+    },
+];
+
+fn main() {
+    if let Err(err) = run() {
+        eprintln!("{err}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> hermes_manager::Result<()> {
+    let cli = Cli::parse();
+    let home = hermes_manager::paths::hermes_home(cli.hermes_home);
+
+    match cli.command {
+        Command::Version => {
+            println!("{}", env!("CARGO_PKG_VERSION"));
+        }
+        Command::Doctor => {
+            for line in hermes_manager::commands::doctor(&home) {
+                println!("{line}");
+            }
+            if let Some(manifest_path) = cli.manifest.as_deref() {
+                match hermes_manager::bundled_manifest::BundledManifest::read(manifest_path) {
+                    Ok(manifest) => {
+                        let manifest_root = manifest_path.parent().unwrap_or_else(|| ".".as_ref());
+                        manifest.verify_resources(manifest_root)?;
+                        println!("bundled_manifest=ok");
+                        println!(
+                            "bundled_manifest_hermes_version={}",
+                            manifest.hermes_version
+                        );
+                        println!("bundled_manifest_resources=ok");
+                    }
+                    Err(err) => {
+                        eprintln!("bundled_manifest=error: {err}");
+                        std::process::exit(2);
+                    }
+                }
+            }
+        }
+        Command::InstallMetadata => {
+            hermes_manager::commands::install_metadata(&home)?;
+            println!("install_metadata=ok");
+        }
+        Command::UninstallLite { dry_run, shortcuts } => {
+            let mut paths = if dry_run {
+                hermes_manager::commands::uninstall_lite_plan(&home)?
+            } else {
+                hermes_manager::commands::uninstall_lite(&home)?
+            };
+            if shortcuts {
+                let plans = resolve_shortcut_plans(&home, None, None, None, None);
+                let shortcut_paths = if dry_run {
+                    hermes_manager::platform::existing_shortcut_paths(&plans)
+                } else {
+                    hermes_manager::platform::remove_windows_shortcuts(&plans)?
+                };
+                paths.extend(shortcut_paths.iter().map(|path| path.display().to_string()));
+            }
+            if cli.json {
+                print_json_report(CommandReport {
+                    ok: true,
+                    command: "uninstall-lite",
+                    dry_run,
+                    paths,
+                })?;
+            } else {
+                let prefix = if dry_run { "would_remove" } else { "removed" };
+                for path in paths {
+                    println!("{prefix}={path}");
+                }
+                println!("uninstall_lite=ok");
+            }
+        }
+        Command::RepairClean { dry_run } => {
+            let paths = if dry_run {
+                hermes_manager::commands::repair_clean_plan(&home)?
+            } else {
+                hermes_manager::commands::repair_clean(&home)?
+            };
+            if cli.json {
+                print_json_report(CommandReport {
+                    ok: true,
+                    command: "repair-clean",
+                    dry_run,
+                    paths,
+                })?;
+            } else {
+                let prefix = if dry_run { "would_remove" } else { "removed" };
+                for path in paths {
+                    println!("{prefix}={path}");
+                }
+                println!("repair_clean=ok");
+            }
+        }
+        Command::UninstallGuiBuild {
+            dry_run,
+            user_data,
+            desktop_entries,
+        } => {
+            let paths = if dry_run {
+                if user_data && desktop_entries {
+                    hermes_manager::commands::uninstall_gui_build_plan_with_gui_state(&home)?
+                } else if user_data {
+                    hermes_manager::commands::uninstall_gui_build_plan_with_user_data(&home)?
+                } else if desktop_entries {
+                    hermes_manager::commands::uninstall_gui_build_plan_with_desktop_entries(&home)?
+                } else {
+                    hermes_manager::commands::uninstall_gui_build_plan(&home)?
+                }
+            } else if user_data && desktop_entries {
+                hermes_manager::commands::uninstall_gui_build_with_gui_state(&home)?
+            } else if user_data {
+                hermes_manager::commands::uninstall_gui_build_with_user_data(&home)?
+            } else if desktop_entries {
+                hermes_manager::commands::uninstall_gui_build_with_desktop_entries(&home)?
+            } else {
+                hermes_manager::commands::uninstall_gui_build(&home)?
+            };
+            if cli.json {
+                print_json_report(CommandReport {
+                    ok: true,
+                    command: "uninstall-gui-build",
+                    dry_run,
+                    paths,
+                })?;
+            } else {
+                let prefix = if dry_run { "would_remove" } else { "removed" };
+                for path in paths {
+                    println!("{prefix}={path}");
+                }
+                println!("uninstall_gui_build=ok");
+            }
+        }
+        Command::BootstrapCapabilities => {
+            let report = BootstrapCapabilitiesReport {
+                ok: true,
+                command: "bootstrap-capabilities",
+                schema_version: 1,
+                can_run_full_bootstrap: can_run_full_bootstrap(),
+                supported_stages: native_bootstrap_stage_names(),
+            };
+            if cli.json {
+                print_json(&report)?;
+            } else {
+                println!("bootstrap_capabilities=ok");
+                println!("schema_version={}", report.schema_version);
+                println!("can_run_full_bootstrap={}", report.can_run_full_bootstrap);
+                println!("supported_stages={}", report.supported_stages.join(","));
+            }
+        }
+        Command::BootstrapManifest => {
+            let report = BootstrapManifestReport {
+                ok: true,
+                command: "bootstrap-manifest",
+                schema_version: 1,
+                protocol_version: 1,
+                stages: native_bootstrap_stages(),
+            };
+            if cli.json {
+                print_json(&report)?;
+            } else {
+                println!("bootstrap_manifest=ok");
+                println!("protocol_version={}", report.protocol_version);
+                for stage in report.stages {
+                    println!("stage={}", stage.name);
+                }
+            }
+        }
+        Command::BootstrapStage {
+            stage,
+            install_root,
+            current_path,
+            wheelhouse_dir,
+            bootstrap_tools_dir,
+            dry_run,
+            commit,
+            branch,
+        } => {
+            let report = run_native_bootstrap_stage(
+                &home,
+                &stage,
+                NativeBootstrapStageOptions {
+                    install_root,
+                    current_path,
+                    wheelhouse_dir,
+                    bootstrap_tools_dir,
+                    dry_run,
+                    commit: commit.as_deref(),
+                    branch: branch.as_deref(),
+                },
+            );
+            let ok = report.ok;
+            let failure_category = report.failure_category;
+            if cli.json {
+                print_json(&report)?;
+            } else if ok {
+                println!("bootstrap_stage=ok");
+                println!("stage={stage}");
+            } else {
+                println!("bootstrap_stage=error");
+                println!("stage={stage}");
+                if let Some(reason) = &report.reason {
+                    println!("reason={reason}");
+                }
+            }
+            if !ok {
+                std::process::exit(if failure_category == Some("unknown-stage") {
+                    2
+                } else {
+                    1
+                });
+            }
+        }
+        Command::PlanPath {
+            install_root,
+            current_path,
+            windows,
+            unix,
+        } => {
+            let install_root =
+                install_root.unwrap_or_else(|| hermes_manager::paths::agent_root(&home));
+            let current_path = current_path.or_else(|| std::env::var("PATH").ok());
+            let use_windows = if windows {
+                true
+            } else if unix {
+                false
+            } else {
+                cfg!(target_os = "windows")
+            };
+            let plan = if use_windows {
+                hermes_manager::platform::plan_path_update(&install_root, current_path, true)
+            } else {
+                hermes_manager::platform::plan_path_update_with_extra_entries(
+                    &install_root,
+                    &[home.join("bin")],
+                    current_path,
+                    false,
+                )
+            };
+            if cli.json {
+                let text = serde_json::to_string_pretty(&plan).map_err(|err| {
+                    hermes_manager::ManagerError::InvalidManifest(err.to_string())
+                })?;
+                println!("{text}");
+            } else {
+                println!("hermes_bin={}", plan.hermes_bin.display());
+                println!("path_changed={}", plan.changed);
+                println!("next_path={}", plan.next_path);
+                if !use_windows {
+                    println!(
+                        "profile_hint={}",
+                        hermes_manager::platform::shell_profile_hint(&plan)
+                    );
+                }
+            }
+        }
+        Command::WriteProfileHint {
+            profile,
+            install_root,
+            dry_run,
+        } => {
+            let install_root =
+                install_root.unwrap_or_else(|| hermes_manager::paths::agent_root(&home));
+            let current_path = std::env::var("PATH").ok();
+            let plan = hermes_manager::platform::plan_path_update_with_extra_entries(
+                &install_root,
+                &[home.join("bin")],
+                current_path,
+                false,
+            );
+            if !dry_run {
+                hermes_manager::platform::write_shell_profile_update(&profile, &plan)?;
+            }
+            if cli.json {
+                let text = serde_json::to_string_pretty(&ProfileReport {
+                    ok: true,
+                    command: "write-profile-hint",
+                    dry_run,
+                    profile: profile.display().to_string(),
+                    hermes_bin: plan.hermes_bin.display().to_string(),
+                    changed: true,
+                })
+                .map_err(|err| hermes_manager::ManagerError::InvalidManifest(err.to_string()))?;
+                println!("{text}");
+            } else {
+                let action = if dry_run { "would_update" } else { "updated" };
+                println!("{action}={}", profile.display());
+                println!(
+                    "profile_hint={}",
+                    hermes_manager::platform::shell_profile_hint(&plan)
+                );
+            }
+        }
+        Command::WriteUserPath {
+            install_root,
+            current_path,
+            dry_run,
+        } => {
+            let install_root =
+                install_root.unwrap_or_else(|| hermes_manager::paths::agent_root(&home));
+            let current_path = match current_path {
+                Some(value) => Some(value),
+                None => hermes_manager::platform::read_windows_user_path()?,
+            };
+            let plan =
+                hermes_manager::platform::plan_path_update(&install_root, current_path, true);
+            let applied = if dry_run {
+                false
+            } else {
+                hermes_manager::platform::write_windows_user_path_update(&plan)?
+            };
+            if cli.json {
+                let text = serde_json::to_string_pretty(&PathApplyReport {
+                    ok: true,
+                    command: "write-user-path",
+                    dry_run,
+                    target: "user".to_string(),
+                    hermes_bin: plan.hermes_bin.display().to_string(),
+                    changed: plan.changed,
+                    applied,
+                })
+                .map_err(|err| hermes_manager::ManagerError::InvalidManifest(err.to_string()))?;
+                println!("{text}");
+            } else {
+                let action = if dry_run {
+                    "would_update_user_path"
+                } else if applied {
+                    "updated_user_path"
+                } else {
+                    "user_path_unchanged"
+                };
+                println!("{action}=Path");
+                println!("hermes_bin={}", plan.hermes_bin.display());
+            }
+        }
+        Command::PlanShortcuts {
+            target_exe,
+            install_root,
+            programs_dir,
+            desktop_dir,
+        } => {
+            let plans =
+                resolve_shortcut_plans(&home, target_exe, install_root, programs_dir, desktop_dir);
+            if cli.json {
+                let text = serde_json::to_string_pretty(&plans).map_err(|err| {
+                    hermes_manager::ManagerError::InvalidManifest(err.to_string())
+                })?;
+                println!("{text}");
+            } else {
+                for plan in plans {
+                    println!("shortcut={}", plan.path.display());
+                    println!("target={}", plan.target.display());
+                }
+            }
+        }
+        Command::WriteShortcuts {
+            target_exe,
+            install_root,
+            programs_dir,
+            desktop_dir,
+            dry_run,
+        } => {
+            let plans =
+                resolve_shortcut_plans(&home, target_exe, install_root, programs_dir, desktop_dir);
+            if !dry_run {
+                hermes_manager::platform::write_windows_shortcuts(&plans)?;
+            }
+            if cli.json {
+                let text = serde_json::to_string_pretty(&ShortcutApplyReport {
+                    ok: true,
+                    command: "write-shortcuts",
+                    dry_run,
+                    applied: !dry_run,
+                    shortcuts: plans
+                        .iter()
+                        .map(|plan| plan.path.display().to_string())
+                        .collect(),
+                })
+                .map_err(|err| hermes_manager::ManagerError::InvalidManifest(err.to_string()))?;
+                println!("{text}");
+            } else {
+                let prefix = if dry_run { "would_create" } else { "created" };
+                for plan in plans {
+                    println!("{prefix}={}", plan.path.display());
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_shortcut_plans(
+    home: &std::path::Path,
+    target_exe: Option<PathBuf>,
+    install_root: Option<PathBuf>,
+    programs_dir: Option<PathBuf>,
+    desktop_dir: Option<PathBuf>,
+) -> Vec<hermes_manager::platform::ShortcutPlan> {
+    let install_root = install_root.unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    let target_exe = target_exe.unwrap_or_else(|| {
+        install_root
+            .join("apps")
+            .join("desktop")
+            .join("release")
+            .join("win-unpacked")
+            .join("Hermes.exe")
+    });
+    let programs_dir = programs_dir.unwrap_or_else(default_windows_programs_dir);
+    let desktop_dir = desktop_dir.unwrap_or_else(default_windows_desktop_dir);
+    let icon_exists = target_exe
+        .parent()
+        .map(|parent| parent.join("resources").join("icon.ico").is_file())
+        .unwrap_or(false);
+    hermes_manager::platform::plan_windows_shortcuts(
+        &target_exe,
+        &programs_dir,
+        &desktop_dir,
+        icon_exists,
+    )
+}
+
+fn default_windows_programs_dir() -> PathBuf {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Microsoft")
+        .join("Windows")
+        .join("Start Menu")
+        .join("Programs")
+}
+
+fn default_windows_desktop_dir() -> PathBuf {
+    std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Desktop")
+}
+
+fn print_json_report(report: CommandReport) -> hermes_manager::Result<()> {
+    print_json(&report)
+}
+
+fn print_json<T: Serialize>(report: &T) -> hermes_manager::Result<()> {
+    let text = serde_json::to_string_pretty(report)
+        .map_err(|err| hermes_manager::ManagerError::InvalidManifest(err.to_string()))?;
+    println!("{text}");
+    Ok(())
+}
+
+fn native_bootstrap_stage_names() -> Vec<&'static str> {
+    native_bootstrap_stages()
+        .into_iter()
+        .map(|stage| stage.name)
+        .collect()
+}
+
+fn can_run_full_bootstrap() -> bool {
+    can_run_full_bootstrap_from_registry_text(FALLBACK_BURN_DOWN_REGISTRY)
+}
+
+fn can_run_full_bootstrap_from_registry_text(registry_text: &str) -> bool {
+    let Ok(registry) = serde_json::from_str::<FallbackBurnDownRegistry>(registry_text) else {
+        return false;
+    };
+    if registry.schema_version != 1 {
+        return false;
+    }
+    registry
+        .entries
+        .iter()
+        .find(|entry| entry.id == FULL_BOOTSTRAP_FALLBACK_ID)
+        .is_some_and(full_bootstrap_release_evidence_complete)
+}
+
+fn full_bootstrap_release_evidence_complete(entry: &FallbackBurnDownEntry) -> bool {
+    let Some(required) = required_full_bootstrap_checks_by_platform(entry) else {
+        return false;
+    };
+    if !FULL_BOOTSTRAP_RELEASE_PLATFORMS
+        .iter()
+        .all(|platform| required.contains_key(*platform))
+    {
+        return false;
+    }
+
+    let mut shared_release_keys: Option<BTreeSet<(String, String, String)>> = None;
+    for platform in FULL_BOOTSTRAP_RELEASE_PLATFORMS {
+        let Some(required_checks) = required.get(platform) else {
+            return false;
+        };
+        let release_keys = complete_release_evidence_keys(entry, platform, required_checks);
+        if release_keys.is_empty() {
+            return false;
+        }
+        shared_release_keys = Some(match shared_release_keys {
+            Some(existing_keys) => existing_keys
+                .intersection(&release_keys)
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            None => release_keys,
+        });
+    }
+
+    shared_release_keys.is_some_and(|release_keys| !release_keys.is_empty())
+}
+
+fn required_full_bootstrap_checks_by_platform(
+    entry: &FallbackBurnDownEntry,
+) -> Option<BTreeMap<String, BTreeSet<String>>> {
+    let mut required = BTreeMap::new();
+    for requirement in &entry.required_evidence {
+        if !FULL_BOOTSTRAP_RELEASE_PLATFORMS.contains(&requirement.platform.as_str()) {
+            return None;
+        }
+        if requirement.checks.is_empty() {
+            return None;
+        }
+        if requirement
+            .checks
+            .iter()
+            .any(|check| !is_fallback_evidence_check_id(check))
+        {
+            return None;
+        }
+        if required.contains_key(&requirement.platform) {
+            return None;
+        }
+        let mut checks = BTreeSet::new();
+        for check in &requirement.checks {
+            if !checks.insert(check.clone()) {
+                return None;
+            }
+        }
+        required.insert(requirement.platform.clone(), checks);
+    }
+    Some(required)
+}
+
+fn complete_release_evidence_keys(
+    entry: &FallbackBurnDownEntry,
+    platform: &str,
+    required_checks: &BTreeSet<String>,
+) -> BTreeSet<(String, String, String)> {
+    let mut checks_by_artifact: BTreeMap<(&str, &str, &str), BTreeSet<String>> = BTreeMap::new();
+    let mut release_notes_by_artifact: BTreeMap<(&str, &str, &str), &str> = BTreeMap::new();
+    let mut conflicted_artifacts: BTreeSet<(&str, &str, &str)> = BTreeSet::new();
+    for evidence in &entry.evidence {
+        if !evidence.signed
+            || evidence.platform != platform
+            || evidence.release.trim().is_empty()
+            || !evidence.url.starts_with("https://")
+            || !evidence.url.contains(&evidence.release)
+            || !is_github_release_tag_url(&evidence.url, &evidence.release)
+            || release_notes_check_missing_link(evidence)
+            || release_notes_link_invalid(evidence)
+            || !is_git_commit_sha(&evidence.commit)
+            || !evidence_checks_match_required(evidence, required_checks)
+            || !full_bootstrap_signature_matches_platform(evidence)
+        {
+            continue;
+        }
+        let artifact = (
+            evidence.release.as_str(),
+            evidence.url.as_str(),
+            evidence.commit.as_str(),
+        );
+        if let Some(release_notes) = evidence.release_notes.as_deref() {
+            if let Some(existing_release_notes) = release_notes_by_artifact.get(&artifact) {
+                if *existing_release_notes != release_notes {
+                    conflicted_artifacts.insert(artifact);
+                    continue;
+                }
+            } else {
+                release_notes_by_artifact.insert(artifact, release_notes);
+            }
+        }
+        checks_by_artifact
+            .entry(artifact)
+            .or_default()
+            .extend(evidence.checks.iter().cloned());
+    }
+    checks_by_artifact
+        .iter()
+        .filter_map(|(artifact, evidence_checks)| {
+            if conflicted_artifacts.contains(artifact)
+                || !required_checks.is_subset(evidence_checks)
+            {
+                return None;
+            }
+            let (release, url, commit) = *artifact;
+            github_release_repo(url).map(|repo| (repo, release.to_owned(), commit.to_owned()))
+        })
+        .collect()
+}
+
+fn release_notes_check_missing_link(evidence: &FallbackEvidence) -> bool {
+    evidence.checks.iter().any(|check| check == "release-notes")
+        && !evidence
+            .release_notes
+            .as_deref()
+            .is_some_and(|url| release_notes_link_matches_artifact(evidence, url))
+}
+
+fn full_bootstrap_signature_matches_platform(evidence: &FallbackEvidence) -> bool {
+    FULL_BOOTSTRAP_SIGNATURES
+        .iter()
+        .find(|(platform, _signature)| *platform == evidence.platform)
+        .is_some_and(|(_platform, signature)| evidence.signature.as_deref() == Some(*signature))
+}
+
+fn release_notes_link_invalid(evidence: &FallbackEvidence) -> bool {
+    evidence
+        .release_notes
+        .as_deref()
+        .is_some_and(|url| !release_notes_link_matches_artifact(evidence, url))
+}
+
+fn release_notes_link_matches_artifact(
+    evidence: &FallbackEvidence,
+    release_notes_url: &str,
+) -> bool {
+    is_github_release_tag_url(release_notes_url, &evidence.release)
+        && github_release_repo(release_notes_url) == github_release_repo(&evidence.url)
+}
+
+fn evidence_checks_match_required(
+    evidence: &FallbackEvidence,
+    required_checks: &BTreeSet<String>,
+) -> bool {
+    if evidence.checks.is_empty() {
+        return false;
+    }
+    let mut seen = BTreeSet::new();
+    for check in &evidence.checks {
+        if !is_fallback_evidence_check_id(check)
+            || !required_checks.contains(check)
+            || !seen.insert(check)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn is_github_release_tag_url(url: &str, release: &str) -> bool {
+    if release == "vX.Y.Z" {
+        return false;
+    }
+    let Some((owner, repo, tag)) = github_release_tag_parts(url) else {
+        return false;
+    };
+    tag == release && !(owner == "OWNER" && repo == "REPO")
+}
+
+fn github_release_tag_parts(url: &str) -> Option<(&str, &str, &str)> {
+    let path_start = url.strip_prefix("https://github.com/")?;
+    if path_start.contains('?') || path_start.contains('#') {
+        return None;
+    }
+    let path = path_start;
+    let mut segments = path.split('/');
+    let owner = segments.next()?;
+    let repo = segments.next()?;
+    if is_invalid_github_release_path_segment(owner) || is_invalid_github_release_path_segment(repo)
+    {
+        return None;
+    }
+    if segments.next()? != "releases" {
+        return None;
+    }
+    if segments.next()? != "tag" {
+        return None;
+    }
+    let tag = segments.next()?;
+    if is_invalid_github_release_path_segment(tag) {
+        return None;
+    }
+    if segments.next().is_some() {
+        return None;
+    }
+    Some((owner, repo, tag))
+}
+
+fn is_invalid_github_release_path_segment(segment: &str) -> bool {
+    segment.is_empty()
+        || segment
+            .chars()
+            .any(|value| value == '\\' || value.is_whitespace())
+}
+
+fn github_release_repo(url: &str) -> Option<String> {
+    let (owner, repo, _) = github_release_tag_parts(url)?;
+    Some(format!("{owner}/{repo}"))
+}
+
+fn is_git_commit_sha(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || ('a'..='f').contains(&ch))
+}
+
+fn is_fallback_evidence_check_id(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_lowercase() || first.is_ascii_digit())
+        && chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+}
+
+struct NativeBootstrapStageOptions<'a> {
+    install_root: Option<PathBuf>,
+    current_path: Option<String>,
+    wheelhouse_dir: Option<PathBuf>,
+    bootstrap_tools_dir: Option<PathBuf>,
+    dry_run: bool,
+    commit: Option<&'a str>,
+    branch: Option<&'a str>,
+}
+
+fn run_native_bootstrap_stage(
+    home: &std::path::Path,
+    stage: &str,
+    options: NativeBootstrapStageOptions<'_>,
+) -> BootstrapStageReport {
+    let started_at = Instant::now();
+    let result = match stage {
+        "install-metadata" => hermes_manager::commands::install_metadata(home)
+            .map(|()| (false, None))
+            .map_err(|err| ("stage-failed", err.to_string())),
+        "bootstrap-marker" => {
+            hermes_manager::commands::write_bootstrap_marker(home, options.commit, options.branch)
+                .map(|path| (path.is_none(), None))
+                .map_err(|err| ("stage-failed", err.to_string()))
+        }
+        "path" => run_native_path_stage(home, options).map(|skipped| (skipped, None)),
+        "uv" => run_native_uv_stage(home, options),
+        "git" => run_native_git_stage(home, options),
+        "python" => run_native_python_stage(home, options),
+        "repository" => run_native_repository_stage(home, options),
+        "venv" => run_native_venv_stage(home, options),
+        "dependencies" | "python-deps" => run_native_dependencies_stage(home, options),
+        "node" => run_native_node_stage(home, options),
+        "system-packages" => run_native_system_packages_stage(home, options),
+        "config-templates" => {
+            run_native_config_templates_stage(home, options).map(|skipped| (skipped, None))
+        }
+        "node-deps" => run_native_node_deps_stage(home, options),
+        "desktop" => run_native_desktop_stage(home, options),
+        "platform-sdks" => run_native_platform_sdks_stage(home, options),
+        "configure" | "gateway" => run_native_interactive_skip_stage(stage),
+        other => Err((
+            "unknown-stage",
+            format!("unknown native bootstrap stage: {other}"),
+        )),
+    };
+    match result {
+        Ok((skipped, reason)) => BootstrapStageReport {
+            ok: true,
+            command: "bootstrap-stage",
+            stage: stage.to_string(),
+            skipped,
+            reason,
+            duration_ms: started_at.elapsed().as_millis(),
+            failure_category: None,
+        },
+        Err((failure_category, reason)) => BootstrapStageReport {
+            ok: false,
+            command: "bootstrap-stage",
+            stage: stage.to_string(),
+            skipped: false,
+            reason: Some(reason),
+            duration_ms: started_at.elapsed().as_millis(),
+            failure_category: Some(failure_category),
+        },
+    }
+}
+
+fn native_bootstrap_stages() -> Vec<BootstrapStageDescriptor> {
+    let mut stages = BASE_NATIVE_BOOTSTRAP_STAGES.to_vec();
+    if cfg!(target_os = "windows") {
+        stages.push(WINDOWS_UV_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_GIT_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_PYTHON_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_REPOSITORY_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_VENV_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_DEPENDENCIES_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_NODE_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_SYSTEM_PACKAGES_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_NODE_DEPS_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_DESKTOP_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_PATH_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_CONFIG_TEMPLATES_BOOTSTRAP_STAGE);
+        stages.push(WINDOWS_PLATFORM_SDKS_BOOTSTRAP_STAGE);
+        stages.extend_from_slice(&WINDOWS_INTERACTIVE_BOOTSTRAP_STAGES);
+    }
+    stages
+}
+
+fn run_native_path_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<bool, (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native path stage is only complete on Windows".to_string(),
+        ));
+    }
+
+    let install_root = options
+        .install_root
+        .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    let current_path = match options.current_path {
+        Some(value) => Some(value),
+        None => hermes_manager::platform::read_windows_user_path()
+            .map_err(|err| ("stage-failed", err.to_string()))?,
+    };
+    let plan = hermes_manager::platform::plan_path_update(&install_root, current_path, true);
+    if !options.dry_run {
+        hermes_manager::platform::write_windows_user_path_update(&plan)
+            .map_err(|err| ("stage-failed", err.to_string()))?;
+        hermes_manager::platform::write_windows_user_env_var(
+            "HERMES_HOME",
+            &home.display().to_string(),
+        )
+        .map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    Ok(false)
+}
+
+fn run_native_uv_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native uv probe is only complete on Windows".to_string(),
+        ));
+    }
+    let path_text = windows_stage_path(options.current_path)?;
+    let uv = Some(home.join("bin").join("uv.exe"))
+        .filter(|path| path.is_file())
+        .or_else(|| Some(home.join("bin").join("uv.cmd")).filter(|path| path.is_file()))
+        .or_else(|| Some(home.join("bin").join("uv.bat")).filter(|path| path.is_file()))
+        .or_else(|| windows_path_command(&path_text, "uv"));
+    let Some(uv) = uv else {
+        install_bundled_windows_uv(home, options.bootstrap_tools_dir.as_deref())?;
+        return verify_managed_windows_uv(home);
+    };
+    let output = ProcessCommand::new(&uv)
+        .arg("--version")
+        .output()
+        .map_err(|err| ("stage-failed", err.to_string()))?;
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if output.status.success() {
+        return Ok((
+            true,
+            Some(format!("{version} already available; uv stage skipped")),
+        ));
+    }
+    install_bundled_windows_uv(home, options.bootstrap_tools_dir.as_deref())?;
+    verify_managed_windows_uv(home)
+}
+
+fn run_native_git_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native Git probe is only complete on Windows".to_string(),
+        ));
+    }
+    let path_text = windows_stage_path(options.current_path)?;
+    let git = windows_git_command(home, &path_text);
+    let Some(git) = git else {
+        install_bundled_windows_git(home, options.bootstrap_tools_dir.as_deref())?;
+        return verify_managed_windows_git(home);
+    };
+    let output = ProcessCommand::new(&git)
+        .arg("--version")
+        .output()
+        .map_err(|err| ("stage-failed", err.to_string()))?;
+    if output.status.success() {
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Ok((
+            true,
+            Some(format!("{version} already available; git stage skipped")),
+        ));
+    }
+    Err((
+        "fallback-to-script",
+        "Git exists but did not run successfully; script installs managed PortableGit".to_string(),
+    ))
+}
+
+fn install_bundled_windows_git(
+    home: &std::path::Path,
+    bootstrap_tools_dir: Option<&std::path::Path>,
+) -> std::result::Result<(), (&'static str, String)> {
+    let Some(bootstrap_tools_dir) = bootstrap_tools_dir else {
+        return Err((
+            "fallback-to-script",
+            "Git missing and no bundled bootstrap-tools directory was provided".to_string(),
+        ));
+    };
+    let Some(archive_name) = windows_git_archive_name() else {
+        return Err((
+            "fallback-to-script",
+            "unsupported Windows architecture for bundled Git".to_string(),
+        ));
+    };
+    let archive = bootstrap_tools_dir.join(archive_name);
+    if !archive.is_file() {
+        return Err((
+            "fallback-to-script",
+            format!("bundled Git archive missing: {}", archive.display()),
+        ));
+    }
+    verify_bootstrap_tools_archive(bootstrap_tools_dir, archive_name, &archive)?;
+    let install_dir = home.join("git");
+    if try_extract_windows_git_zip(&archive, &install_dir)? {
+        return Ok(());
+    }
+    extract_windows_portable_git_exe(&archive, &install_dir)
+}
+
+fn verify_managed_windows_git(
+    home: &std::path::Path,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    let Some(git) = windows_git_command(home, "") else {
+        return Err((
+            "fallback-to-script",
+            "bundled Git install completed but git was not found".to_string(),
+        ));
+    };
+    let output = ProcessCommand::new(&git)
+        .arg("--version")
+        .output()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if output.status.success() {
+        let version = command_version_text(&output);
+        return Ok((
+            false,
+            Some(format!("installed bundled {version} at {}", git.display())),
+        ));
+    }
+    Err((
+        "fallback-to-script",
+        "bundled Git did not pass version check".to_string(),
+    ))
+}
+
+fn try_extract_windows_git_zip(
+    archive: &std::path::Path,
+    install_dir: &std::path::Path,
+) -> std::result::Result<bool, (&'static str, String)> {
+    let file = fs::File::open(archive).map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if zip::ZipArchive::new(file).is_err() {
+        return Ok(false);
+    }
+    let parent = install_dir.parent().ok_or_else(|| {
+        (
+            "stage-failed",
+            format!("Git install path has no parent: {}", install_dir.display()),
+        )
+    })?;
+    let tmp_dir = parent.join("git-extracting");
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    fs::create_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    extract_zip_safely(archive, &tmp_dir)?;
+    let git = find_file_named(&tmp_dir, &["git.exe", "git.cmd", "git.bat"])?;
+    let source_dir = git
+        .ancestors()
+        .find(|path| path.join("cmd").is_dir() || path.join("git-bash.exe").is_file())
+        .unwrap_or_else(|| git.parent().unwrap_or(&tmp_dir));
+    if install_dir.exists() {
+        fs::remove_dir_all(install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    fs::rename(source_dir, install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    Ok(true)
+}
+
+fn extract_windows_portable_git_exe(
+    archive: &std::path::Path,
+    install_dir: &std::path::Path,
+) -> std::result::Result<(), (&'static str, String)> {
+    if install_dir.exists() {
+        fs::remove_dir_all(install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    fs::create_dir_all(install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    let output_arg = format!("-o{}", install_dir.display());
+    let status = ProcessCommand::new(archive)
+        .args([output_arg.as_str(), "-y"])
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if status.success() {
+        return Ok(());
+    }
+    Err((
+        "fallback-to-script",
+        format!(
+            "PortableGit self-extraction failed with exit {:?}; script installs managed Git",
+            status.code()
+        ),
+    ))
+}
+
+fn run_native_python_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native Python probe is only complete on Windows".to_string(),
+        ));
+    }
+    let path_text = windows_stage_path(options.current_path)?;
+    if let Some(python) = windows_path_command(&path_text, "python") {
+        let output = ProcessCommand::new(&python)
+            .arg("--version")
+            .output()
+            .map_err(|err| ("stage-failed", err.to_string()))?;
+        let version = command_version_text(&output);
+        if output.status.success() && python_version_is_supported(&version) {
+            return Ok((
+                true,
+                Some(format!("{version} already available; python stage skipped")),
+            ));
+        }
+    }
+    let Some(uv) = windows_uv_command(home, &path_text) else {
+        return Err((
+            "fallback-to-script",
+            "Python missing and uv is unavailable; script installs Python 3.11".to_string(),
+        ));
+    };
+    if let Some((python, version)) = find_uv_python(&uv, "3.11")? {
+        return Ok((
+            false,
+            Some(format!(
+                "{version} available through uv at {}; python stage completed",
+                python.display()
+            )),
+        ));
+    }
+    let install = ProcessCommand::new(&uv)
+        .args(["python", "install", "3.11"])
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if !install.success() {
+        return Err((
+            "fallback-to-script",
+            format!(
+                "uv python install 3.11 failed with exit {:?}; script installs Python",
+                install.code()
+            ),
+        ));
+    }
+    if let Some((python, version)) = find_uv_python(&uv, "3.11")? {
+        return Ok((
+            false,
+            Some(format!(
+                "{version} installed through uv at {}; python stage completed",
+                python.display()
+            )),
+        ));
+    }
+    Err((
+        "fallback-to-script",
+        "uv python install completed but Python 3.11 was not findable".to_string(),
+    ))
+}
+
+fn find_uv_python(
+    uv: &std::path::Path,
+    version: &str,
+) -> std::result::Result<Option<(PathBuf, String)>, (&'static str, String)> {
+    let output = ProcessCommand::new(uv)
+        .args(["python", "find", version])
+        .output()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let python_text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if python_text.is_empty() {
+        return Ok(None);
+    }
+    let python = PathBuf::from(python_text);
+    let version_output = ProcessCommand::new(&python)
+        .arg("--version")
+        .output()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    let version_text = command_version_text(&version_output);
+    if version_output.status.success() && python_version_is_supported(&version_text) {
+        return Ok(Some((python, version_text)));
+    }
+    Ok(None)
+}
+
+fn run_native_repository_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native repository probe is only complete on Windows".to_string(),
+        ));
+    }
+    let Some(expected_commit) = options.commit else {
+        return Err((
+            "fallback-to-script",
+            "repository stage needs a pinned commit; script handles branch and tag installs"
+                .to_string(),
+        ));
+    };
+    let path_text = windows_stage_path(options.current_path)?;
+    let Some(git) = windows_git_command(home, &path_text) else {
+        return Err((
+            "fallback-to-script",
+            "Git missing; script prepares the repository".to_string(),
+        ));
+    };
+    let install_root = options
+        .install_root
+        .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    if !install_root.exists() {
+        let parent = install_root.parent().ok_or_else(|| {
+            (
+                "stage-failed",
+                format!("install root has no parent: {}", install_root.display()),
+            )
+        })?;
+        fs::create_dir_all(parent).map_err(|err| ("stage-failed", err.to_string()))?;
+        let branch = options.branch.unwrap_or("main");
+        let clone_status = ProcessCommand::new(&git)
+            .args([
+                "-c",
+                "windows.appendAtomically=false",
+                "clone",
+                "--branch",
+                branch,
+                "https://github.com/NousResearch/hermes-agent.git",
+            ])
+            .arg(&install_root)
+            .status()
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+        if !clone_status.success() {
+            return Err((
+                "fallback-to-script",
+                format!(
+                    "git clone failed with exit {:?}; script tries SSH, HTTPS, and ZIP",
+                    clone_status.code()
+                ),
+            ));
+        }
+        let checkout_status = ProcessCommand::new(&git)
+            .args([
+                "-c",
+                "windows.appendAtomically=false",
+                "checkout",
+                "--detach",
+                expected_commit,
+            ])
+            .current_dir(&install_root)
+            .status()
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+        if !checkout_status.success() {
+            return Err((
+                "fallback-to-script",
+                format!(
+                    "git checkout {expected_commit} failed with exit {:?}; script updates source",
+                    checkout_status.code()
+                ),
+            ));
+        }
+        return verify_native_repository_commit(&git, &install_root, expected_commit, false);
+    }
+    if !install_root.join(".git").exists() {
+        return Err((
+            "fallback-to-script",
+            "repository checkout missing; script clones or downloads source".to_string(),
+        ));
+    }
+    if let Ok(result) = verify_native_repository_commit(&git, &install_root, expected_commit, true)
+    {
+        return Ok(result);
+    }
+    fetch_native_repository_commit(&git, &install_root, expected_commit)?;
+    checkout_native_repository_commit(&git, &install_root, expected_commit)?;
+    verify_native_repository_commit(&git, &install_root, expected_commit, false)
+}
+
+fn fetch_native_repository_commit(
+    git: &std::path::Path,
+    install_root: &std::path::Path,
+    expected_commit: &str,
+) -> std::result::Result<(), (&'static str, String)> {
+    let status = ProcessCommand::new(git)
+        .args([
+            "-c",
+            "windows.appendAtomically=false",
+            "fetch",
+            "--depth",
+            "1",
+            "origin",
+            expected_commit,
+        ])
+        .current_dir(install_root)
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if status.success() {
+        return Ok(());
+    }
+    Err((
+        "fallback-to-script",
+        format!(
+            "git fetch {expected_commit} failed with exit {:?}; script updates source",
+            status.code()
+        ),
+    ))
+}
+
+fn checkout_native_repository_commit(
+    git: &std::path::Path,
+    install_root: &std::path::Path,
+    expected_commit: &str,
+) -> std::result::Result<(), (&'static str, String)> {
+    let status = ProcessCommand::new(git)
+        .args([
+            "-c",
+            "windows.appendAtomically=false",
+            "checkout",
+            "--detach",
+            expected_commit,
+        ])
+        .current_dir(install_root)
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if status.success() {
+        return Ok(());
+    }
+    Err((
+        "fallback-to-script",
+        format!(
+            "git checkout {expected_commit} failed with exit {:?}; script updates source",
+            status.code()
+        ),
+    ))
+}
+
+fn verify_native_repository_commit(
+    git: &std::path::Path,
+    install_root: &std::path::Path,
+    expected_commit: &str,
+    skipped: bool,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    let output = ProcessCommand::new(git)
+        .args(["-c", "windows.appendAtomically=false", "rev-parse", "HEAD"])
+        .current_dir(install_root)
+        .output()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    let current_commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if output.status.success() && current_commit.eq_ignore_ascii_case(expected_commit) {
+        let reason = if skipped {
+            format!("repository already at pinned commit {current_commit}")
+        } else {
+            format!("repository cloned at pinned commit {current_commit}")
+        };
+        return Ok((skipped, Some(reason)));
+    }
+    Err((
+        "fallback-to-script",
+        "repository checkout missing or not at pinned commit; script updates source".to_string(),
+    ))
+}
+
+fn run_native_venv_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native venv stage is only complete on Windows".to_string(),
+        ));
+    }
+    let install_root = options
+        .install_root
+        .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    if !install_root.is_dir() {
+        return Err((
+            "fallback-to-script",
+            "install root missing; script creates the repository before venv".to_string(),
+        ));
+    }
+    let path_text = windows_stage_path(options.current_path)?;
+    let Some(uv) = windows_uv_command(home, &path_text) else {
+        return Err((
+            "fallback-to-script",
+            "uv missing; script creates the virtual environment after installing uv".to_string(),
+        ));
+    };
+    let venv = install_root.join("venv");
+    if options.dry_run {
+        return Ok((
+            false,
+            Some(format!(
+                "venv stage would run {} in {}",
+                uv.display(),
+                install_root.display()
+            )),
+        ));
+    }
+    if venv.exists() {
+        fs::remove_dir_all(&venv).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    let status = ProcessCommand::new(&uv)
+        .args(["venv", "venv", "--python", "3.11"])
+        .current_dir(&install_root)
+        .env("UV_CACHE_DIR", home.join("uv-cache"))
+        .env("UV_PYTHON_INSTALL_DIR", home.join("python"))
+        .env("UV_PYTHON_BIN_DIR", home.join("bin"))
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if !status.success() {
+        return Err((
+            "fallback-to-script",
+            format!(
+                "uv venv failed with exit {:?}; script creates the virtual environment",
+                status.code()
+            ),
+        ));
+    }
+    let python = venv.join("Scripts").join("python.exe");
+    if !python.is_file() {
+        return Err((
+            "fallback-to-script",
+            format!(
+                "uv venv completed but Python was missing at {}; script verifies venv output",
+                python.display()
+            ),
+        ));
+    }
+    Ok((
+        false,
+        Some(format!("created virtual environment at {}", venv.display())),
+    ))
+}
+
+fn run_native_dependencies_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native dependency stage is only complete on Windows".to_string(),
+        ));
+    }
+    let install_root = options
+        .install_root
+        .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    if !install_root.is_dir() {
+        return Err((
+            "fallback-to-script",
+            "install root missing; script creates the repository before dependencies".to_string(),
+        ));
+    }
+    if !install_root.join("uv.lock").is_file() {
+        return Err((
+            "fallback-to-script",
+            "uv.lock missing; script handles dependency installation for this checkout".to_string(),
+        ));
+    }
+    let Some(python) = venv_python_command(&install_root) else {
+        return Err((
+            "fallback-to-script",
+            "venv Python missing; script recreates the virtual environment before dependencies"
+                .to_string(),
+        ));
+    };
+    let path_text = windows_stage_path(options.current_path)?;
+    let Some(uv) = windows_uv_command(home, &path_text) else {
+        return Err((
+            "fallback-to-script",
+            "uv missing; script installs uv before dependencies".to_string(),
+        ));
+    };
+    if options.dry_run {
+        return Ok((
+            false,
+            Some(format!(
+                "dependencies stage would run {} in {}",
+                uv.display(),
+                install_root.display()
+            )),
+        ));
+    }
+
+    let tiers = dependency_install_tiers(&install_root, options.wheelhouse_dir.as_deref());
+    let mut last_exit = None;
+    for (tier_name, args) in tiers {
+        let status = ProcessCommand::new(&uv)
+            .args(args.iter().map(String::as_str))
+            .current_dir(&install_root)
+            .env("UV_PROJECT_ENVIRONMENT", install_root.join("venv"))
+            .env("UV_CACHE_DIR", home.join("uv-cache"))
+            .env("UV_PYTHON_INSTALL_DIR", home.join("python"))
+            .env("UV_PYTHON_BIN_DIR", home.join("bin"))
+            .status()
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+        if status.success() {
+            let baseline = ProcessCommand::new(&python)
+                .args(["-c", "import dotenv, openai, rich, prompt_toolkit"])
+                .status()
+                .map_err(|err| ("fallback-to-script", err.to_string()))?;
+            if baseline.success() {
+                return Ok((
+                    false,
+                    Some(format!("Python dependencies installed using {tier_name}")),
+                ));
+            }
+            return Err((
+                "fallback-to-script",
+                format!(
+                    "baseline imports failed after {tier_name} with exit {:?}; script verifies dependencies",
+                    baseline.code()
+                ),
+            ));
+        }
+        last_exit = status.code();
+    }
+    Err((
+        "fallback-to-script",
+        format!(
+            "native dependency install failed; last tier exited {:?}; script installs dependencies",
+            last_exit
+        ),
+    ))
+}
+
+fn run_native_node_deps_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native node dependency stage is only complete on Windows".to_string(),
+        ));
+    }
+    let path_text = windows_stage_path(options.current_path)?;
+    let Some(npm) = windows_npm_command(home, &path_text) else {
+        return Ok((
+            true,
+            Some("npm not available; Node.js dependencies skipped".to_string()),
+        ));
+    };
+    let install_root = options
+        .install_root
+        .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    if !install_root.is_dir() {
+        return Err((
+            "fallback-to-script",
+            "install root missing; script decides how to install Node.js dependencies".to_string(),
+        ));
+    }
+
+    let npm_cache = home.join("npm-cache");
+    let electron_cache = home.join("electron-cache");
+    let playwright_cache = home.join("playwright-browsers");
+    fs::create_dir_all(&npm_cache).map_err(|err| ("stage-failed", err.to_string()))?;
+    fs::create_dir_all(&electron_cache).map_err(|err| ("stage-failed", err.to_string()))?;
+    fs::create_dir_all(&playwright_cache).map_err(|err| ("stage-failed", err.to_string()))?;
+    let _ = restore_bundled_windows_cache_archive(
+        home,
+        options.bootstrap_tools_dir.as_deref(),
+        "npm-cache",
+    )?;
+    let restored_playwright = restore_bundled_windows_cache_archive(
+        home,
+        options.bootstrap_tools_dir.as_deref(),
+        "playwright-browsers",
+    )?;
+
+    let mut installed = Vec::new();
+    if install_root.join("package.json").is_file() {
+        run_windows_npm_install(&npm, &install_root, &npm_cache, &electron_cache)?;
+        installed.push("browser tools");
+    }
+    let tui_dir = install_root.join("ui-tui");
+    if tui_dir.join("package.json").is_file() {
+        run_windows_npm_install(&npm, &tui_dir, &npm_cache, &electron_cache)?;
+        installed.push("TUI");
+    }
+    if installed.is_empty() {
+        return Ok((
+            true,
+            Some("no Node.js package manifests found; dependencies skipped".to_string()),
+        ));
+    }
+    if install_root.join("package.json").is_file() && restored_playwright.is_none() {
+        return Err((
+            "fallback-to-script",
+            "bundled Playwright browser cache missing; script installs browser engine".to_string(),
+        ));
+    }
+    Ok((
+        false,
+        Some(format!(
+            "Node.js dependencies installed for {}",
+            installed.join(", ")
+        )),
+    ))
+}
+
+fn run_windows_npm_install(
+    npm: &std::path::Path,
+    cwd: &std::path::Path,
+    npm_cache: &std::path::Path,
+    electron_cache: &std::path::Path,
+) -> std::result::Result<(), (&'static str, String)> {
+    if cwd.join("package-lock.json").is_file() {
+        let status = run_windows_npm_command(
+            npm,
+            ["ci", "--prefer-offline", "--no-audit", "--fund=false"],
+            cwd,
+            npm_cache,
+            electron_cache,
+        )?;
+        if status.success() {
+            return Ok(());
+        }
+    }
+    let status = run_windows_npm_command(
+        npm,
+        [
+            "install",
+            "--silent",
+            "--prefer-offline",
+            "--no-audit",
+            "--fund=false",
+        ],
+        cwd,
+        npm_cache,
+        electron_cache,
+    )?;
+    if status.success() {
+        return Ok(());
+    }
+    Err((
+        "fallback-to-script",
+        format!(
+            "npm dependency install failed in {} with exit {:?}; script installs Node.js dependencies",
+            cwd.display(),
+            status.code()
+        ),
+    ))
+}
+
+fn run_native_desktop_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native desktop stage is only complete on Windows".to_string(),
+        ));
+    }
+    let install_root = options
+        .install_root
+        .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    if !install_root.is_dir() {
+        return Err((
+            "fallback-to-script",
+            "install root missing; script prepares the repository before desktop build".to_string(),
+        ));
+    }
+    let desktop_dir = install_root.join("apps").join("desktop");
+    if !desktop_dir.join("package.json").is_file() {
+        return Err((
+            "fallback-to-script",
+            "apps/desktop package missing; script decides whether to skip desktop build"
+                .to_string(),
+        ));
+    }
+    let path_text = windows_stage_path(options.current_path)?;
+    let Some(npm) = windows_npm_command(home, &path_text) else {
+        return Err((
+            "fallback-to-script",
+            "npm missing; script verifies Node.js before desktop build".to_string(),
+        ));
+    };
+    if options.dry_run {
+        return Ok((
+            false,
+            Some(format!(
+                "desktop stage would run {} in {}",
+                npm.display(),
+                install_root.display()
+            )),
+        ));
+    }
+
+    let npm_cache = home.join("npm-cache");
+    let electron_cache = home.join("electron-cache");
+    fs::create_dir_all(&npm_cache).map_err(|err| ("stage-failed", err.to_string()))?;
+    fs::create_dir_all(&electron_cache).map_err(|err| ("stage-failed", err.to_string()))?;
+    restore_bundled_windows_cache_archive(
+        home,
+        options.bootstrap_tools_dir.as_deref(),
+        "npm-cache",
+    )?;
+    restore_bundled_windows_cache_archive(
+        home,
+        options.bootstrap_tools_dir.as_deref(),
+        "electron-cache",
+    )?;
+
+    let ci_status = run_windows_npm_command(
+        &npm,
+        ["ci", "--prefer-offline", "--no-audit", "--fund=false"],
+        &install_root,
+        &npm_cache,
+        &electron_cache,
+    )?;
+    if !ci_status.success() {
+        let install_status = run_windows_npm_command(
+            &npm,
+            ["install", "--prefer-offline", "--no-audit", "--fund=false"],
+            &install_root,
+            &npm_cache,
+            &electron_cache,
+        )?;
+        if !install_status.success() {
+            return Err((
+                "fallback-to-script",
+                format!(
+                    "desktop workspace npm install failed with exit {:?}; script preserves full npm diagnostics",
+                    install_status.code()
+                ),
+            ));
+        }
+    }
+
+    let pack_status = run_windows_npm_command(
+        &npm,
+        ["run", "pack"],
+        &desktop_dir,
+        &npm_cache,
+        &electron_cache,
+    )?;
+    if !pack_status.success() {
+        return Err((
+            "fallback-to-script",
+            format!(
+                "desktop pack failed with exit {:?}; script retries Electron cache recovery",
+                pack_status.code()
+            ),
+        ));
+    }
+    let Some(desktop_exe) = windows_desktop_exe(&desktop_dir) else {
+        return Err((
+            "fallback-to-script",
+            "desktop build completed but no Hermes.exe was found; script verifies build output"
+                .to_string(),
+        ));
+    };
+    Ok((
+        false,
+        Some(format!("desktop app built at {}", desktop_exe.display())),
+    ))
+}
+
+fn run_native_node_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native Node.js probe is only complete on Windows".to_string(),
+        ));
+    }
+    let path_text = windows_stage_path(options.current_path)?;
+    let node = windows_node_command(home, &path_text);
+    let Some(node) = node else {
+        install_bundled_windows_node(home, options.bootstrap_tools_dir.as_deref())?;
+        return verify_managed_windows_node(home);
+    };
+    let output = ProcessCommand::new(&node)
+        .arg("--version")
+        .output()
+        .map_err(|err| ("stage-failed", err.to_string()))?;
+    let version = command_version_text(&output);
+    if output.status.success() && node_version_is_supported(&version) {
+        return Ok((
+            true,
+            Some(format!(
+                "Node.js {version} already available; node stage skipped"
+            )),
+        ));
+    }
+    install_bundled_windows_node(home, options.bootstrap_tools_dir.as_deref())?;
+    verify_managed_windows_node(home)
+}
+
+fn run_native_system_packages_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native system package probe is only complete on Windows".to_string(),
+        ));
+    }
+    let path_text = windows_stage_path(options.current_path)?;
+    let has_ripgrep = windows_tool_command(home, &path_text, "rg").is_some();
+    let has_ffmpeg = windows_tool_command(home, &path_text, "ffmpeg").is_some();
+    if has_ripgrep && has_ffmpeg {
+        return Ok((
+            true,
+            Some("ripgrep and ffmpeg already available; system package stage skipped".to_string()),
+        ));
+    }
+    install_bundled_windows_system_packages(home, options.bootstrap_tools_dir.as_deref())?;
+    if windows_tool_command(home, "", "rg").is_some()
+        && windows_tool_command(home, "", "ffmpeg").is_some()
+    {
+        return Ok((
+            false,
+            Some("installed bundled ripgrep and ffmpeg".to_string()),
+        ));
+    }
+    Err((
+        "fallback-to-script",
+        "bundled system package install completed but rg or ffmpeg was not found".to_string(),
+    ))
+}
+
+fn run_native_config_templates_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<bool, (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native config-template stage is only complete on Windows".to_string(),
+        ));
+    }
+    let install_root = options
+        .install_root
+        .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    hermes_manager::commands::write_config_templates(home, &install_root)
+        .map(|()| false)
+        .map_err(|err| ("stage-failed", err.to_string()))
+}
+
+fn run_native_platform_sdks_stage(
+    home: &std::path::Path,
+    options: NativeBootstrapStageOptions<'_>,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            "native platform SDK probe is only complete on Windows".to_string(),
+        ));
+    }
+    let install_root = options
+        .install_root
+        .unwrap_or_else(|| hermes_manager::paths::agent_root(home));
+    let Some(python) = windows_venv_python_command(&install_root) else {
+        return Ok((
+            true,
+            Some("venv Python missing; platform SDK verification skipped".to_string()),
+        ));
+    };
+    let env_path = home.join(".env");
+    if !env_path.is_file() {
+        return Ok((
+            true,
+            Some("no .env file; no messaging platform SDKs required".to_string()),
+        ));
+    }
+    let env_text =
+        fs::read_to_string(&env_path).map_err(|err| ("stage-failed", err.to_string()))?;
+    let needed_sdks = configured_platform_sdks(&env_text);
+    if needed_sdks.is_empty() {
+        return Ok((
+            true,
+            Some(
+                "no configured messaging platform tokens; platform SDK verification skipped"
+                    .to_string(),
+            ),
+        ));
+    }
+    let mut missing = Vec::new();
+    for sdk in &needed_sdks {
+        if !python_import_succeeds(&python, sdk.import_name)? {
+            missing.push(*sdk);
+        }
+    }
+    if missing.is_empty() {
+        return Ok((
+            false,
+            Some(format!(
+                "verified {} platform SDK imports",
+                needed_sdks.len()
+            )),
+        ));
+    }
+    ensure_python_pip(&python)?;
+    let wheelhouse = platform_sdk_wheelhouse(&install_root, options.wheelhouse_dir.as_deref());
+    for sdk in &missing {
+        install_platform_sdk(&python, wheelhouse.as_deref(), sdk)?;
+    }
+    let still_missing: Vec<&str> = missing
+        .iter()
+        .filter_map(
+            |sdk| match python_import_succeeds(&python, sdk.import_name) {
+                Ok(true) => None,
+                _ => Some(sdk.import_name),
+            },
+        )
+        .collect();
+    if still_missing.is_empty() {
+        return Ok((
+            false,
+            Some(format!("installed {} platform SDKs", missing.len())),
+        ));
+    }
+    Err((
+        "fallback-to-script",
+        format!(
+            "platform SDK imports still missing after pip install: {}",
+            still_missing.join(", ")
+        ),
+    ))
+}
+
+fn platform_sdk_wheelhouse(
+    install_root: &std::path::Path,
+    wheelhouse_dir: Option<&std::path::Path>,
+) -> Option<PathBuf> {
+    let checkout_wheelhouse = install_root.join("resources").join("wheelhouse");
+    wheelhouse_dir
+        .filter(|path| wheelhouse_has_wheels(path))
+        .map(Path::to_path_buf)
+        .or_else(|| wheelhouse_has_wheels(&checkout_wheelhouse).then_some(checkout_wheelhouse))
+}
+
+fn install_platform_sdk(
+    python: &std::path::Path,
+    wheelhouse_dir: Option<&std::path::Path>,
+    sdk: &PlatformSdk,
+) -> std::result::Result<(), (&'static str, String)> {
+    if let Some(wheelhouse) = wheelhouse_dir.filter(|path| wheelhouse_has_wheels(path)) {
+        let status = ProcessCommand::new(python)
+            .args(["-m", "pip", "install", "--no-index", "--find-links"])
+            .arg(wheelhouse)
+            .arg(sdk.pip_spec)
+            .status()
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+        if status.success() {
+            return Ok(());
+        }
+    }
+    let status = ProcessCommand::new(python)
+        .args(["-m", "pip", "install", sdk.pip_spec])
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if status.success() {
+        return Ok(());
+    }
+    Err((
+        "fallback-to-script",
+        format!(
+            "pip install {} failed with exit {:?}; script recovers platform SDKs",
+            sdk.pip_spec,
+            status.code()
+        ),
+    ))
+}
+
+#[derive(Clone, Copy)]
+struct PlatformSdk {
+    token_name: &'static str,
+    import_name: &'static str,
+    pip_spec: &'static str,
+}
+
+fn platform_sdk_specs() -> &'static [PlatformSdk] {
+    &[
+        PlatformSdk {
+            token_name: "TELEGRAM_BOT_TOKEN",
+            import_name: "telegram",
+            pip_spec: "python-telegram-bot[webhooks]>=22.6,<23",
+        },
+        PlatformSdk {
+            token_name: "DISCORD_BOT_TOKEN",
+            import_name: "discord",
+            pip_spec: "discord.py[voice]>=2.7.1,<3",
+        },
+        PlatformSdk {
+            token_name: "SLACK_BOT_TOKEN",
+            import_name: "slack_sdk",
+            pip_spec: "slack-sdk>=3.27.0,<4",
+        },
+        PlatformSdk {
+            token_name: "SLACK_APP_TOKEN",
+            import_name: "slack_bolt",
+            pip_spec: "slack-bolt>=1.18.0,<2",
+        },
+        PlatformSdk {
+            token_name: "WHATSAPP_ENABLED",
+            import_name: "qrcode",
+            pip_spec: "qrcode>=7.0,<8",
+        },
+    ]
+}
+
+fn configured_platform_sdks(env_text: &str) -> Vec<PlatformSdk> {
+    platform_sdk_specs()
+        .iter()
+        .copied()
+        .filter(|sdk| {
+            env_text
+                .lines()
+                .any(|line| configured_env_line_matches(line, sdk.token_name))
+        })
+        .collect()
+}
+
+fn configured_env_line_matches(line: &str, token_name: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.contains("your-token-here") {
+        return false;
+    }
+    trimmed
+        .strip_prefix(&format!("{token_name}="))
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn python_import_succeeds(
+    python: &std::path::Path,
+    import_name: &str,
+) -> std::result::Result<bool, (&'static str, String)> {
+    let status = ProcessCommand::new(python)
+        .args(["-c", &format!("import {import_name}")])
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    Ok(status.success())
+}
+
+fn ensure_python_pip(python: &std::path::Path) -> std::result::Result<(), (&'static str, String)> {
+    let pip = ProcessCommand::new(python)
+        .args(["-m", "pip", "--version"])
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if pip.success() {
+        return Ok(());
+    }
+    let ensurepip = ProcessCommand::new(python)
+        .args(["-m", "ensurepip", "--upgrade"])
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if ensurepip.success() {
+        return Ok(());
+    }
+    Err((
+        "fallback-to-script",
+        format!(
+            "ensurepip failed with exit {:?}; script recovers platform SDKs",
+            ensurepip.code()
+        ),
+    ))
+}
+
+fn windows_stage_path(
+    override_path: Option<String>,
+) -> std::result::Result<String, (&'static str, String)> {
+    if let Some(path) = override_path {
+        return Ok(path);
+    }
+    let mut parts = Vec::new();
+    if let Ok(path) = env::var("PATH") {
+        parts.push(path);
+    }
+    if let Some(path) = hermes_manager::platform::read_windows_user_path()
+        .map_err(|err| ("stage-failed", err.to_string()))?
+    {
+        parts.push(path);
+    }
+    if let Some(path) = hermes_manager::platform::read_windows_machine_path()
+        .map_err(|err| ("stage-failed", err.to_string()))?
+    {
+        parts.push(path);
+    }
+    Ok(parts.join(";"))
+}
+
+fn venv_python_command(install_root: &std::path::Path) -> Option<PathBuf> {
+    [
+        install_root.join("venv").join("Scripts").join("python.exe"),
+        install_root.join("venv").join("Scripts").join("python.cmd"),
+        install_root.join("venv").join("Scripts").join("python.bat"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+}
+
+fn dependency_install_tiers(
+    install_root: &std::path::Path,
+    wheelhouse_dir: Option<&std::path::Path>,
+) -> Vec<(String, Vec<String>)> {
+    let mut tiers = Vec::new();
+    let checkout_wheelhouse = install_root.join("resources").join("wheelhouse");
+    let wheelhouse = wheelhouse_dir
+        .filter(|path| wheelhouse_has_wheels(path))
+        .map(Path::to_path_buf)
+        .or_else(|| wheelhouse_has_wheels(&checkout_wheelhouse).then_some(checkout_wheelhouse));
+    if let Some(wheelhouse) = wheelhouse {
+        tiers.push((
+            "local wheelhouse (all)".to_string(),
+            vec![
+                "pip".to_string(),
+                "install".to_string(),
+                "--no-index".to_string(),
+                "--find-links".to_string(),
+                wheelhouse.display().to_string(),
+                "-e".to_string(),
+                ".[all]".to_string(),
+            ],
+        ));
+    }
+    tiers.push((
+        "hash-verified (uv.lock)".to_string(),
+        vec![
+            "sync".to_string(),
+            "--extra".to_string(),
+            "all".to_string(),
+            "--locked".to_string(),
+        ],
+    ));
+    tiers.push((
+        "all".to_string(),
+        vec![
+            "pip".to_string(),
+            "install".to_string(),
+            "-e".to_string(),
+            ".[all]".to_string(),
+        ],
+    ));
+    tiers
+}
+
+fn wheelhouse_has_wheels(path: &std::path::Path) -> bool {
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == std::ffi::OsStr::new("whl"))
+    })
+}
+
+fn windows_uv_command(home: &std::path::Path, path_text: &str) -> Option<PathBuf> {
+    [
+        home.join("bin").join("uv.exe"),
+        home.join("bin").join("uv.cmd"),
+        home.join("bin").join("uv.bat"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .or_else(|| windows_path_command(path_text, "uv"))
+}
+
+fn install_bundled_windows_uv(
+    home: &std::path::Path,
+    bootstrap_tools_dir: Option<&std::path::Path>,
+) -> std::result::Result<(), (&'static str, String)> {
+    let Some(bootstrap_tools_dir) = bootstrap_tools_dir else {
+        return Err((
+            "fallback-to-script",
+            "uv missing and no bundled bootstrap-tools directory was provided".to_string(),
+        ));
+    };
+    let Some(archive_name) = windows_uv_archive_name() else {
+        return Err((
+            "fallback-to-script",
+            "unsupported Windows architecture for bundled uv".to_string(),
+        ));
+    };
+    let archive = bootstrap_tools_dir.join(archive_name);
+    if !archive.is_file() {
+        return Err((
+            "fallback-to-script",
+            format!("bundled uv archive missing: {}", archive.display()),
+        ));
+    }
+    verify_bootstrap_tools_archive(bootstrap_tools_dir, archive_name, &archive)?;
+    extract_windows_uv_zip(&archive, &home.join("bin"))
+}
+
+fn verify_managed_windows_uv(
+    home: &std::path::Path,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    let Some(uv) = windows_uv_command(home, "") else {
+        return Err((
+            "fallback-to-script",
+            "bundled uv install completed but uv was not found".to_string(),
+        ));
+    };
+    let output = ProcessCommand::new(&uv)
+        .arg("--version")
+        .output()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if output.status.success() {
+        let version = command_version_text(&output);
+        return Ok((
+            false,
+            Some(format!("installed bundled {version} at {}", uv.display())),
+        ));
+    }
+    Err((
+        "fallback-to-script",
+        "bundled uv did not pass version check".to_string(),
+    ))
+}
+
+fn extract_windows_uv_zip(
+    archive: &std::path::Path,
+    install_dir: &std::path::Path,
+) -> std::result::Result<(), (&'static str, String)> {
+    fs::create_dir_all(install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    let tmp_dir = install_dir.join("uv-extracting");
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    fs::create_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    extract_zip_safely(archive, &tmp_dir)?;
+
+    let uv = find_file_named(&tmp_dir, &["uv.exe", "uv.cmd", "uv.bat"])?;
+    let uv_name = uv.file_name().ok_or_else(|| {
+        (
+            "fallback-to-script",
+            format!("bundled uv entry has no file name: {}", uv.display()),
+        )
+    })?;
+    fs::copy(&uv, install_dir.join(uv_name)).map_err(|err| ("stage-failed", err.to_string()))?;
+    if let Ok(uvx) = find_file_named(&tmp_dir, &["uvx.exe", "uvx.cmd", "uvx.bat"]) {
+        if let Some(uvx_name) = uvx.file_name() {
+            fs::copy(&uvx, install_dir.join(uvx_name))
+                .map_err(|err| ("stage-failed", err.to_string()))?;
+        }
+    }
+    fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    Ok(())
+}
+
+fn extract_zip_safely(
+    archive: &std::path::Path,
+    output_dir: &std::path::Path,
+) -> std::result::Result<(), (&'static str, String)> {
+    let file = fs::File::open(archive).map_err(|err| ("fallback-to-script", err.to_string()))?;
+    let mut zip =
+        zip::ZipArchive::new(file).map_err(|err| ("fallback-to-script", err.to_string()))?;
+    for index in 0..zip.len() {
+        let mut entry = zip
+            .by_index(index)
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+        let Some(enclosed_name) = entry.enclosed_name() else {
+            return Err((
+                "fallback-to-script",
+                format!("unsafe ZIP entry in {}", archive.display()),
+            ));
+        };
+        if enclosed_name.as_os_str().is_empty() {
+            return Err((
+                "fallback-to-script",
+                format!("blank ZIP entry in {}", archive.display()),
+            ));
+        }
+        let output = output_dir.join(enclosed_name);
+        if entry.is_dir() {
+            fs::create_dir_all(&output).map_err(|err| ("stage-failed", err.to_string()))?;
+            continue;
+        }
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent).map_err(|err| ("stage-failed", err.to_string()))?;
+        }
+        let mut out = fs::File::create(&output).map_err(|err| ("stage-failed", err.to_string()))?;
+        std::io::copy(&mut entry, &mut out)
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    }
+    Ok(())
+}
+
+fn find_file_named(
+    root: &std::path::Path,
+    names: &[&str],
+) -> std::result::Result<PathBuf, (&'static str, String)> {
+    let entries = fs::read_dir(root).map_err(|err| ("stage-failed", err.to_string()))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            if let Ok(found) = find_file_named(&path, names) {
+                return Ok(found);
+            }
+        } else if file_type.is_file() {
+            let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if names
+                .iter()
+                .any(|name| file_name.eq_ignore_ascii_case(name))
+            {
+                return Ok(path);
+            }
+        }
+    }
+    Err((
+        "fallback-to-script",
+        format!(
+            "none of {} found under {}",
+            names.join(", "),
+            root.display()
+        ),
+    ))
+}
+
+fn windows_uv_archive_name() -> Option<&'static str> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some("uv-x86_64-pc-windows-msvc.zip"),
+        "aarch64" => Some("uv-aarch64-pc-windows-msvc.zip"),
+        "x86" => Some("uv-i686-pc-windows-msvc.zip"),
+        _ => None,
+    }
+}
+
+fn windows_git_archive_name() -> Option<&'static str> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some("PortableGit-2.54.0-64-bit.7z.exe"),
+        "aarch64" => Some("PortableGit-2.54.0-arm64.7z.exe"),
+        "x86" => Some("MinGit-2.54.0-32-bit.zip"),
+        _ => None,
+    }
+}
+
+fn install_bundled_windows_system_packages(
+    home: &std::path::Path,
+    bootstrap_tools_dir: Option<&std::path::Path>,
+) -> std::result::Result<(), (&'static str, String)> {
+    let Some(bootstrap_tools_dir) = bootstrap_tools_dir else {
+        return Err((
+            "fallback-to-script",
+            "system packages missing and no bundled bootstrap-tools directory was provided"
+                .to_string(),
+        ));
+    };
+    let Some(ripgrep_archive_name) = windows_ripgrep_archive_name() else {
+        return Err((
+            "fallback-to-script",
+            "unsupported Windows architecture for bundled ripgrep".to_string(),
+        ));
+    };
+    let Some(ffmpeg_archive_name) = windows_ffmpeg_archive_name() else {
+        return Err((
+            "fallback-to-script",
+            "unsupported Windows architecture for bundled ffmpeg".to_string(),
+        ));
+    };
+    install_bundled_windows_tool_archive(
+        bootstrap_tools_dir,
+        ripgrep_archive_name,
+        &home.join("bin"),
+        "rg.exe",
+    )?;
+    install_bundled_windows_tool_archive(
+        bootstrap_tools_dir,
+        ffmpeg_archive_name,
+        &home.join("bin"),
+        "ffmpeg.exe",
+    )
+}
+
+fn install_bundled_windows_tool_archive(
+    bootstrap_tools_dir: &std::path::Path,
+    archive_name: &str,
+    install_dir: &std::path::Path,
+    executable_name: &str,
+) -> std::result::Result<(), (&'static str, String)> {
+    let archive = bootstrap_tools_dir.join(archive_name);
+    if !archive.is_file() {
+        return Err((
+            "fallback-to-script",
+            format!("bundled tool archive missing: {}", archive.display()),
+        ));
+    }
+    verify_bootstrap_tools_archive(bootstrap_tools_dir, archive_name, &archive)?;
+    extract_windows_tool_executable_zip(&archive, install_dir, executable_name)
+}
+
+fn extract_windows_tool_executable_zip(
+    archive: &std::path::Path,
+    install_dir: &std::path::Path,
+    executable_name: &str,
+) -> std::result::Result<(), (&'static str, String)> {
+    fs::create_dir_all(install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    let tmp_dir = install_dir.join(format!("{executable_name}-extracting"));
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    fs::create_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    extract_zip_safely(archive, &tmp_dir)?;
+
+    let executable = find_file_named(&tmp_dir, &[executable_name])?;
+    fs::copy(&executable, install_dir.join(executable_name))
+        .map_err(|err| ("stage-failed", err.to_string()))?;
+    fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    Ok(())
+}
+
+fn windows_ripgrep_archive_name() -> Option<&'static str> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some("ripgrep-15.1.0-x86_64-pc-windows-msvc.zip"),
+        "aarch64" => Some("ripgrep-15.1.0-aarch64-pc-windows-msvc.zip"),
+        "x86" => Some("ripgrep-15.1.0-i686-pc-windows-msvc.zip"),
+        _ => None,
+    }
+}
+
+fn windows_ffmpeg_archive_name() -> Option<&'static str> {
+    let arch = windows_cache_arch()?;
+    match arch {
+        "x64" => Some("ffmpeg-windows-x64.zip"),
+        "arm64" => Some("ffmpeg-windows-arm64.zip"),
+        "x86" => Some("ffmpeg-windows-x86.zip"),
+        _ => None,
+    }
+}
+
+fn install_bundled_windows_node(
+    home: &std::path::Path,
+    bootstrap_tools_dir: Option<&std::path::Path>,
+) -> std::result::Result<(), (&'static str, String)> {
+    let Some(bootstrap_tools_dir) = bootstrap_tools_dir else {
+        return Err((
+            "fallback-to-script",
+            "Node.js missing and no bundled bootstrap-tools directory was provided".to_string(),
+        ));
+    };
+    let archive_name = find_bundled_windows_node_archive(bootstrap_tools_dir)?;
+    let archive = bootstrap_tools_dir.join(&archive_name);
+    verify_bootstrap_tools_archive(bootstrap_tools_dir, &archive_name, &archive)?;
+    extract_windows_node_zip(&archive, &home.join("node"))
+}
+
+fn verify_managed_windows_node(
+    home: &std::path::Path,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    let Some(node) = windows_node_command(home, "") else {
+        return Err((
+            "fallback-to-script",
+            "bundled Node.js install completed but node was not found".to_string(),
+        ));
+    };
+    let output = ProcessCommand::new(&node)
+        .arg("--version")
+        .output()
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    let version = command_version_text(&output);
+    if !output.status.success() || !node_version_is_supported(&version) {
+        return Err((
+            "fallback-to-script",
+            format!("bundled Node.js {version} did not pass version check"),
+        ));
+    }
+    if windows_npm_command(home, "").is_none() {
+        return Err((
+            "fallback-to-script",
+            "bundled Node.js install completed but npm was not found".to_string(),
+        ));
+    }
+    Ok((
+        false,
+        Some(format!(
+            "installed bundled Node.js {version} at {}",
+            node.display()
+        )),
+    ))
+}
+
+fn find_bundled_windows_node_archive(
+    bootstrap_tools_dir: &std::path::Path,
+) -> std::result::Result<String, (&'static str, String)> {
+    let Some(suffix) = windows_node_archive_suffix() else {
+        return Err((
+            "fallback-to-script",
+            "unsupported Windows architecture for bundled Node.js".to_string(),
+        ));
+    };
+    let entries =
+        fs::read_dir(bootstrap_tools_dir).map_err(|err| ("fallback-to-script", err.to_string()))?;
+    let mut matches: Vec<((u32, u32, u32), String)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("node-v") || !name.ends_with(suffix) {
+            continue;
+        }
+        let Some(version) = parse_windows_node_archive_version(name, suffix) else {
+            continue;
+        };
+        let version_text = format!("{}.{}.{}", version.0, version.1, version.2);
+        if node_version_is_supported(&version_text) {
+            matches.push((version, name.to_string()));
+        }
+    }
+    matches
+        .into_iter()
+        .max_by_key(|(version, _)| *version)
+        .map(|(_, name)| name)
+        .ok_or_else(|| {
+            (
+                "fallback-to-script",
+                format!("supported bundled Node.js archive missing for *{suffix}"),
+            )
+        })
+}
+
+fn parse_windows_node_archive_version(name: &str, suffix: &str) -> Option<(u32, u32, u32)> {
+    let version = name.strip_prefix("node-v")?.strip_suffix(suffix)?;
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse::<u32>().ok()?;
+    let minor = parts.next()?.parse::<u32>().ok()?;
+    let patch = parts.next()?.parse::<u32>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
+fn windows_node_archive_suffix() -> Option<&'static str> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some("-win-x64.zip"),
+        "aarch64" => Some("-win-arm64.zip"),
+        "x86" => Some("-win-x86.zip"),
+        _ => None,
+    }
+}
+
+fn extract_windows_node_zip(
+    archive: &std::path::Path,
+    install_dir: &std::path::Path,
+) -> std::result::Result<(), (&'static str, String)> {
+    let parent = install_dir.parent().ok_or_else(|| {
+        (
+            "stage-failed",
+            format!(
+                "Node.js install path has no parent: {}",
+                install_dir.display()
+            ),
+        )
+    })?;
+    let tmp_dir = parent.join("node-extracting");
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    fs::create_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    extract_zip_safely(archive, &tmp_dir)?;
+
+    let node = find_file_named(&tmp_dir, &["node.exe", "node.cmd", "node.bat"])?;
+    let source_dir = node.parent().ok_or_else(|| {
+        (
+            "fallback-to-script",
+            format!("bundled Node.js entry has no parent: {}", node.display()),
+        )
+    })?;
+    if install_dir.exists() {
+        fs::remove_dir_all(install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    let moved_tmp_root = source_dir == tmp_dir;
+    fs::rename(source_dir, install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    if !moved_tmp_root && tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    Ok(())
+}
+
+fn windows_node_command(home: &std::path::Path, path_text: &str) -> Option<PathBuf> {
+    [
+        home.join("node").join("node.exe"),
+        home.join("node").join("node.cmd"),
+        home.join("node").join("node.bat"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .or_else(|| windows_path_command(path_text, "node"))
+}
+
+fn windows_git_command(home: &std::path::Path, path_text: &str) -> Option<PathBuf> {
+    [
+        home.join("git").join("cmd").join("git.exe"),
+        home.join("git").join("cmd").join("git.cmd"),
+        home.join("git").join("bin").join("git.exe"),
+        home.join("git").join("mingw64").join("bin").join("git.exe"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .or_else(|| windows_path_command(path_text, "git"))
+}
+
+fn windows_venv_python_command(install_root: &std::path::Path) -> Option<PathBuf> {
+    let scripts = install_root.join("venv").join("Scripts");
+    [
+        scripts.join("python.exe"),
+        scripts.join("python.cmd"),
+        scripts.join("python.bat"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+}
+
+fn windows_tool_command(
+    home: &std::path::Path,
+    path_text: &str,
+    command_name: &str,
+) -> Option<PathBuf> {
+    [
+        home.join("bin").join(format!("{command_name}.exe")),
+        home.join("bin").join(format!("{command_name}.cmd")),
+        home.join("bin").join(format!("{command_name}.bat")),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .or_else(|| windows_path_command(path_text, command_name))
+}
+
+fn windows_npm_command(home: &std::path::Path, path_text: &str) -> Option<PathBuf> {
+    [
+        home.join("node").join("npm.cmd"),
+        home.join("node").join("npm.exe"),
+        home.join("node").join("npm.bat"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .or_else(|| windows_path_command(path_text, "npm"))
+}
+
+fn restore_bundled_windows_cache_archive(
+    home: &std::path::Path,
+    bootstrap_tools_dir: Option<&std::path::Path>,
+    cache_name: &str,
+) -> std::result::Result<Option<PathBuf>, (&'static str, String)> {
+    let Some(bootstrap_tools_dir) = bootstrap_tools_dir else {
+        return Ok(None);
+    };
+    let Some(arch) = windows_cache_arch() else {
+        return Ok(None);
+    };
+    let archive_name = format!("{cache_name}-windows-{arch}.zip");
+    let archive = bootstrap_tools_dir.join(&archive_name);
+    if !archive.is_file() {
+        return Ok(None);
+    }
+    verify_bootstrap_tools_archive(bootstrap_tools_dir, &archive_name, &archive)?;
+    let install_dir = home.join(cache_name);
+    extract_windows_cache_zip(&archive, &install_dir, cache_name)?;
+    Ok(Some(archive))
+}
+
+fn verify_bootstrap_tools_archive(
+    bootstrap_tools_dir: &std::path::Path,
+    archive_name: &str,
+    archive_path: &std::path::Path,
+) -> std::result::Result<(), (&'static str, String)> {
+    let manifest_path = bootstrap_tools_dir.join("bootstrap-tools-manifest.json");
+    let manifest_text = fs::read_to_string(&manifest_path)
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    let manifest: BootstrapToolsManifest = serde_json::from_str(&manifest_text)
+        .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    if manifest.schema_version != 1 {
+        return Err((
+            "fallback-to-script",
+            format!(
+                "unsupported bootstrap tools manifest schema: {}",
+                manifest.schema_version
+            ),
+        ));
+    }
+    let Some(record) = manifest
+        .archives
+        .iter()
+        .find(|record| record.name == archive_name)
+    else {
+        return Err((
+            "fallback-to-script",
+            format!("bootstrap tools manifest does not own {archive_name}"),
+        ));
+    };
+    if record.sha256.len() != 64 || !record.sha256.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err((
+            "fallback-to-script",
+            format!("bootstrap tools manifest has invalid sha256 for {archive_name}"),
+        ));
+    }
+    let actual = sha256_file(archive_path).map_err(|err| ("fallback-to-script", err))?;
+    if !actual.eq_ignore_ascii_case(&record.sha256) {
+        return Err((
+            "fallback-to-script",
+            format!("bootstrap tools checksum mismatch for {archive_name}"),
+        ));
+    }
+    Ok(())
+}
+
+fn sha256_file(path: &std::path::Path) -> std::result::Result<String, String> {
+    use sha2::Digest;
+
+    let mut file = fs::File::open(path).map_err(|err| err.to_string())?;
+    let mut hasher = sha2::Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = std::io::Read::read(&mut file, &mut buffer).map_err(|err| err.to_string())?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn extract_windows_cache_zip(
+    archive: &std::path::Path,
+    install_dir: &std::path::Path,
+    cache_root_name: &str,
+) -> std::result::Result<(), (&'static str, String)> {
+    let parent = install_dir.parent().ok_or_else(|| {
+        (
+            "stage-failed",
+            format!(
+                "cache install path has no parent: {}",
+                install_dir.display()
+            ),
+        )
+    })?;
+    let tmp_dir = parent.join(format!("{cache_root_name}-extracting"));
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    fs::create_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+
+    let file = fs::File::open(archive).map_err(|err| ("fallback-to-script", err.to_string()))?;
+    let mut zip =
+        zip::ZipArchive::new(file).map_err(|err| ("fallback-to-script", err.to_string()))?;
+    for index in 0..zip.len() {
+        let mut entry = zip
+            .by_index(index)
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+        let Some(enclosed_name) = entry.enclosed_name() else {
+            let _ = fs::remove_dir_all(&tmp_dir);
+            return Err((
+                "fallback-to-script",
+                format!("unsafe ZIP entry in {}", archive.display()),
+            ));
+        };
+        if enclosed_name.as_os_str().is_empty() {
+            let _ = fs::remove_dir_all(&tmp_dir);
+            return Err((
+                "fallback-to-script",
+                format!("blank ZIP entry in {}", archive.display()),
+            ));
+        }
+        let output = tmp_dir.join(enclosed_name);
+        if entry.is_dir() {
+            fs::create_dir_all(&output).map_err(|err| ("stage-failed", err.to_string()))?;
+            continue;
+        }
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent).map_err(|err| ("stage-failed", err.to_string()))?;
+        }
+        let mut out = fs::File::create(&output).map_err(|err| ("stage-failed", err.to_string()))?;
+        std::io::copy(&mut entry, &mut out)
+            .map_err(|err| ("fallback-to-script", err.to_string()))?;
+    }
+
+    let extracted_root = tmp_dir.join(cache_root_name);
+    let source_dir = if extracted_root.is_dir() {
+        extracted_root
+    } else {
+        tmp_dir.clone()
+    };
+    if install_dir.exists() {
+        fs::remove_dir_all(install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    fs::rename(&source_dir, install_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|err| ("stage-failed", err.to_string()))?;
+    }
+    Ok(())
+}
+
+fn windows_cache_arch() -> Option<&'static str> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some("x64"),
+        "aarch64" => Some("arm64"),
+        "x86" => Some("x86"),
+        _ => None,
+    }
+}
+
+fn run_windows_npm_command<I, S>(
+    npm: &std::path::Path,
+    args: I,
+    cwd: &std::path::Path,
+    npm_cache: &std::path::Path,
+    electron_cache: &std::path::Path,
+) -> std::result::Result<std::process::ExitStatus, (&'static str, String)>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    ProcessCommand::new(npm)
+        .args(args)
+        .current_dir(cwd)
+        .env("npm_config_cache", npm_cache)
+        .env("electron_config_cache", electron_cache)
+        .env("ELECTRON_CACHE", electron_cache)
+        .env("ELECTRON_BUILDER_CACHE", electron_cache)
+        .env(
+            "PLAYWRIGHT_BROWSERS_PATH",
+            npm_cache
+                .parent()
+                .map(|parent| parent.join("playwright-browsers"))
+                .unwrap_or_else(|| PathBuf::from("playwright-browsers")),
+        )
+        .env("CSC_IDENTITY_AUTO_DISCOVERY", "false")
+        .env("WIN_CSC_LINK", "")
+        .env("WIN_CSC_KEY_PASSWORD", "")
+        .status()
+        .map_err(|err| ("fallback-to-script", err.to_string()))
+}
+
+fn windows_desktop_exe(desktop_dir: &std::path::Path) -> Option<PathBuf> {
+    [
+        desktop_dir
+            .join("release")
+            .join("win-unpacked")
+            .join("Hermes.exe"),
+        desktop_dir
+            .join("release")
+            .join("win-arm64-unpacked")
+            .join("Hermes.exe"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+}
+
+fn windows_path_command(path_text: &str, command_name: &str) -> Option<PathBuf> {
+    let path_ext = env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+    let extensions: Vec<String> = path_ext
+        .split(';')
+        .filter(|ext| !ext.trim().is_empty())
+        .map(|ext| ext.trim().to_string())
+        .collect();
+    for raw_dir in path_text.split(';') {
+        let dir = raw_dir.trim().trim_matches('"');
+        if dir.is_empty() {
+            continue;
+        }
+        let direct = Path::new(dir).join(command_name);
+        if direct.is_file() {
+            return Some(direct);
+        }
+        for ext in &extensions {
+            let candidate = Path::new(dir).join(format!("{command_name}{ext}"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn node_version_is_supported(version: &str) -> bool {
+    let version = version.trim().trim_start_matches('v');
+    let mut parts = version.split('.');
+    let major = parts.next().and_then(|part| part.parse::<u32>().ok());
+    let minor = parts.next().and_then(|part| part.parse::<u32>().ok());
+    match (major, minor) {
+        (Some(major), Some(_)) if major > 22 => true,
+        (Some(22), Some(minor)) => minor >= 12,
+        (Some(21), _) => false,
+        (Some(20), Some(minor)) => minor >= 19,
+        _ => false,
+    }
+}
+
+fn python_version_is_supported(version: &str) -> bool {
+    let version = version
+        .trim()
+        .strip_prefix("Python ")
+        .unwrap_or(version.trim());
+    let mut parts = version.split('.');
+    let major = parts.next().and_then(|part| part.parse::<u32>().ok());
+    let minor = parts.next().and_then(|part| part.parse::<u32>().ok());
+    matches!((major, minor), (Some(3), Some(11)))
+}
+
+fn command_version_text(output: &std::process::Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+    String::from_utf8_lossy(&output.stderr).trim().to_string()
+}
+
+fn run_native_interactive_skip_stage(
+    stage: &str,
+) -> std::result::Result<(bool, Option<String>), (&'static str, String)> {
+    if !cfg!(target_os = "windows") {
+        return Err((
+            "fallback-to-script",
+            format!("native interactive stage skip is only complete on Windows: {stage}"),
+        ));
+    }
+    Ok((
+        true,
+        Some("skipped by native bridge for non-interactive desktop bootstrap".to_string()),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_report_serializes_machine_readable_cleanup_result() {
+        let report = CommandReport {
+            ok: true,
+            command: "uninstall-lite",
+            dry_run: true,
+            paths: vec!["/tmp/hermes/hermes-agent".to_string()],
+        };
+
+        let value = serde_json::to_value(report).expect("report should serialize");
+
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["command"], "uninstall-lite");
+        assert_eq!(value["dryRun"], true);
+        assert_eq!(value["paths"][0], "/tmp/hermes/hermes-agent");
+    }
+
+    #[test]
+    fn uninstall_lite_parses_shortcuts_flag() {
+        let cli = Cli::try_parse_from(["hermes-manager", "uninstall-lite", "--shortcuts"])
+            .expect("shortcut cleanup flag should parse");
+
+        match cli.command {
+            Command::UninstallLite { shortcuts, .. } => assert!(shortcuts),
+            _ => panic!("expected uninstall-lite command"),
+        }
+    }
+
+    #[test]
+    fn uninstall_gui_build_parses_dry_run_flag() {
+        let cli = Cli::try_parse_from(["hermes-manager", "uninstall-gui-build", "--dry-run"])
+            .expect("GUI build cleanup flag should parse");
+
+        match cli.command {
+            Command::UninstallGuiBuild { dry_run, .. } => assert!(dry_run),
+            _ => panic!("expected uninstall-gui-build command"),
+        }
+    }
+
+    #[test]
+    fn uninstall_gui_build_parses_user_data_flag() {
+        let cli = Cli::try_parse_from(["hermes-manager", "uninstall-gui-build", "--user-data"])
+            .expect("GUI userData cleanup flag should parse");
+
+        match cli.command {
+            Command::UninstallGuiBuild { user_data, .. } => assert!(user_data),
+            _ => panic!("expected uninstall-gui-build command"),
+        }
+    }
+
+    #[test]
+    fn uninstall_gui_build_parses_desktop_entries_flag() {
+        let cli =
+            Cli::try_parse_from(["hermes-manager", "uninstall-gui-build", "--desktop-entries"])
+                .expect("GUI desktop entry cleanup flag should parse");
+
+        match cli.command {
+            Command::UninstallGuiBuild {
+                desktop_entries, ..
+            } => assert!(desktop_entries),
+            _ => panic!("expected uninstall-gui-build command"),
+        }
+    }
+
+    #[test]
+    fn path_apply_report_serializes_machine_readable_result() {
+        let report = PathApplyReport {
+            ok: true,
+            command: "write-user-path",
+            dry_run: true,
+            target: "user".to_string(),
+            hermes_bin: "C:/Users/example/hermes/hermes-agent/venv/Scripts".to_string(),
+            changed: true,
+            applied: false,
+        };
+
+        let value = serde_json::to_value(report).expect("report should serialize");
+
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["command"], "write-user-path");
+        assert_eq!(value["dryRun"], true);
+        assert_eq!(value["target"], "user");
+        assert_eq!(
+            value["hermesBin"],
+            "C:/Users/example/hermes/hermes-agent/venv/Scripts"
+        );
+        assert_eq!(value["changed"], true);
+        assert_eq!(value["applied"], false);
+    }
+
+    #[test]
+    fn default_shortcut_dirs_follow_windows_user_locations() {
+        let programs = default_windows_programs_dir();
+        let desktop = default_windows_desktop_dir();
+
+        assert!(programs.ends_with("Microsoft/Windows/Start Menu/Programs"));
+        assert!(desktop.ends_with("Desktop"));
+    }
+
+    #[test]
+    fn shortcut_apply_report_serializes_machine_readable_result() {
+        let report = ShortcutApplyReport {
+            ok: true,
+            command: "write-shortcuts",
+            dry_run: true,
+            applied: false,
+            shortcuts: vec!["C:/Users/example/Desktop/Hermes.lnk".to_string()],
+        };
+
+        let value = serde_json::to_value(report).expect("report should serialize");
+
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["command"], "write-shortcuts");
+        assert_eq!(value["dryRun"], true);
+        assert_eq!(value["applied"], false);
+        assert_eq!(value["shortcuts"][0], "C:/Users/example/Desktop/Hermes.lnk");
+    }
+
+    #[test]
+    fn checked_in_registry_keeps_full_bootstrap_disabled_without_release_evidence() {
+        assert!(!can_run_full_bootstrap());
+    }
+
+    #[test]
+    fn full_bootstrap_gate_requires_all_release_platforms() {
+        let registry = full_bootstrap_registry_fixture(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+        );
+
+        assert!(can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_signed_evidence_without_signature_type() {
+        let registry = full_bootstrap_registry_fixture_without_signature(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_partial_release_evidence() {
+        let registry = full_bootstrap_registry_fixture(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+            ],
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_duplicate_required_platforms() {
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": [
+                        {
+                            "platform": "windows",
+                            "checks": ["can-run-full-bootstrap", "release-notes"]
+                        },
+                        {
+                            "platform": "windows",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ],
+                    "evidence": [
+                        {
+                            "platform": "windows",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "releaseNotes": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ]
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_unknown_required_platforms() {
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": [
+                        {
+                            "platform": "windows",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "freebsd",
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ],
+                    "evidence": [
+                        {
+                            "platform": "windows",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ]
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_empty_required_checks() {
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": [
+                        {
+                            "platform": "windows",
+                            "checks": []
+                        },
+                        {
+                            "platform": "macos",
+                            "checks": []
+                        },
+                        {
+                            "platform": "linux",
+                            "checks": []
+                        }
+                    ],
+                    "evidence": [
+                        {
+                            "platform": "windows",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": []
+                        },
+                        {
+                            "platform": "macos",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": []
+                        },
+                        {
+                            "platform": "linux",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": []
+                        }
+                    ]
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_invalid_required_check_names() {
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": [
+                        {
+                            "platform": "windows",
+                            "checks": ["can-run-full-bootstrap", ""]
+                        },
+                        {
+                            "platform": "macos",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ],
+                    "evidence": [
+                        {
+                            "platform": "windows",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap", ""]
+                        },
+                        {
+                            "platform": "macos",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ]
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_duplicate_required_checks() {
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": [
+                        {
+                            "platform": "windows",
+                            "checks": ["can-run-full-bootstrap", "can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ],
+                    "evidence": [
+                        {
+                            "platform": "windows",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ]
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_undeclared_evidence_checks() {
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": [
+                        {
+                            "platform": "windows",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ],
+                    "evidence": [
+                        {
+                            "platform": "windows",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap", "unreviewed-check"]
+                        },
+                        {
+                            "platform": "macos",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ]
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_duplicate_evidence_checks() {
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": [
+                        {
+                            "platform": "windows",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ],
+                    "evidence": [
+                        {
+                            "platform": "windows",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap", "can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "macos",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        },
+                        {
+                            "platform": "linux",
+                            "release": "v9.9.9",
+                            "url": "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+                            "commit": "a".repeat(40),
+                            "signed": true,
+                            "checks": ["can-run-full-bootstrap"]
+                        }
+                    ]
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_platforms_from_different_releases() {
+        let required_platforms = ["windows", "macos", "linux"];
+        let required_evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "checks": ["can-run-full-bootstrap", "release-notes"]
+                })
+            })
+            .collect::<Vec<_>>();
+        let evidence = [
+            ("windows", "v9.9.9", "a".repeat(40)),
+            ("macos", "v9.9.10", "b".repeat(40)),
+            ("linux", "v9.9.10", "b".repeat(40)),
+        ]
+        .into_iter()
+        .map(|(platform, release, commit)| {
+            serde_json::json!({
+                "platform": platform,
+                "release": release,
+                "url": format!("https://example.invalid/releases/{release}/{platform}"),
+                "releaseNotes": format!("https://example.invalid/releases/{release}/notes"),
+                "commit": commit,
+                "signed": true,
+                "checks": ["can-run-full-bootstrap", "release-notes"]
+            })
+        })
+        .collect::<Vec<_>>();
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": required_evidence,
+                    "evidence": evidence
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_unsigned_release_evidence() {
+        let registry = full_bootstrap_registry_fixture_with_signed(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            false,
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_release_evidence_without_commit() {
+        let registry = full_bootstrap_registry_fixture_with_commit(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            "not-a-sha",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_release_notes_check_without_link() {
+        let required_platforms = ["windows", "macos", "linux"];
+        let required_evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "checks": ["can-run-full-bootstrap", "release-notes"]
+                })
+            })
+            .collect::<Vec<_>>();
+        let evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "release": "v9.9.9",
+                    "url": "https://example.invalid/releases/v9.9.9",
+                    "commit": "a".repeat(40),
+                    "signed": true,
+                    "checks": ["can-run-full-bootstrap", "release-notes"]
+                })
+            })
+            .collect::<Vec<_>>();
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": required_evidence,
+                    "evidence": evidence
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_release_url_for_different_tag() {
+        let registry = full_bootstrap_registry_fixture_with_url(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            "https://example.invalid/releases/tag/v8.8.8",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_non_github_release_url() {
+        let registry = full_bootstrap_registry_fixture_with_url(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            "https://example.invalid/releases/tag/v9.9.9",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_github_release_tag_subpath() {
+        let registry = full_bootstrap_registry_fixture_with_url(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            "https://github.com/OWNER/REPO/releases/tag/v9.9.9/extra",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_github_release_url_with_extra_repo_path() {
+        let registry = full_bootstrap_registry_fixture_with_url(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            "https://github.com/NiceBlueChai/hermes-agent/extra/releases/tag/v9.9.9",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_github_release_url_with_empty_repo_segment() {
+        let registry = full_bootstrap_registry_fixture_with_url(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            "https://github.com/NiceBlueChai//releases/tag/v9.9.9",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_github_release_url_with_whitespace_repo_segment() {
+        let registry = full_bootstrap_registry_fixture_with_url(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            "https://github.com/NiceBlueChai/hermes agent/releases/tag/v9.9.9",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn github_release_tag_url_rejects_backslash_tag_segment() {
+        assert!(!is_github_release_tag_url(
+            "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9\\evil",
+            "v9.9.9\\evil",
+        ));
+    }
+
+    #[test]
+    fn github_release_tag_url_rejects_query_or_fragment() {
+        for url in [
+            "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9?download=true",
+            "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9#notes",
+        ] {
+            assert!(!is_github_release_tag_url(url, "v9.9.9"));
+        }
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_release_notes_from_different_repo() {
+        let required_platforms = ["windows", "macos", "linux"];
+        let required_evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "checks": ["can-run-full-bootstrap", "release-notes"]
+                })
+            })
+            .collect::<Vec<_>>();
+        let evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "release": "v9.9.9",
+                    "url": "https://github.com/OWNER/REPO/releases/tag/v9.9.9",
+                    "releaseNotes": "https://github.com/OTHER/REPO/releases/tag/v9.9.9",
+                    "commit": "a".repeat(40),
+                    "signed": true,
+                    "checks": ["can-run-full-bootstrap", "release-notes"]
+                })
+            })
+            .collect::<Vec<_>>();
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": required_evidence,
+                    "evidence": evidence
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_platforms_from_different_repositories() {
+        let required_platforms = ["windows", "macos", "linux"];
+        let required_evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "checks": ["can-run-full-bootstrap", "release-notes"]
+                })
+            })
+            .collect::<Vec<_>>();
+        let evidence = [
+            ("windows", "NiceBlueChai/hermes-agent"),
+            ("macos", "nousresearch/hermes-agent"),
+            ("linux", "nousresearch/hermes-agent"),
+        ]
+        .into_iter()
+        .map(|(platform, repo)| {
+            let url = format!("https://github.com/{repo}/releases/tag/v9.9.9");
+            serde_json::json!({
+                "platform": platform,
+                "release": "v9.9.9",
+                "url": url,
+                "releaseNotes": url,
+                "commit": "a".repeat(40),
+                "signed": true,
+                "signature": full_bootstrap_signature_for_platform(platform),
+                "checks": ["can-run-full-bootstrap", "release-notes"]
+            })
+        })
+        .collect::<Vec<_>>();
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": required_evidence,
+                    "evidence": evidence
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_template_repository_placeholder() {
+        let registry = full_bootstrap_registry_fixture_with_url(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            "https://github.com/OWNER/REPO/releases/tag/v9.9.9",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_template_release_placeholder() {
+        let registry = full_bootstrap_registry_fixture_with_signed_commit_and_url(
+            &["windows", "macos", "linux"],
+            &[
+                "can-run-full-bootstrap",
+                "packaged-native-bridge-smoke",
+                "repair-uninstall-native-resources",
+                "release-notes",
+            ],
+            true,
+            "a".repeat(40),
+            "https://github.com/NiceBlueChai/hermes-agent/releases/tag/vX.Y.Z",
+        );
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_conflicting_release_notes_for_same_artifact() {
+        let required_platforms = ["windows", "macos", "linux"];
+        let required_evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "checks": ["can-run-full-bootstrap", "release-notes"]
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut evidence = Vec::new();
+        for platform in required_platforms {
+            if platform == "windows" {
+                evidence.push(serde_json::json!({
+                    "platform": platform,
+                    "release": "v9.9.9",
+                    "url": "https://example.invalid/releases/v9.9.9",
+                    "releaseNotes": "https://example.invalid/releases/tag/v9.9.9",
+                    "commit": "a".repeat(40),
+                    "signed": true,
+                    "checks": ["release-notes"]
+                }));
+                evidence.push(serde_json::json!({
+                    "platform": platform,
+                    "release": "v9.9.9",
+                    "url": "https://example.invalid/releases/v9.9.9",
+                    "releaseNotes": "https://example.invalid/releases/v9.9.9/notes",
+                    "commit": "a".repeat(40),
+                    "signed": true,
+                    "checks": ["can-run-full-bootstrap"]
+                }));
+            } else {
+                evidence.push(serde_json::json!({
+                    "platform": platform,
+                    "release": "v9.9.9",
+                    "url": "https://example.invalid/releases/v9.9.9",
+                    "releaseNotes": "https://example.invalid/releases/tag/v9.9.9",
+                    "commit": "a".repeat(40),
+                    "signed": true,
+                    "checks": ["can-run-full-bootstrap", "release-notes"]
+                }));
+            }
+        }
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": required_evidence,
+                    "evidence": evidence
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    #[test]
+    fn full_bootstrap_gate_rejects_platform_checks_split_across_releases() {
+        let required_platforms = ["windows", "macos", "linux"];
+        let required_evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "checks": [
+                        "can-run-full-bootstrap",
+                        "release-notes"
+                    ]
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut evidence = Vec::new();
+        for platform in required_platforms {
+            evidence.push(serde_json::json!({
+                "platform": platform,
+                "release": "v9.9.8",
+                "url": "https://example.invalid/releases/v9.9.8",
+                "commit": "a".repeat(40),
+                "signed": true,
+                "checks": ["can-run-full-bootstrap"]
+            }));
+            evidence.push(serde_json::json!({
+                "platform": platform,
+                "release": "v9.9.9",
+                "url": "https://example.invalid/releases/v9.9.9",
+                "commit": "b".repeat(40),
+                "signed": true,
+                "checks": ["release-notes"]
+            }));
+        }
+        let registry = serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": required_evidence,
+                    "evidence": evidence
+                }
+            ]
+        })
+        .to_string();
+
+        assert!(!can_run_full_bootstrap_from_registry_text(&registry));
+    }
+
+    fn full_bootstrap_registry_fixture(platforms: &[&str], checks: &[&str]) -> String {
+        full_bootstrap_registry_fixture_with_signed(platforms, checks, true)
+    }
+
+    fn full_bootstrap_registry_fixture_with_signed(
+        platforms: &[&str],
+        checks: &[&str],
+        signed: bool,
+    ) -> String {
+        full_bootstrap_registry_fixture_with_signed_and_commit(
+            platforms,
+            checks,
+            signed,
+            "a".repeat(40),
+        )
+    }
+
+    fn full_bootstrap_registry_fixture_with_commit(
+        platforms: &[&str],
+        checks: &[&str],
+        commit: &str,
+    ) -> String {
+        full_bootstrap_registry_fixture_with_signed_and_commit(
+            platforms,
+            checks,
+            true,
+            commit.to_string(),
+        )
+    }
+
+    fn full_bootstrap_registry_fixture_with_signed_and_commit(
+        platforms: &[&str],
+        checks: &[&str],
+        signed: bool,
+        commit: String,
+    ) -> String {
+        full_bootstrap_registry_fixture_with_signed_commit_and_url(
+            platforms,
+            checks,
+            signed,
+            commit,
+            "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+        )
+    }
+
+    fn full_bootstrap_registry_fixture_with_url(
+        platforms: &[&str],
+        checks: &[&str],
+        url: &str,
+    ) -> String {
+        full_bootstrap_registry_fixture_with_signed_commit_and_url(
+            platforms,
+            checks,
+            true,
+            "a".repeat(40),
+            url,
+        )
+    }
+
+    fn full_bootstrap_registry_fixture_with_signed_commit_and_url(
+        platforms: &[&str],
+        checks: &[&str],
+        signed: bool,
+        commit: String,
+        url: &str,
+    ) -> String {
+        full_bootstrap_registry_fixture_with_optional_signature(
+            platforms, checks, signed, commit, url, true,
+        )
+    }
+
+    fn full_bootstrap_registry_fixture_without_signature(
+        platforms: &[&str],
+        checks: &[&str],
+    ) -> String {
+        full_bootstrap_registry_fixture_with_optional_signature(
+            platforms,
+            checks,
+            true,
+            "a".repeat(40),
+            "https://github.com/NiceBlueChai/hermes-agent/releases/tag/v9.9.9",
+            false,
+        )
+    }
+
+    fn full_bootstrap_registry_fixture_with_optional_signature(
+        platforms: &[&str],
+        checks: &[&str],
+        signed: bool,
+        commit: String,
+        url: &str,
+        include_signature: bool,
+    ) -> String {
+        let required_platforms = ["windows", "macos", "linux"];
+        let required_evidence = required_platforms
+            .iter()
+            .map(|platform| {
+                serde_json::json!({
+                    "platform": platform,
+                    "checks": [
+                        "can-run-full-bootstrap",
+                        "packaged-native-bridge-smoke",
+                        "repair-uninstall-native-resources",
+                        "release-notes"
+                    ]
+                })
+            })
+            .collect::<Vec<_>>();
+        let evidence = platforms
+            .iter()
+            .map(|platform| {
+                let mut evidence = serde_json::json!({
+                    "platform": platform,
+                    "release": "v9.9.9",
+                    "url": url,
+                    "releaseNotes": url,
+                    "commit": commit,
+                    "signed": signed,
+                    "checks": checks
+                });
+                if include_signature {
+                    evidence["signature"] =
+                        serde_json::json!(full_bootstrap_signature_for_platform(platform));
+                }
+                evidence
+            })
+            .collect::<Vec<_>>();
+
+        serde_json::json!({
+            "schemaVersion": 1,
+            "entries": [
+                {
+                    "id": "desktop-bootstrap-script-fallback",
+                    "owner": "desktop",
+                    "file": "apps/desktop/electron/bootstrap-runner.cjs",
+                    "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+                    "fallback": "Fallback description.",
+                    "removalGate": "Release evidence gate.",
+                    "requiredEvidence": required_evidence,
+                    "evidence": evidence
+                }
+            ]
+        })
+        .to_string()
+    }
+
+    fn full_bootstrap_signature_for_platform(platform: &str) -> &'static str {
+        match platform {
+            "windows" => "authenticode",
+            "macos" => "developer-id-notarized",
+            "linux" => "sigstore",
+            _ => "unknown",
+        }
+    }
+}

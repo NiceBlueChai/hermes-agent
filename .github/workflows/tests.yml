@@ -21,6 +21,195 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  rust-manager:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+
+      - name: Cache Rust targets
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+        with:
+          workspaces: apps/hermes-manager
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path apps/hermes-manager/Cargo.toml -- --check
+
+      - name: Run Rust manager tests
+        run: cargo test --manifest-path apps/hermes-manager/Cargo.toml
+
+  desktop-platforms:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Run desktop platform tests
+        run: npm --workspace apps/desktop run test:desktop:platforms
+
+  bootstrap-installer-rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+
+      - name: Install Tauri build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Cache Rust targets
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+        with:
+          workspaces: |
+            apps/bootstrap-installer/src-tauri
+            apps/hermes-manager
+
+      - name: Run bootstrap installer Rust tests
+        run: cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml
+
+      - name: Validate Unix bootstrap script manifest
+        run: |
+          bash -n scripts/install.sh
+          python - <<'PY'
+          import json
+          import subprocess
+
+          expected = [
+              "uv",
+              "node",
+              "python",
+              "system-packages",
+              "repository",
+              "venv",
+              "python-deps",
+              "node-deps",
+              "path",
+              "config",
+              "platform-sdks",
+              "setup",
+              "gateway",
+              "bootstrap-marker",
+              "complete",
+          ]
+          raw = subprocess.check_output(["bash", "scripts/install.sh", "--manifest"], text=True)
+          names = [stage["name"] for stage in json.loads(raw)["stages"]]
+          if names != expected:
+              raise SystemExit(f"unexpected Unix bootstrap manifest: {names!r}")
+          PY
+
+      - name: Validate bootstrap tool archive manifests
+        run: |
+          python -m unittest tests.scripts.test_prepare_bootstrap_tools -v
+          python -m unittest tests.scripts.test_validate_fallback_burn_down -v
+          python scripts/prepare_bootstrap_tools.py --platform windows --arch x64 --dry-run
+          python scripts/prepare_bootstrap_tools.py --platform linux --arch x64 --dry-run
+          python scripts/prepare_bootstrap_tools.py --platform macos --arch arm64 --dry-run
+
+  installer-lifecycle-smoke:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+
+      - name: Install Linux Tauri build dependencies
+        if: runner.os == 'Linux'
+        timeout-minutes: 10
+        run: |
+          APT_OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          sudo apt-get "${APT_OPTS[@]}" update
+          sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Cache Rust targets
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+        with:
+          workspaces: |
+            apps/hermes-manager
+            apps/bootstrap-installer/src-tauri
+
+      - name: Run manager lifecycle smoke
+        run: >
+          cargo test --manifest-path apps/hermes-manager/Cargo.toml
+          cli_smoke_manages_runtime_metadata_repair_and_lite_uninstall
+
+      - name: Build manager release binary
+        run: cargo build --release --manifest-path apps/hermes-manager/Cargo.toml
+
+      - name: Run manager release binary lifecycle smoke
+        shell: bash
+        run: |
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+              export HERMES_MANAGER_SMOKE_BIN="target/release/hermes-manager.exe"
+          else
+              export HERMES_MANAGER_SMOKE_BIN="target/release/hermes-manager"
+          fi
+          cargo test --manifest-path apps/hermes-manager/Cargo.toml \
+              cli_smoke_manages_runtime_metadata_repair_and_lite_uninstall
+
+      - name: Run bootstrap archive lifecycle smoke
+        run: >
+          cargo test --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml
+          archive_lifecycle_smoke_covers_update_repair_and_lite_uninstall
+
+      - name: Build bootstrap release binary
+        env:
+          HERMES_BUILD_PIN_COMMIT: ${{ github.sha }}
+        run: cargo build --release --manifest-path apps/bootstrap-installer/src-tauri/Cargo.toml
+
+      - name: Run bootstrap release binary self-check
+        shell: bash
+        run: |
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+              setup_bin="apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup.exe"
+          else
+              setup_bin="apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup"
+          fi
+          "$setup_bin" --self-check --self-check-expect-commit "${{ github.sha }}"
+
+      - name: Run bootstrap release binary lifecycle self-check
+        shell: bash
+        run: |
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+              setup_bin="apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup.exe"
+          else
+              setup_bin="apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup"
+          fi
+          "$setup_bin" --self-check-lifecycle
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30

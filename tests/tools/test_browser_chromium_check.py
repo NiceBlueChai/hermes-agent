@@ -38,6 +38,23 @@ class TestChromiumSearchRoots:
         home = os.path.expanduser("~")
         assert any(r == os.path.join(home, ".cache", "ms-playwright") for r in roots)
 
+    def test_includes_managed_playwright_cache(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+        monkeypatch.setattr(bt, "get_hermes_home", lambda: tmp_path / "hermes")
+
+        roots = bt._chromium_search_roots()
+
+        assert str(tmp_path / "hermes" / "playwright-browsers") in roots
+
+    def test_browser_subprocess_env_defaults_managed_playwright_path(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+        monkeypatch.setattr(bt, "get_hermes_home", lambda: tmp_path / "hermes")
+
+        env = bt._browser_subprocess_env({"PATH": "base"}, "/tmp/browser-socket")
+
+        assert env["PLAYWRIGHT_BROWSERS_PATH"] == str(tmp_path / "hermes" / "playwright-browsers")
+        assert env["AGENT_BROWSER_SOCKET_DIR"] == "/tmp/browser-socket"
+
 
 class TestChromiumInstalled:
     def test_true_when_plain_chromium_on_path(self, monkeypatch):

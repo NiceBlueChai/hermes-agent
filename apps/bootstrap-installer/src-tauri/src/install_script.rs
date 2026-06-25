@@ -3,10 +3,10 @@
 //! Resolution order:
 //!   1. Dev shortcut: a sibling repo checkout via $HERMES_SETUP_DEV_REPO_ROOT
 //!      env var. Lets devs iterate without re-publishing the script.
-//!   2. Bundled fallback: if the installer was bundled with a script (e.g.
-//!      tauri's `resource` mechanism), serve from there. Not used today.
-//!   3. Network: download from GitHub raw at a pinned commit or branch.
-//!      Commit pins are immutable; branch pins are HEAD-tracking.
+//!   2. Bundled fallback: installers serve the script compiled into this
+//!      binary, avoiding a first-run network dependency.
+//!   3. Cache/network: download from GitHub raw only when no local script can
+//!      be used.
 //!
 //! Mirrors `apps/desktop/electron/bootstrap-runner.cjs`'s `resolveInstallScript`,
 //! but the dev-checkout resolution is driven by an env var rather than the
@@ -15,7 +15,6 @@
 
 use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
-use tokio::io::AsyncWriteExt;
 
 use crate::paths;
 
@@ -44,6 +43,14 @@ pub enum ScriptSource {
 pub enum ScriptKind {
     Ps1,
     Sh,
+}
+
+/// Metadata for an install script embedded into this binary.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct BundledScriptResource {
+    pub filename: &'static str,
+    pub size_bytes: usize,
+    pub sha256: String,
 }
 
 impl ScriptKind {
@@ -81,7 +88,9 @@ pub async fn resolve(
 ) -> Result<ResolvedScript> {
     // 1. Dev shortcut.
     if let Ok(repo_root) = std::env::var("HERMES_SETUP_DEV_REPO_ROOT") {
-        let candidate = PathBuf::from(repo_root).join("scripts").join(kind.filename());
+        let candidate = PathBuf::from(repo_root)
+            .join("scripts")
+            .join(kind.filename());
         if candidate.exists() {
             emit_log(&format!(
                 "[bootstrap] dev mode — using local {} at {}",
@@ -97,7 +106,25 @@ pub async fn resolve(
         }
     }
 
-    // 2. (Not implemented) bundled fallback.
+    // 2. Bundled fallback. Installers should not need network just to obtain
+    // the small orchestration script shipped with this binary.
+    if let Some(ref_name) = bundled_script_ref(pin) {
+        let bundled = bundled_cached_path(kind, ref_name);
+        emit_log(&format!(
+            "[bootstrap] using bundled {} for {}",
+            kind.filename(),
+            truncate_ref(ref_name)
+        ));
+        crate::artifact::write_atomic_verified(&bundled, bundled_script_bytes(kind), None)
+            .await
+            .with_context(|| format!("writing bundled {}", kind.filename()))?;
+        return Ok(ResolvedScript {
+            path: bundled,
+            source: ScriptSource::Bundled,
+            commit: pin.commit.clone(),
+            branch: pin.branch.clone(),
+        });
+    }
 
     // 3. Network. Pin must be a real commit or a branch ref.
     let commit_or_ref = match (&pin.commit, &pin.branch) {
@@ -163,6 +190,47 @@ fn cached_path(kind: ScriptKind, commit_or_ref: &str) -> PathBuf {
     paths::bootstrap_cache_dir().join(filename)
 }
 
+fn bundled_cached_path(kind: ScriptKind, commit: &str) -> PathBuf {
+    let safe = sanitize_ref(commit);
+    let filename = match kind {
+        ScriptKind::Ps1 => format!("install-{safe}-bundled.ps1"),
+        ScriptKind::Sh => format!("install-{safe}-bundled.sh"),
+    };
+    paths::bootstrap_cache_dir().join(filename)
+}
+
+fn bundled_script_bytes(kind: ScriptKind) -> &'static [u8] {
+    match kind {
+        ScriptKind::Ps1 => include_bytes!("../../../../scripts/install.ps1"),
+        ScriptKind::Sh => include_bytes!("../../../../scripts/install.sh"),
+    }
+}
+
+/// Return metadata for all install scripts compiled into this binary.
+pub fn bundled_script_manifest() -> Vec<BundledScriptResource> {
+    [ScriptKind::Ps1, ScriptKind::Sh]
+        .into_iter()
+        .map(bundled_script_resource)
+        .collect()
+}
+
+fn bundled_script_resource(kind: ScriptKind) -> BundledScriptResource {
+    let bytes = bundled_script_bytes(kind);
+    BundledScriptResource {
+        filename: kind.filename(),
+        size_bytes: bytes.len(),
+        sha256: crate::artifact::sha256_hex(bytes),
+    }
+}
+
+fn bundled_script_ref(pin: &Pin) -> Option<&str> {
+    match (&pin.commit, &pin.branch) {
+        (Some(commit), _) if is_valid_commit(commit) => Some(commit.as_str()),
+        (None, Some(branch)) if !branch.trim().is_empty() => Some(branch.as_str()),
+        _ => None,
+    }
+}
+
 /// Replace anything that's not [A-Za-z0-9._-] with `_`. Branch refs can
 /// contain `/`, dots, etc.; we want a flat filename.
 fn sanitize_ref(s: &str) -> String {
@@ -195,58 +263,20 @@ async fn download(kind: ScriptKind, commit_or_ref: &str, dest_path: &Path) -> Re
     );
 
     if let Some(parent) = dest_path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!("creating bootstrap-cache parent dir {}", parent.display())
-        })?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating bootstrap-cache parent dir {}", parent.display()))?;
     }
 
-    let tmp_path = dest_path.with_extension({
-        let ext = dest_path
-            .extension()
-            .and_then(|s| s.to_str())
-            .unwrap_or("tmp");
-        format!("{ext}.tmp")
-    });
-
-    let response = reqwest::Client::new()
-        .get(&url)
-        .header("User-Agent", "hermes-setup/0.0.1")
-        .send()
-        .await
-        .with_context(|| format!("GET {url}"))?;
-
-    if !response.status().is_success() {
-        return Err(anyhow!(
-            "Failed to download {}: HTTP {} from {}",
-            kind.filename(),
-            response.status(),
-            url
-        ));
-    }
-
-    let bytes = response
-        .bytes()
-        .await
-        .with_context(|| format!("reading body of {url}"))?;
-
-    let mut file = tokio::fs::File::create(&tmp_path)
-        .await
-        .with_context(|| format!("creating temp file {}", tmp_path.display()))?;
-    file.write_all(&bytes)
-        .await
-        .with_context(|| format!("writing temp file {}", tmp_path.display()))?;
-    file.flush().await.context("flushing temp file")?;
-    drop(file);
-
-    tokio::fs::rename(&tmp_path, dest_path)
-        .await
-        .with_context(|| {
-            format!(
-                "renaming {} → {}",
-                tmp_path.display(),
-                dest_path.display()
-            )
-        })?;
+    crate::artifact::download_to_cache(
+        crate::artifact::DownloadSpec {
+            url,
+            user_agent: "hermes-setup/0.0.1",
+            expected_sha256: None,
+        },
+        dest_path,
+    )
+    .await
+    .with_context(|| format!("downloading {}", kind.filename()))?;
 
     Ok(())
 }
@@ -269,5 +299,66 @@ mod tests {
         assert_eq!(sanitize_ref("bb/gui"), "bb_gui");
         assert_eq!(sanitize_ref("main"), "main");
         assert_eq!(sanitize_ref("release/1.2.3"), "release_1.2.3");
+    }
+
+    #[test]
+    fn bundled_script_is_available_for_both_platform_scripts() {
+        assert!(bundled_script_bytes(ScriptKind::Ps1).starts_with(b"#"));
+        assert!(bundled_script_bytes(ScriptKind::Sh).starts_with(b"#!/"));
+    }
+
+    #[test]
+    fn bundled_script_ref_accepts_commit_and_branch_pins() {
+        assert_eq!(
+            bundled_script_ref(&Pin {
+                commit: Some("02d26981d3d4ad50e142399b8476f59ad5953ff0".into()),
+                branch: Some("main".into()),
+            }),
+            Some("02d26981d3d4ad50e142399b8476f59ad5953ff0")
+        );
+        assert_eq!(
+            bundled_script_ref(&Pin {
+                commit: None,
+                branch: Some("main".into()),
+            }),
+            Some("main")
+        );
+        assert_eq!(
+            bundled_script_ref(&Pin {
+                commit: Some("not-a-sha".into()),
+                branch: Some("main".into()),
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn bundled_cache_path_does_not_collide_with_download_cache_path() {
+        let commit = "02d26981d3d4ad50e142399b8476f59ad5953ff0";
+        assert_ne!(
+            cached_path(ScriptKind::Ps1, commit),
+            bundled_cached_path(ScriptKind::Ps1, commit)
+        );
+        assert_ne!(
+            cached_path(ScriptKind::Sh, commit),
+            bundled_cached_path(ScriptKind::Sh, commit)
+        );
+    }
+
+    #[test]
+    fn bundled_script_manifest_reports_size_and_checksum() {
+        let manifest = bundled_script_manifest();
+
+        assert_eq!(manifest.len(), 2);
+        assert!(manifest
+            .iter()
+            .any(|resource| resource.filename == "install.ps1"));
+        assert!(manifest
+            .iter()
+            .any(|resource| resource.filename == "install.sh"));
+        for resource in manifest {
+            assert!(resource.size_bytes > 0);
+            assert_eq!(resource.sha256.len(), 64);
+        }
     }
 }

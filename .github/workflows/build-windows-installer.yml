@@ -2,6 +2,61 @@ name: Build Windows Installer
 
 on:
   workflow_dispatch:
+    inputs:
+      audited-archive:
+        description: Optional audited bootstrap archive, in NAME=HTTPS_URL=SHA256 form.
+        required: false
+        type: string
+      python-runtime-archive:
+        description: Audited Windows Python runtime archive, required for signed builds, in NAME=HTTPS_URL=SHA256 form.
+        required: false
+        type: string
+      linux-python-runtime-archive:
+        description: Audited Linux Python runtime archive, required for signed builds, in NAME=HTTPS_URL=SHA256 form.
+        required: false
+        type: string
+      macos-python-runtime-archive:
+        description: Audited macOS Python runtime archive, required for signed builds, in NAME=HTTPS_URL=SHA256 form.
+        required: false
+        type: string
+      python-runtime-version:
+        description: Python patch version recorded in signed runtime default evidence.
+        required: false
+        type: string
+      python-runtime-without-bytes:
+        description: Signed Windows installer size in bytes from the matching build without the runtime bundle.
+        required: false
+        type: string
+      linux-python-runtime-without-bytes:
+        description: Signed Linux installer size in bytes from the matching build without the runtime bundle.
+        required: false
+        type: string
+      macos-python-runtime-without-bytes:
+        description: Signed macOS installer size in bytes from the matching build without the runtime bundle.
+        required: false
+        type: string
+      source-archive:
+        description: Audited Hermes source archive, required for signed builds, in NAME=HTTPS_URL=SHA256 form.
+        required: false
+        type: string
+      release-tag:
+        description: Signed release tag used when printing fallback evidence commands.
+        required: false
+        type: string
+      release-notes-url:
+        description: Signed release notes URL used when printing fallback evidence commands.
+        required: false
+        type: string
+      unsigned-smoke-only:
+        description: Run build, self-checks, and validators without signing or uploading installer binaries.
+        required: false
+        default: false
+        type: boolean
+      unix-smoke-only:
+        description: Run Linux and macOS packaged runtime smoke checks without the Windows build.
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -34,6 +89,7 @@ jobs:
   build:
     name: Hermes-Setup.exe
     needs: authorize
+    if: ${{ !inputs['unix-smoke-only'] }}
     runs-on: windows-latest
     timeout-minutes: 30
     permissions:
@@ -45,11 +101,104 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
+      - name: Validate signed release evidence metadata
+        if: ${{ !inputs['unsigned-smoke-only'] }}
+        env:
+          HERMES_RELEASE_TAG: ${{ inputs['release-tag'] }}
+          HERMES_RELEASE_NOTES_URL: ${{ inputs['release-notes-url'] }}
+          HERMES_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['python-runtime-archive'] }}
+          HERMES_PYTHON_RUNTIME_VERSION: ${{ inputs['python-runtime-version'] }}
+          HERMES_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['python-runtime-without-bytes'] }}
+          HERMES_SOURCE_ARCHIVE: ${{ inputs['source-archive'] }}
+        run: |
+          $required = @{
+            HERMES_RELEASE_TAG = $env:HERMES_RELEASE_TAG
+            HERMES_RELEASE_NOTES_URL = $env:HERMES_RELEASE_NOTES_URL
+            HERMES_PYTHON_RUNTIME_ARCHIVE = $env:HERMES_PYTHON_RUNTIME_ARCHIVE
+            HERMES_PYTHON_RUNTIME_VERSION = $env:HERMES_PYTHON_RUNTIME_VERSION
+            HERMES_PYTHON_RUNTIME_WITHOUT_BYTES = $env:HERMES_PYTHON_RUNTIME_WITHOUT_BYTES
+            HERMES_SOURCE_ARCHIVE = $env:HERMES_SOURCE_ARCHIVE
+          }
+          $missing = @(
+            $required.GetEnumerator() |
+              Where-Object { [string]::IsNullOrWhiteSpace($_.Value) } |
+              ForEach-Object { $_.Key }
+          )
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing signed release evidence metadata: $($missing -join ', ')"
+            exit 1
+          }
+          $archivePattern = '^[^=\s]+=https://[^/=\s][^=\s]*=[0-9a-fA-F]{64}$'
+          if ($env:HERMES_PYTHON_RUNTIME_ARCHIVE -notmatch $archivePattern) {
+            Write-Error "python-runtime-archive must use NAME=HTTPS_URL=SHA256."
+            exit 1
+          }
+          if ($env:HERMES_SOURCE_ARCHIVE -notmatch $archivePattern) {
+            Write-Error "source-archive must use NAME=HTTPS_URL=SHA256."
+            exit 1
+          }
+          if ($env:HERMES_PYTHON_RUNTIME_VERSION -notmatch '^\d+\.\d+\.\d+') {
+            Write-Error "python-runtime-version must identify a Python patch release."
+            exit 1
+          }
+          if ($env:HERMES_RELEASE_TAG -match "[\s/\\?#]") {
+            Write-Error "release-tag must be a single GitHub tag segment."
+            exit 1
+          }
+          $expectedReleaseUrl = "https://github.com/${{ github.repository }}/releases/tag/$env:HERMES_RELEASE_TAG"
+          if ($env:HERMES_RELEASE_NOTES_URL -ne $expectedReleaseUrl) {
+            Write-Error "release-notes-url must equal GitHub release tag URL: $expectedReleaseUrl"
+            exit 1
+          }
+          if ($env:HERMES_PYTHON_RUNTIME_WITHOUT_BYTES -notmatch '^[1-9][0-9]*$') {
+            Write-Error "python-runtime-without-bytes must be a positive integer byte size."
+            exit 1
+          }
+          Write-Host "Signed release evidence metadata is present."
+
+      - name: Validate Azure signing configuration
+        if: ${{ !inputs['unsigned-smoke-only'] }}
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+          AZURE_SIGNING_CERTIFICATE_PROFILE: ${{ vars.AZURE_SIGNING_CERTIFICATE_PROFILE }}
+        run: |
+          $required = @{
+            AZURE_CLIENT_ID = $env:AZURE_CLIENT_ID
+            AZURE_TENANT_ID = $env:AZURE_TENANT_ID
+            AZURE_SUBSCRIPTION_ID = $env:AZURE_SUBSCRIPTION_ID
+            AZURE_SIGNING_ENDPOINT = $env:AZURE_SIGNING_ENDPOINT
+            AZURE_SIGNING_ACCOUNT_NAME = $env:AZURE_SIGNING_ACCOUNT_NAME
+            AZURE_SIGNING_CERTIFICATE_PROFILE = $env:AZURE_SIGNING_CERTIFICATE_PROFILE
+          }
+          $missing = @(
+            $required.GetEnumerator() |
+              Where-Object { [string]::IsNullOrWhiteSpace($_.Value) } |
+              ForEach-Object { $_.Key }
+          )
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing Azure signing configuration: $($missing -join ', ')"
+            exit 1
+          }
+          Write-Host "Azure signing configuration is present."
+
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
           node-version: 22
           cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c  # v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
 
       - name: Install npm dependencies
         run: npm ci
@@ -62,11 +211,114 @@ jobs:
         with:
           workspaces: apps/bootstrap-installer/src-tauri
 
+      - name: Bundle bootstrap tool archives
+        timeout-minutes: 10
+        env:
+          HERMES_AUDITED_ARCHIVE: ${{ inputs['audited-archive'] }}
+        run: |
+          $args = @(
+            "scripts/prepare_bootstrap_tools.py",
+            "--arch",
+            "x64",
+            "--bundle-playwright-browsers",
+            "--bundle-electron-cache",
+            "--bundle-npm-cache"
+          )
+          if ($env:HERMES_AUDITED_ARCHIVE) {
+            $args += @("--audited-archive", "$env:HERMES_AUDITED_ARCHIVE")
+          }
+          python @args
+
+      - name: Validate bootstrap tool archives
+        run: >
+          python scripts/prepare_bootstrap_tools.py
+          --validate-only
+          --platform windows
+          --arch x64
+
+      - name: Bundle Python wheelhouse
+        run: >
+          python scripts/prepare_python_wheelhouse.py
+          --platform windows
+          --arch x64
+          --python python
+          --force
+
+      - name: Validate Python wheelhouse
+        run: >
+          python scripts/prepare_python_wheelhouse.py
+          --validate-only
+          --platform windows
+          --arch x64
+
+      - name: Bundle Python runtime archive
+        env:
+          HERMES_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['python-runtime-archive'] }}
+        run: |
+          $args = @(
+            "scripts/prepare_python_runtime.py",
+            "--platform",
+            "windows",
+            "--arch",
+            "x64",
+            "--python-tag",
+            "cp311",
+            "--force"
+          )
+          if ($env:HERMES_PYTHON_RUNTIME_ARCHIVE) {
+            $args += @("--audited-archive", "$env:HERMES_PYTHON_RUNTIME_ARCHIVE")
+          } else {
+            python scripts/build_python_runtime_archive.py --platform windows --arch x64 --force
+            $args += @("--archive", "dist/python-runtime/python-runtime-windows-x64.zip")
+            $args += @("--source-url", "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}")
+          }
+          python @args
+
+      - name: Validate Python runtime archive
+        run: >
+          python scripts/prepare_python_runtime.py
+          --validate-only
+          --platform windows
+          --arch x64
+          --python-tag cp311
+
+      - name: Validate Python runtime default gate
+        run: python scripts/validate_python_runtime_default_gate.py
+
+      - name: Bundle Hermes source archive
+        if: ${{ inputs['source-archive'] != '' }}
+        env:
+          HERMES_SOURCE_ARCHIVE: ${{ inputs['source-archive'] }}
+        run: >
+          python scripts/prepare_source_archive.py
+          --archive-ref "${{ github.sha }}"
+          --commit "${{ github.sha }}"
+          --branch "${{ github.ref_name }}"
+          --force
+          --audited-archive "$env:HERMES_SOURCE_ARCHIVE"
+
+      - name: Validate Hermes source archive
+        if: ${{ inputs['source-archive'] != '' }}
+        run: >
+          python scripts/prepare_source_archive.py
+          --validate-only
+          --archive-ref "${{ github.sha }}"
+          --max-archive-bytes 268435456
+
       - name: Build installer
+        env:
+          HERMES_BUILD_PIN_COMMIT: ${{ github.sha }}
         run: npm run tauri:build
         working-directory: apps/bootstrap-installer
 
+      - name: Report unsigned smoke mode
+        if: ${{ inputs['unsigned-smoke-only'] }}
+        run: >
+          echo "Unsigned smoke builds are not release artifacts;
+          signing and installer binary uploads are skipped."
+
       - name: Azure login (OIDC)
+        if: ${{ !inputs['unsigned-smoke-only'] }}
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -74,6 +326,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign Hermes-Setup.exe with Azure Artifact Signing
+        if: ${{ !inputs['unsigned-smoke-only'] }}
         uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82  # v2
         with:
           endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
@@ -87,14 +340,902 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
+      - name: Verify signed installer artifacts
+        if: ${{ !inputs['unsigned-smoke-only'] }}
+        run: |
+          $artifacts = @(
+            Get-Item "apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup.exe"
+            Get-ChildItem "apps/bootstrap-installer/src-tauri/target/release/bundle/nsis/*.exe"
+          )
+          foreach ($artifact in $artifacts) {
+            $signature = Get-AuthenticodeSignature $artifact.FullName
+            if ($signature.Status -ne "Valid") {
+              Write-Error "Invalid signature for $($artifact.FullName): $($signature.Status)"
+              exit 1
+            }
+            Write-Host "Valid signature: $($artifact.FullName)"
+          }
+
+      - name: Smoke built installer binary
+        run: >
+          .\apps\bootstrap-installer\src-tauri\target\release\Hermes-Setup.exe --self-check
+          --self-check-expect-commit "${{ github.sha }}"
+          --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
+          --self-check-bootstrap-tools-platform windows
+          --self-check-bootstrap-tools-arch x64
+          --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse
+          --self-check-wheelhouse-platform windows
+          --self-check-wheelhouse-arch x64
+
+      - name: Smoke built installer Python runtime resources
+        run: >
+          .\apps\bootstrap-installer\src-tauri\target\release\Hermes-Setup.exe --self-check
+          --self-check-expect-commit "${{ github.sha }}"
+          --self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime
+          --self-check-python-runtime-platform windows
+          --self-check-python-runtime-arch x64
+
+      - name: Smoke built installer lifecycle
+        run: >
+          .\apps\bootstrap-installer\src-tauri\target\release\Hermes-Setup.exe --self-check-lifecycle
+          --self-check-expect-commit "${{ github.sha }}"
+          --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
+          --self-check-bootstrap-tools-platform windows
+          --self-check-bootstrap-tools-arch x64
+          --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse
+          --self-check-wheelhouse-platform windows
+          --self-check-wheelhouse-arch x64
+
+      - name: Smoke built installer Python runtime lifecycle
+        run: >
+          .\apps\bootstrap-installer\src-tauri\target\release\Hermes-Setup.exe --self-check-lifecycle
+          --self-check-expect-commit "${{ github.sha }}"
+          --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
+          --self-check-bootstrap-tools-platform windows
+          --self-check-bootstrap-tools-arch x64
+          --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse
+          --self-check-wheelhouse-platform windows
+          --self-check-wheelhouse-arch x64
+          --self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime
+          --self-check-python-runtime-platform windows
+          --self-check-python-runtime-arch x64
+
+      - name: Validate installer artifacts
+        if: ${{ !inputs['unsigned-smoke-only'] }}
+        run: >
+          python scripts/validate_installer_artifacts.py
+          --artifact "apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup.exe"
+          --artifact "apps/bootstrap-installer/src-tauri/target/release/bundle/nsis/*.exe"
+          --artifact "apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json"
+          --artifact "apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json"
+          --bootstrap-tools-dir apps/bootstrap-installer/src-tauri/bootstrap-tools
+          --bootstrap-tools-platform windows
+          --bootstrap-tools-arch x64
+          --wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse
+          --wheelhouse-platform windows
+          --wheelhouse-arch x64
+          --max-artifact-bytes 2147483648
+          --max-total-artifact-bytes 3221225472
+
+      - name: Validate unsigned smoke artifacts
+        if: ${{ inputs['unsigned-smoke-only'] }}
+        run: >
+          python scripts/validate_installer_artifacts.py
+          --artifact "apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup.exe"
+          --artifact "apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json"
+          --artifact "apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json"
+          --artifact "apps/bootstrap-installer/src-tauri/python-runtime/python-runtime-manifest.json"
+          --bootstrap-tools-dir apps/bootstrap-installer/src-tauri/bootstrap-tools
+          --bootstrap-tools-platform windows
+          --bootstrap-tools-arch x64
+          --wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse
+          --wheelhouse-platform windows
+          --wheelhouse-arch x64
+          --python-runtime-dir apps/bootstrap-installer/src-tauri/python-runtime
+          --python-runtime-platform windows
+          --python-runtime-arch x64
+          --max-artifact-bytes 2147483648
+          --max-total-artifact-bytes 3221225472
+
+      - name: Validate fallback burn-down registry
+        run: python scripts/validate_fallback_burn_down.py
+
+      - name: Validate Python runtime artifacts
+        run: >
+          python scripts/validate_installer_artifacts.py
+          --artifact "apps/bootstrap-installer/src-tauri/python-runtime/python-runtime-manifest.json"
+          --wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse
+          --wheelhouse-platform windows
+          --wheelhouse-arch x64
+          --python-runtime-dir apps/bootstrap-installer/src-tauri/python-runtime
+          --python-runtime-platform windows
+          --python-runtime-arch x64
+          --max-artifact-bytes 536870912
+          --max-total-artifact-bytes 536870912
+
+      - name: Print signed Python runtime default evidence
+        if: ${{ !inputs['unsigned-smoke-only'] }}
+        env:
+          HERMES_PYTHON_RUNTIME_VERSION: ${{ inputs['python-runtime-version'] }}
+          HERMES_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['python-runtime-without-bytes'] }}
+          HERMES_RELEASE_TAG: ${{ inputs['release-tag'] }}
+          HERMES_RELEASE_NOTES_URL: ${{ inputs['release-notes-url'] }}
+        run: |
+          $evidenceDir = ".release-evidence"
+          $releaseUrl = "https://github.com/${{ github.repository }}/releases/tag/$env:HERMES_RELEASE_TAG"
+          New-Item -ItemType Directory -Force -Path $evidenceDir | Out-Null
+          python scripts/validate_python_runtime_default_gate.py `
+            --print-evidence `
+            --manifest apps/bootstrap-installer/src-tauri/python-runtime/python-runtime-manifest.json `
+            --python-version "$env:HERMES_PYTHON_RUNTIME_VERSION" `
+            --with-runtime-artifact "apps/bootstrap-installer/src-tauri/target/release/bundle/nsis/*.exe" `
+            --without-runtime-bytes "$env:HERMES_PYTHON_RUNTIME_WITHOUT_BYTES" `
+            --release "$env:HERMES_RELEASE_TAG" `
+            --url "$releaseUrl" `
+            --release-notes "$env:HERMES_RELEASE_NOTES_URL" `
+            --commit "${{ github.sha }}" `
+            --signature authenticode `
+            > "$evidenceDir/python-runtime-default-evidence-windows.json"
+
+      - name: Upload signed Python runtime default evidence
+        if: ${{ !inputs['unsigned-smoke-only'] }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: Hermes-Setup-python-runtime-default-evidence
+          path: .release-evidence/python-runtime-default-evidence-windows.json
+          if-no-files-found: error
+
+      - name: Print signed fallback evidence command
+        if: ${{ !inputs['unsigned-smoke-only'] }}
+        env:
+          HERMES_RELEASE_TAG: ${{ inputs['release-tag'] }}
+          HERMES_RELEASE_NOTES_URL: ${{ inputs['release-notes-url'] }}
+        run: |
+          $releaseUrl = "https://github.com/${{ github.repository }}/releases/tag/$env:HERMES_RELEASE_TAG"
+          $command = @(
+            "python scripts/validate_fallback_burn_down.py"
+            "--add-evidence desktop-bootstrap-script-fallback"
+            "--platform windows"
+            "--release $env:HERMES_RELEASE_TAG"
+            "--url $releaseUrl"
+            "--release-notes $env:HERMES_RELEASE_NOTES_URL"
+            "--commit ${{ github.sha }}"
+            "--all-required-checks"
+            "--signature authenticode"
+          ) -join " "
+          Write-Host "Record signed fallback burn-down evidence with:"
+          Write-Host $command
+          $evidenceDir = ".release-evidence"
+          New-Item -ItemType Directory -Force -Path $evidenceDir | Out-Null
+          Set-Content -Path "$evidenceDir/fallback-burn-down-windows.ps1" -Value $command -Encoding utf8NoBOM
+          foreach ($entry in @(
+            "desktop-bootstrap-script-fallback",
+            "installer-source-archive-download-fallback",
+            "installer-python-runtime-download-fallback"
+          )) {
+            python scripts/validate_fallback_burn_down.py `
+              --print-evidence-item $entry `
+              --platform windows `
+              --release "$env:HERMES_RELEASE_TAG" `
+              --url "$releaseUrl" `
+              --release-notes "$env:HERMES_RELEASE_NOTES_URL" `
+              --commit "${{ github.sha }}" `
+              --all-required-checks `
+              --signature authenticode `
+              > "$evidenceDir/fallback-burn-down-windows-$entry.json"
+          }
+          $statusRegistry = "$evidenceDir/fallback-burn-down-status-registry-windows.json"
+          Copy-Item "docs/release/fallback-burn-down.json" $statusRegistry
+          foreach ($entry in @(
+            "desktop-bootstrap-script-fallback",
+            "installer-source-archive-download-fallback",
+            "installer-python-runtime-download-fallback"
+          )) {
+            python scripts/validate_fallback_burn_down.py `
+              --registry $statusRegistry `
+              --add-evidence-json "$evidenceDir/fallback-burn-down-windows-$entry.json"
+          }
+          python scripts/validate_fallback_burn_down.py `
+            --registry $statusRegistry `
+            --print-status `
+            > "$evidenceDir/fallback-burn-down-windows-status.json"
+
+      - name: Upload signed fallback evidence command
+        if: ${{ !inputs['unsigned-smoke-only'] }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: Hermes-Setup-fallback-evidence
+          path: |
+            .release-evidence/fallback-burn-down-windows.ps1
+            .release-evidence/fallback-burn-down-windows-*.json
+          if-no-files-found: error
+
+      - name: Validate Hermes source archive artifacts
+        if: ${{ inputs['source-archive'] != '' }}
+        run: >
+          python scripts/prepare_source_archive.py
+          --validate-only
+          --archive-ref "${{ github.sha }}"
+          --max-archive-bytes 268435456
+
       - name: Upload NSIS installer
+        if: ${{ !inputs['unsigned-smoke-only'] }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: Hermes-Setup-installer
           path: apps/bootstrap-installer/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
 
       - name: Upload raw exe
+        if: ${{ !inputs['unsigned-smoke-only'] }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: Hermes-Setup-exe
           path: apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup.exe
+          if-no-files-found: error
+
+      - name: Upload bootstrap tools manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: Hermes-Setup-bootstrap-tools-manifest
+          path: apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json
+          if-no-files-found: error
+
+      - name: Upload bootstrap tool archives
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: Hermes-Setup-bootstrap-tools
+          path: |
+            apps/bootstrap-installer/src-tauri/bootstrap-tools/*.zip
+            apps/bootstrap-installer/src-tauri/bootstrap-tools/*.7z.exe
+          if-no-files-found: error
+
+      - name: Upload Python wheelhouse
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: Hermes-Setup-python-wheelhouse
+          path: |
+            apps/bootstrap-installer/src-tauri/wheelhouse/*.whl
+            apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json
+          if-no-files-found: error
+
+      - name: Upload Python runtime archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: Hermes-Setup-python-runtime
+          path: apps/bootstrap-installer/src-tauri/python-runtime/*
+          if-no-files-found: error
+
+      - name: Upload Hermes source archive
+        if: ${{ inputs['source-archive'] != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: Hermes-Setup-source-archive
+          path: apps/bootstrap-installer/src-tauri/source-archive/*
+          if-no-files-found: error
+
+  unix-packaged-runtime-smoke:
+    name: Unix packaged runtime smoke (${{ matrix.platform }})
+    needs: authorize
+    if: ${{ inputs['unix-smoke-only'] }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-latest
+            artifact-name: Hermes-Setup-linux
+            upload-path: apps/bootstrap-installer/src-tauri/target/release/bundle/appimage/*.AppImage
+          - platform: macos
+            os: macos-latest
+            artifact-name: Hermes-Setup-macos
+            upload-path: |
+              apps/bootstrap-installer/src-tauri/target/release/bundle/dmg/*.dmg
+              apps/bootstrap-installer/src-tauri/target/release/bundle/macos/*.app
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Validate signed release evidence metadata
+        if: ${{ !inputs['unsigned-smoke-only'] }}
+        env:
+          HERMES_RELEASE_TAG: ${{ inputs['release-tag'] }}
+          HERMES_RELEASE_NOTES_URL: ${{ inputs['release-notes-url'] }}
+          HERMES_PYTHON_RUNTIME_VERSION: ${{ inputs['python-runtime-version'] }}
+          HERMES_LINUX_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['linux-python-runtime-archive'] }}
+          HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['macos-python-runtime-archive'] }}
+          HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['linux-python-runtime-without-bytes'] }}
+          HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['macos-python-runtime-without-bytes'] }}
+          HERMES_SOURCE_ARCHIVE: ${{ inputs['source-archive'] }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in HERMES_RELEASE_TAG HERMES_RELEASE_NOTES_URL; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("${name}")
+            fi
+          done
+          if [ -z "${HERMES_PYTHON_RUNTIME_VERSION}" ]; then
+            missing+=(HERMES_PYTHON_RUNTIME_VERSION)
+          fi
+          if [ -z "${HERMES_SOURCE_ARCHIVE}" ]; then
+            missing+=(HERMES_SOURCE_ARCHIVE)
+          fi
+          python_runtime_archive="${HERMES_LINUX_PYTHON_RUNTIME_ARCHIVE}"
+          without_runtime_bytes="${HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES}"
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            python_runtime_archive="${HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE}"
+            without_runtime_bytes="${HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES}"
+          fi
+          if [ -z "${python_runtime_archive}" ]; then
+            missing+=(HERMES_${{ matrix.platform }}_PYTHON_RUNTIME_ARCHIVE)
+          fi
+          if [ -z "${without_runtime_bytes}" ]; then
+            missing+=(HERMES_${{ matrix.platform }}_PYTHON_RUNTIME_WITHOUT_BYTES)
+          fi
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing signed release evidence metadata: ${missing[*]}"
+            exit 1
+          fi
+          archive_pattern='^[^=[:space:]]+=https://[^/=[:space:]][^=[:space:]]*=[0-9a-fA-F]{64}$'
+          if ! [[ "${python_runtime_archive}" =~ ${archive_pattern} ]]; then
+            echo "::error::python runtime archive must use NAME=HTTPS_URL=SHA256."
+            exit 1
+          fi
+          if ! [[ "${HERMES_SOURCE_ARCHIVE}" =~ ${archive_pattern} ]]; then
+            echo "::error::source archive must use NAME=HTTPS_URL=SHA256."
+            exit 1
+          fi
+          if ! [[ "${HERMES_PYTHON_RUNTIME_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "::error::python-runtime-version must identify a Python patch release."
+            exit 1
+          fi
+          case "${HERMES_RELEASE_TAG}" in
+            *[[:space:]/]*|*\\*|*[?#]*)
+              echo "::error::release-tag must be a single GitHub tag segment."
+              exit 1
+              ;;
+          esac
+          expected_release_url="https://github.com/${{ github.repository }}/releases/tag/${HERMES_RELEASE_TAG}"
+          if [ "${HERMES_RELEASE_NOTES_URL}" != "${expected_release_url}" ]; then
+            echo "::error::release-notes-url must equal GitHub release tag URL: ${expected_release_url}"
+            exit 1
+          fi
+          if ! [[ "${without_runtime_bytes}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::python runtime without-runtime byte size must be a positive integer."
+            exit 1
+          fi
+          echo "Signed release evidence metadata is present."
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c  # v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+
+      - name: Cache Rust targets
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+        with:
+          workspaces: apps/bootstrap-installer/src-tauri
+
+      - name: Install Linux Tauri dependencies
+        timeout-minutes: 30
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            install -y --no-install-recommends \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
+
+      - name: Report unsigned Unix smoke mode
+        if: ${{ inputs['unsigned-smoke-only'] }}
+        run: |
+          echo "Unsigned Unix smoke builds are not release artifacts;"
+          echo "macOS notarization and Linux Sigstore signing are skipped."
+
+      - name: Validate Apple signing configuration
+        if: ${{ matrix.platform == 'macos' && !inputs['unsigned-smoke-only'] }}
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_ID \
+            APPLE_PASSWORD \
+            APPLE_TEAM_ID
+          do
+            if [ -z "${!name:-}" ]; then
+              missing+=("${name}")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing Apple signing configuration: ${missing[*]}"
+            exit 1
+          fi
+          echo "Apple signing configuration is present."
+
+      - name: Export Apple signing environment
+        if: ${{ matrix.platform == 'macos' && !inputs['unsigned-smoke-only'] }}
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          {
+            echo "APPLE_CERTIFICATE<<HERMES_APPLE_CERTIFICATE"
+            echo "${APPLE_CERTIFICATE}"
+            echo "HERMES_APPLE_CERTIFICATE"
+            echo "APPLE_CERTIFICATE_PASSWORD<<HERMES_APPLE_CERTIFICATE_PASSWORD"
+            echo "${APPLE_CERTIFICATE_PASSWORD}"
+            echo "HERMES_APPLE_CERTIFICATE_PASSWORD"
+            echo "APPLE_ID=${APPLE_ID}"
+            echo "APPLE_PASSWORD<<HERMES_APPLE_PASSWORD"
+            echo "${APPLE_PASSWORD}"
+            echo "HERMES_APPLE_PASSWORD"
+            echo "APPLE_TEAM_ID=${APPLE_TEAM_ID}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Bundle bootstrap tool archives
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          python scripts/prepare_bootstrap_tools.py \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}" \
+            --bundle-playwright-browsers \
+            --bundle-electron-cache \
+            --bundle-npm-cache
+
+      - name: Validate bootstrap tool archives
+        run: >
+          python scripts/prepare_bootstrap_tools.py
+          --validate-only
+          --platform ${{ matrix.platform }}
+          --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
+      - name: Bundle Python wheelhouse
+        run: >
+          python scripts/prepare_python_wheelhouse.py
+          --platform ${{ matrix.platform }}
+          --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --python python
+          --force
+
+      - name: Validate Python wheelhouse
+        run: >
+          python scripts/prepare_python_wheelhouse.py
+          --validate-only
+          --platform ${{ matrix.platform }}
+          --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
+      - name: Bundle Python runtime archive
+        env:
+          HERMES_LINUX_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['linux-python-runtime-archive'] }}
+          HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE: ${{ inputs['macos-python-runtime-archive'] }}
+        run: |
+          set -euo pipefail
+          runtime_arch="${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}"
+          runtime_archive="dist/python-runtime/python-runtime-${{ matrix.platform }}-${runtime_arch}.tar.gz"
+          HERMES_PYTHON_RUNTIME_ARCHIVE=""
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            HERMES_PYTHON_RUNTIME_ARCHIVE="${HERMES_LINUX_PYTHON_RUNTIME_ARCHIVE}"
+          elif [ "${{ matrix.platform }}" = "macos" ]; then
+            HERMES_PYTHON_RUNTIME_ARCHIVE="${HERMES_MACOS_PYTHON_RUNTIME_ARCHIVE}"
+          fi
+          args=(
+            scripts/prepare_python_runtime.py
+            --platform "${{ matrix.platform }}"
+            --arch "${runtime_arch}"
+            --python-tag cp311
+            --force
+          )
+          if [ -n "${HERMES_PYTHON_RUNTIME_ARCHIVE}" ]; then
+            args+=(--audited-archive "${HERMES_PYTHON_RUNTIME_ARCHIVE}")
+          else
+            python scripts/build_python_runtime_archive.py \
+              --platform "${{ matrix.platform }}" \
+              --arch "${runtime_arch}" \
+              --force
+            args+=(--archive "${runtime_archive}")
+            args+=(--source-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}")
+          fi
+          python "${args[@]}"
+
+      - name: Validate Python runtime archive
+        run: >
+          python scripts/prepare_python_runtime.py
+          --validate-only
+          --platform ${{ matrix.platform }}
+          --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --python-tag cp311
+
+      - name: Validate Python runtime default gate
+        run: python scripts/validate_python_runtime_default_gate.py
+
+      - name: Bundle Hermes source archive
+        env:
+          HERMES_SOURCE_ARCHIVE: ${{ inputs['source-archive'] }}
+        run: >
+          python scripts/prepare_source_archive.py
+          --archive-ref "${{ github.sha }}"
+          --commit "${{ github.sha }}"
+          --branch "${{ github.ref_name }}"
+          --force
+          --audited-archive "$HERMES_SOURCE_ARCHIVE"
+
+      - name: Validate Hermes source archive
+        run: >
+          python scripts/prepare_source_archive.py
+          --validate-only
+          --archive-ref "${{ github.sha }}"
+          --max-archive-bytes 268435456
+
+      - name: Build installer
+        env:
+          HERMES_BUILD_PIN_COMMIT: ${{ github.sha }}
+        run: npm run tauri:build
+        working-directory: apps/bootstrap-installer
+
+      - name: Smoke Unix built installer binary
+        run: >
+          ./apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup --self-check
+          --self-check-expect-commit "${{ github.sha }}"
+          --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
+          --self-check-bootstrap-tools-platform ${{ matrix.platform }}
+          --self-check-bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse
+          --self-check-wheelhouse-platform ${{ matrix.platform }}
+          --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime
+          --self-check-python-runtime-platform ${{ matrix.platform }}
+          --self-check-python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
+      - name: Smoke Unix built installer lifecycle
+        run: >
+          ./apps/bootstrap-installer/src-tauri/target/release/Hermes-Setup --self-check-lifecycle
+          --self-check-expect-commit "${{ github.sha }}"
+          --self-check-bootstrap-tools apps/bootstrap-installer/src-tauri/bootstrap-tools
+          --self-check-bootstrap-tools-platform ${{ matrix.platform }}
+          --self-check-bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --self-check-wheelhouse apps/bootstrap-installer/src-tauri/wheelhouse
+          --self-check-wheelhouse-platform ${{ matrix.platform }}
+          --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --self-check-python-runtime apps/bootstrap-installer/src-tauri/python-runtime
+          --self-check-python-runtime-platform ${{ matrix.platform }}
+          --self-check-python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
+      - name: Smoke Unix packaged runtime lifecycle
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            package_bin="$(
+              find apps/bootstrap-installer/src-tauri/target/release/bundle/appimage \
+                -maxdepth 1 -name '*.AppImage' -print -quit
+            )"
+            test -n "${package_bin}"
+            chmod +x "${package_bin}"
+          else
+            find apps/bootstrap-installer/src-tauri/target/release/bundle -maxdepth 6 -print || true
+            package_bin="$(
+              find apps/bootstrap-installer/src-tauri/target/release/bundle \
+                -path '*/Contents/MacOS/*' -type f -print -quit
+            )"
+            test -n "${package_bin}"
+          fi
+          resource_root="${GITHUB_WORKSPACE}/apps/bootstrap-installer/src-tauri"
+          echo "package_bin=${package_bin}"
+          ls -la "${package_bin}"
+          file "${package_bin}" || true
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            app_root="$(dirname "$(dirname "$(dirname "${package_bin}")")")"
+            echo "app_root=${app_root}"
+            ls -la "${app_root}"
+            otool -L "${package_bin}" || true
+            codesign --verify --deep --strict --verbose=4 "${app_root}" || true
+          fi
+          "${package_bin}" --self-check \
+            --self-check-expect-commit "${{ github.sha }}" \
+            --self-check-bootstrap-tools "${resource_root}/bootstrap-tools" \
+            --self-check-bootstrap-tools-platform ${{ matrix.platform }} \
+            --self-check-bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
+            --self-check-wheelhouse "${resource_root}/wheelhouse" \
+            --self-check-wheelhouse-platform ${{ matrix.platform }} \
+            --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
+            --self-check-python-runtime "${resource_root}/python-runtime" \
+            --self-check-python-runtime-platform ${{ matrix.platform }} \
+            --self-check-python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          "${package_bin}" --self-check-lifecycle \
+            --self-check-expect-commit "${{ github.sha }}" \
+            --self-check-bootstrap-tools "${resource_root}/bootstrap-tools" \
+            --self-check-bootstrap-tools-platform ${{ matrix.platform }} \
+            --self-check-bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
+            --self-check-wheelhouse "${resource_root}/wheelhouse" \
+            --self-check-wheelhouse-platform ${{ matrix.platform }} \
+            --self-check-wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
+            --self-check-python-runtime "${resource_root}/python-runtime" \
+            --self-check-python-runtime-platform ${{ matrix.platform }} \
+            --self-check-python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
+      - name: Verify notarized macOS artifacts
+        if: ${{ matrix.platform == 'macos' && !inputs['unsigned-smoke-only'] }}
+        run: |
+          set -euo pipefail
+          app_root="$(
+            find apps/bootstrap-installer/src-tauri/target/release/bundle/macos \
+              -maxdepth 1 -name '*.app' -type d -print -quit
+          )"
+          dmg="$(
+            find apps/bootstrap-installer/src-tauri/target/release/bundle/dmg \
+              -maxdepth 1 -name '*.dmg' -type f -print -quit
+          )"
+          test -n "${app_root}"
+          test -n "${dmg}"
+          codesign --verify --deep --strict --verbose=4 "${app_root}"
+          spctl -a -vvv -t install "${dmg}"
+          xcrun stapler validate "${app_root}"
+          xcrun stapler validate "${dmg}"
+
+      - name: Validate Linux installer artifacts
+        if: matrix.platform == 'linux'
+        run: >
+          python scripts/validate_installer_artifacts.py
+          --artifact "apps/bootstrap-installer/src-tauri/target/release/bundle/appimage/*.AppImage"
+          --artifact "apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json"
+          --artifact "apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json"
+          --artifact "apps/bootstrap-installer/src-tauri/python-runtime/python-runtime-manifest.json"
+          --bootstrap-tools-dir apps/bootstrap-installer/src-tauri/bootstrap-tools
+          --bootstrap-tools-platform ${{ matrix.platform }}
+          --bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse
+          --wheelhouse-platform ${{ matrix.platform }}
+          --wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --python-runtime-dir apps/bootstrap-installer/src-tauri/python-runtime
+          --python-runtime-platform ${{ matrix.platform }}
+          --python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --max-artifact-bytes 2147483648
+          --max-total-artifact-bytes 3221225472
+
+      - name: Validate macOS installer artifacts
+        if: matrix.platform == 'macos'
+        run: >
+          python scripts/validate_installer_artifacts.py
+          --artifact "apps/bootstrap-installer/src-tauri/target/release/bundle/dmg/*.dmg"
+          --artifact "apps/bootstrap-installer/src-tauri/target/release/bundle/macos/*.app"
+          --artifact "apps/bootstrap-installer/src-tauri/bootstrap-tools/bootstrap-tools-manifest.json"
+          --artifact "apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json"
+          --artifact "apps/bootstrap-installer/src-tauri/python-runtime/python-runtime-manifest.json"
+          --bootstrap-tools-dir apps/bootstrap-installer/src-tauri/bootstrap-tools
+          --bootstrap-tools-platform ${{ matrix.platform }}
+          --bootstrap-tools-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --wheelhouse-dir apps/bootstrap-installer/src-tauri/wheelhouse
+          --wheelhouse-platform ${{ matrix.platform }}
+          --wheelhouse-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --python-runtime-dir apps/bootstrap-installer/src-tauri/python-runtime
+          --python-runtime-platform ${{ matrix.platform }}
+          --python-runtime-arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          --max-artifact-bytes 2147483648
+          --max-total-artifact-bytes 3221225472
+
+      - name: Validate fallback burn-down registry
+        run: python scripts/validate_fallback_burn_down.py
+
+      - name: Sign Linux installer with Sigstore
+        if: ${{ matrix.platform == 'linux' && !inputs['unsigned-smoke-only'] }}
+        uses: sigstore/gh-action-sigstore-python@04cffa1d795717b140764e8b640de88853c92acc  # v3.3.0
+        with:
+          inputs: >-
+            ./apps/bootstrap-installer/src-tauri/target/release/bundle/appimage/*.AppImage
+
+      - name: Verify Linux Sigstore bundles
+        if: ${{ matrix.platform == 'linux' && !inputs['unsigned-smoke-only'] }}
+        run: |
+          set -euo pipefail
+          bundle="$(
+            find apps/bootstrap-installer/src-tauri/target/release/bundle/appimage \
+              -maxdepth 1 -name '*.sigstore.json' -type f -print -quit
+          )"
+          test -n "${bundle}"
+
+      - name: Print signed Python runtime default evidence
+        if: ${{ !inputs['unsigned-smoke-only'] }}
+        env:
+          HERMES_PYTHON_RUNTIME_VERSION: ${{ inputs['python-runtime-version'] }}
+          HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['linux-python-runtime-without-bytes'] }}
+          HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES: ${{ inputs['macos-python-runtime-without-bytes'] }}
+          HERMES_RELEASE_TAG: ${{ inputs['release-tag'] }}
+          HERMES_RELEASE_NOTES_URL: ${{ inputs['release-notes-url'] }}
+        run: |
+          set -euo pipefail
+          without_runtime_bytes="${HERMES_LINUX_PYTHON_RUNTIME_WITHOUT_BYTES}"
+          with_runtime_artifact="apps/bootstrap-installer/src-tauri/target/release/bundle/appimage/*.AppImage"
+          signature="sigstore"
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            without_runtime_bytes="${HERMES_MACOS_PYTHON_RUNTIME_WITHOUT_BYTES}"
+            with_runtime_artifact="apps/bootstrap-installer/src-tauri/target/release/bundle/dmg/*.dmg"
+            signature="developer-id-notarized"
+          fi
+          release_url="https://github.com/${{ github.repository }}/releases/tag/${HERMES_RELEASE_TAG}"
+          mkdir -p .release-evidence
+          python scripts/validate_python_runtime_default_gate.py \
+            --print-evidence \
+            --manifest apps/bootstrap-installer/src-tauri/python-runtime/python-runtime-manifest.json \
+            --python-version "${HERMES_PYTHON_RUNTIME_VERSION}" \
+            --with-runtime-artifact "${with_runtime_artifact}" \
+            --without-runtime-bytes "${without_runtime_bytes}" \
+            --release "${HERMES_RELEASE_TAG}" \
+            --url "${release_url}" \
+            --release-notes "${HERMES_RELEASE_NOTES_URL}" \
+            --commit "${{ github.sha }}" \
+            --signature "${signature}" \
+            > ".release-evidence/python-runtime-default-evidence-${{ matrix.platform }}.json"
+
+      - name: Upload signed Python runtime default evidence
+        if: ${{ !inputs['unsigned-smoke-only'] }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ matrix.artifact-name }}-python-runtime-default-evidence
+          path: .release-evidence/python-runtime-default-evidence-${{ matrix.platform }}.json
+          if-no-files-found: error
+
+      - name: Print signed fallback evidence command
+        if: ${{ !inputs['unsigned-smoke-only'] }}
+        env:
+          HERMES_RELEASE_TAG: ${{ inputs['release-tag'] }}
+          HERMES_RELEASE_NOTES_URL: ${{ inputs['release-notes-url'] }}
+        run: |
+          set -euo pipefail
+          echo "Record signed fallback burn-down evidence with:"
+          release_url="https://github.com/${{ github.repository }}/releases/tag/${HERMES_RELEASE_TAG}"
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            command=(
+              python scripts/validate_fallback_burn_down.py
+              --add-evidence desktop-bootstrap-script-fallback
+              --platform macos
+              --release "${HERMES_RELEASE_TAG}"
+              --url "${release_url}"
+              --release-notes "${HERMES_RELEASE_NOTES_URL}"
+              --commit "${{ github.sha }}"
+              --all-required-checks
+              --signature developer-id-notarized
+            )
+          else
+            command=(
+              python scripts/validate_fallback_burn_down.py
+              --add-evidence desktop-bootstrap-script-fallback
+              --platform linux
+              --release "${HERMES_RELEASE_TAG}"
+              --url "${release_url}"
+              --release-notes "${HERMES_RELEASE_NOTES_URL}"
+              --commit "${{ github.sha }}"
+              --all-required-checks
+              --signature sigstore
+            )
+          fi
+          echo "${command[*]}"
+          mkdir -p .release-evidence
+          printf '%s\n' "${command[*]}" > ".release-evidence/fallback-burn-down-${{ matrix.platform }}.sh"
+          for entry in \
+            desktop-bootstrap-script-fallback \
+            installer-source-archive-download-fallback \
+            installer-python-runtime-download-fallback
+          do
+            command[3]="${entry}"
+            printf '%s\n' "${command[*]}" >> ".release-evidence/fallback-burn-down-${{ matrix.platform }}.sh"
+            "${command[@]/--add-evidence/--print-evidence-item}" \
+              > ".release-evidence/fallback-burn-down-${{ matrix.platform }}-${entry}.json"
+          done
+          status_registry=".release-evidence/fallback-burn-down-status-registry-${{ matrix.platform }}.json"
+          cp docs/release/fallback-burn-down.json "${status_registry}"
+          for entry in \
+            desktop-bootstrap-script-fallback \
+            installer-source-archive-download-fallback \
+            installer-python-runtime-download-fallback
+          do
+            python scripts/validate_fallback_burn_down.py \
+              --registry "${status_registry}" \
+              --add-evidence-json ".release-evidence/fallback-burn-down-${{ matrix.platform }}-${entry}.json"
+          done
+          python scripts/validate_fallback_burn_down.py \
+            --registry "${status_registry}" \
+            --print-status \
+            > ".release-evidence/fallback-burn-down-${{ matrix.platform }}-status.json"
+
+      - name: Upload signed fallback evidence command
+        if: ${{ !inputs['unsigned-smoke-only'] }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ matrix.artifact-name }}-fallback-evidence
+          path: |
+            .release-evidence/fallback-burn-down-${{ matrix.platform }}.sh
+            .release-evidence/fallback-burn-down-${{ matrix.platform }}-*.json
+          if-no-files-found: error
+
+      - name: Upload Unix installer artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.upload-path }}
+          if-no-files-found: error
+
+      - name: Upload Unix bootstrap tool archives
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ matrix.artifact-name }}-bootstrap-tools
+          path: apps/bootstrap-installer/src-tauri/bootstrap-tools/*.tar.gz
+          if-no-files-found: error
+
+      - name: Upload Unix Python wheelhouse
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ matrix.artifact-name }}-python-wheelhouse
+          path: |
+            apps/bootstrap-installer/src-tauri/wheelhouse/*.whl
+            apps/bootstrap-installer/src-tauri/wheelhouse/wheelhouse-manifest.json
+          if-no-files-found: error
+
+      - name: Upload Unix Python runtime archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ matrix.artifact-name }}-python-runtime
+          path: apps/bootstrap-installer/src-tauri/python-runtime/*
+          if-no-files-found: error
+
+      - name: Upload Unix source archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ matrix.artifact-name }}-source-archive
+          path: apps/bootstrap-installer/src-tauri/source-archive/*
+          if-no-files-found: error
+
+      - name: Upload Linux Sigstore bundles
+        if: ${{ matrix.platform == 'linux' && !inputs['unsigned-smoke-only'] }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ matrix.artifact-name }}-sigstore
+          path: apps/bootstrap-installer/src-tauri/target/release/bundle/appimage/*.sigstore.json
+          if-no-files-found: error

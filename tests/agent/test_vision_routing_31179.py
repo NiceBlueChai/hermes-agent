@@ -69,6 +69,18 @@ def _fresh_modules():
             del sys.modules[mod]
 
 
+def _force_deepseek_text_only(monkeypatch) -> None:
+    """Make the DeepSeek fixture model report known text-only capability."""
+    import agent.image_routing as image_routing
+
+    def fake_lookup(provider, model, _cfg):
+        if provider == "deepseek" and model == "deepseek-v4-pro":
+            return False
+        return None
+
+    monkeypatch.setattr(image_routing, "_lookup_supports_vision", fake_lookup)
+
+
 # ---------------------------------------------------------------------------
 # Fix 1: provider=openai → custom + api.openai.com/v1
 # ---------------------------------------------------------------------------
@@ -153,9 +165,10 @@ class TestTextOnlyMainSkippedForVision:
 model:
   provider: deepseek
   default: deepseek-v4-pro
-""")
+        """)
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         _fresh_modules()
+        _force_deepseek_text_only(monkeypatch)
 
         from agent.auxiliary_client import resolve_vision_provider_client
         provider, client, _model = resolve_vision_provider_client(provider="auto")
@@ -241,9 +254,10 @@ auxiliary:
 model:
   provider: deepseek
   default: deepseek-v4-pro
-""")
+        """)
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         _fresh_modules()
+        _force_deepseek_text_only(monkeypatch)
 
         from tools.vision_tools import check_vision_requirements
         assert check_vision_requirements() is False
@@ -256,9 +270,10 @@ model:
 model:
   provider: deepseek
   default: deepseek-v4-pro
-""")
+        """)
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         _fresh_modules()
+        _force_deepseek_text_only(monkeypatch)
 
         import tools.browser_tool
         # Force the browser side to True so we exercise the vision-gating part.

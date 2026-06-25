@@ -338,6 +338,51 @@ def _file_present(file: Path, *, attempts: int = 3, delay: float = 0.2) -> bool:
     return False
 
 
+def _restore_tracked_file_if_missing(file: Path, repo_root: Path) -> bool:
+    """Restore a tracked test file from the git index if another test deleted it.
+
+    The runner shares one checkout across per-file subprocesses. A destructive
+    test can remove a not-yet-run test file after discovery; when that happens
+    pytest exits 4 even though the original file was valid. Restoring only from
+    the index keeps true typos/deleted untracked files failing.
+    """
+    if file.exists():
+        return True
+    try:
+        rel = file.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return False
+
+    blob = None
+    for treeish in (f":{rel}", f"HEAD:{rel}"):
+        candidate = subprocess.run(
+            ["git", "show", treeish],
+            cwd=repo_root,
+            capture_output=True,
+            timeout=10,
+        )
+        if candidate.returncode == 0:
+            blob = candidate.stdout
+            break
+    if blob is None:
+        return False
+    try:
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_bytes(blob)
+    except OSError:
+        return False
+    return file.exists()
+
+
+def _run_before_parallel(file: Path, repo_root: Path) -> bool:
+    """Return whether a test file must run before the shared parallel pool starts."""
+    try:
+        rel = file.resolve().relative_to(repo_root.resolve())
+    except ValueError:
+        return False
+    return len(rel.parts) >= 2 and rel.parts[0] == "tests" and rel.parts[1] == "scripts"
+
+
 def _run_one_file(
     file: Path,
     pytest_args: List[str],
@@ -373,6 +418,12 @@ def _run_one_file(
     cmd = [sys.executable, "-m", "pytest", str(file), *pytest_args]
     subproc_start = time.monotonic()
     rc, output = _spawn_pytest_once(cmd, repo_root, file_timeout)
+    if rc == 4 and not _file_present(file) and _restore_tracked_file_if_missing(file, repo_root):
+        time.sleep(_EXIT4_RETRY_BACKOFF_SECONDS)
+        rc, output = _spawn_pytest_once(
+            cmd, repo_root, file_timeout,
+            timeout_note="per-file timeout after git-index restore",
+        )
 
     # pytest exit 4 = "file or directory not found" at exec time. On loaded
     # shared CI runners we have seen the planner enumerate a file (its tests
@@ -868,9 +919,21 @@ def main() -> int:
             if rc != 0:
                 _print_inline_failure(fpath, output, repo_root, pytest_passthrough)
 
+    serial_files = [file for file in files if _run_before_parallel(file, repo_root)]
+    parallel_files = [file for file in files if file not in serial_files]
+
+    for file in serial_files:
+        t0 = time.monotonic()
+        fut: Future = Future()
+        try:
+            fut.set_result(_run_one_file(file, pytest_passthrough, repo_root, args.file_timeout))
+        except Exception as exc:  # noqa: BLE001 — keep accounting identical to pool futures
+            fut.set_exception(exc)
+        _on_done(file, t0, fut)
+
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         futures: List[Future] = []
-        for file in files:
+        for file in parallel_files:
             t0 = time.monotonic()
             fut = pool.submit(
                 _run_one_file, file, pytest_passthrough, repo_root, args.file_timeout

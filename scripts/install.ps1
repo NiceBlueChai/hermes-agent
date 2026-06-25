@@ -56,7 +56,11 @@ param(
     #   * The canonical CLI one-liner (irm | iex) omits the flag too;
     #     terminal users don't need a desktop binary built for them, and
     #     `hermes desktop` already builds on demand.
-    [switch]$IncludeDesktop
+    [switch]$IncludeDesktop,
+    # Internal bootstrapper flag: the Rust installer creates desktop shortcuts
+    # after Stage-Desktop succeeds, while normal script users keep legacy
+    # PowerShell shortcut creation.
+    [switch]$SkipDesktopShortcuts
 )
 
 $ErrorActionPreference = "Stop"
@@ -96,6 +100,8 @@ $RepoUrlSsh = "git@github.com:NousResearch/hermes-agent.git"
 $RepoUrlHttps = "https://github.com/NousResearch/hermes-agent.git"
 $PythonVersion = "3.11"
 $NodeVersion = "22"
+$env:UV_CACHE_DIR = Join-Path $HermesHome "uv-cache"
+$env:PIP_CACHE_DIR = Join-Path $HermesHome "pip-cache"
 
 # Stage-protocol version.  Bumped only for genuinely breaking changes to the
 # manifest schema, stage-name set semantics, or stdout JSON shape.  Adding a
@@ -234,8 +240,13 @@ function Find-SystemBrowser {
         "${env:LOCALAPPDATA}\Google\Chrome\Application\chrome.exe",
         "${env:ProgramFiles}\Microsoft\Edge\Application\msedge.exe",
         "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+        "${env:ProgramFiles}\BraveSoftware\Brave-Browser\Application\brave.exe",
+        "${env:ProgramFiles(x86)}\BraveSoftware\Brave-Browser\Application\brave.exe",
+        "${env:LOCALAPPDATA}\BraveSoftware\Brave-Browser\Application\brave.exe",
         "${env:ProgramFiles}\Chromium\Application\chrome.exe",
-        "${env:LOCALAPPDATA}\Chromium\Application\chrome.exe"
+        "${env:LOCALAPPDATA}\Chromium\Application\chrome.exe",
+        "${env:ProgramFiles}\Chromium\Application\chromium.exe",
+        "${env:LOCALAPPDATA}\Chromium\Application\chromium.exe"
     )
     foreach ($p in $candidates) {
         if (Test-Path $p) { return $p }
@@ -271,10 +282,19 @@ function Install-AgentBrowser {
     if (-not (Test-Path $prefixDir)) {
         New-Item -ItemType Directory -Path $prefixDir -Force | Out-Null
     }
+    $npmCacheDir = Join-Path $HermesHome "npm-cache"
+    $browserCacheDir = Join-Path $HermesHome "playwright-browsers"
+    New-Item -ItemType Directory -Path $npmCacheDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $browserCacheDir -Force | Out-Null
+    $env:npm_config_cache = Join-Path $HermesHome "npm-cache"
+    $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $HermesHome "playwright-browsers"
     $npmLog = [System.IO.Path]::GetTempFileName()
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    & $npm install -g --prefix $prefixDir --silent --ignore-scripts "agent-browser@^0.26.0" "@askjo/camofox-browser@^1.5.2" 2>&1 | Tee-Object -FilePath $npmLog | Out-Null
+    & $npm install -g --prefix $prefixDir --silent --ignore-scripts `
+        --prefer-offline --no-audit --fund=false `
+        "agent-browser@^0.26.0" "@askjo/camofox-browser@^1.5.2" `
+        2>&1 | Tee-Object -FilePath $npmLog | Out-Null
     $npmExit = $LASTEXITCODE
     $ErrorActionPreference = $prevEAP
     if ($npmExit -ne 0) {
@@ -566,11 +586,15 @@ function Install-Git {
     #>
     Write-Info "Checking Git..."
 
-    if (Get-Command git -ErrorAction SilentlyContinue) {
-        $version = git --version
-        Write-Success "Git found ($version)"
-        Set-GitBashEnvVar
-        return $true
+    $gitCheck = Get-Command git -ErrorAction SilentlyContinue
+    if ($gitCheck) {
+        $gitVersion = & $gitCheck.Source --version 2>$null
+        if ($LASTEXITCODE -eq 0 -and $gitVersion) {
+            Write-Success "Git found ($gitVersion)"
+            Set-GitBashEnvVar
+            return $true
+        }
+        Write-Warn "Git command exists but failed its version check; installing managed PortableGit."
     }
 
     # Download PortableGit into $HermesHome\git.  Always works as long as
@@ -1394,6 +1418,291 @@ function Install-Venv {
     Write-Success "Virtual environment ready (Python $PythonVersion)"
 }
 
+function Test-LocalWheelhouseManifest {
+    param([Parameter(Mandatory=$true)][string]$WheelhouseDir)
+
+    if (-not (Test-Path $WheelhouseDir -PathType Container)) {
+        return $false
+    }
+
+    $manifest = Join-Path $WheelhouseDir "wheelhouse-manifest.json"
+    if (-not (Test-Path $manifest -PathType Leaf)) {
+        return [bool](Get-ChildItem -Path $WheelhouseDir -Filter "*.whl" -File -ErrorAction SilentlyContinue)
+    }
+
+    $expectedArch = Get-WindowsArch
+    try {
+        $payload = Get-Content -Path $manifest -Raw | ConvertFrom-Json
+        if ($payload.schemaVersion -ne 1) {
+            Write-Warn "Skipping local wheelhouse: unsupported manifest schema"
+            return $false
+        }
+
+        $wheels = @($payload.wheels)
+        if ($wheels.Count -eq 0) {
+            Write-Warn "Skipping local wheelhouse: manifest has no wheels"
+            return $false
+        }
+
+        $sourceFiles = @($payload.sourceFiles)
+        if ($sourceFiles.Count -eq 0) {
+            Write-Warn "Skipping local wheelhouse: manifest has no sourceFiles"
+            return $false
+        }
+
+        $sourceNames = New-Object "System.Collections.Generic.HashSet[string]"
+        foreach ($source in $sourceFiles) {
+            $sourcePath = [string]$source.path
+            if ([string]::IsNullOrWhiteSpace($sourcePath) -or
+                [System.IO.Path]::GetFileName($sourcePath) -ne $sourcePath -or
+                $sourcePath.Contains("..") -or
+                -not $sourceNames.Add($sourcePath)) {
+                Write-Warn "Skipping local wheelhouse: invalid source path '$sourcePath'"
+                return $false
+            }
+
+            $repoSource = Join-Path $InstallDir $sourcePath
+            if (-not (Test-Path $repoSource -PathType Leaf)) {
+                Write-Warn "Skipping local wheelhouse: missing source file $sourcePath"
+                return $false
+            }
+
+            $expectedSourceSha = [string]$source.sha256
+            $actualSourceSha = (Get-FileHash -Path $repoSource -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ([string]::IsNullOrWhiteSpace($expectedSourceSha) -or
+                $actualSourceSha -ne $expectedSourceSha.ToLowerInvariant()) {
+                Write-Warn "Skipping local wheelhouse: source sha256 mismatch for $sourcePath"
+                return $false
+            }
+        }
+
+        $manifested = New-Object "System.Collections.Generic.HashSet[string]"
+        foreach ($wheel in $wheels) {
+            $name = [string]$wheel.name
+            if ([string]::IsNullOrWhiteSpace($name) -or
+                -not $name.EndsWith(".whl") -or
+                [System.IO.Path]::GetFileName($name) -ne $name -or
+                $name.Contains("..")) {
+                Write-Warn "Skipping local wheelhouse: invalid wheel name '$name'"
+                return $false
+            }
+            if ($wheel.platform -ne "windows") {
+                Write-Warn "Skipping local wheelhouse: unexpected platform for $name"
+                return $false
+            }
+            if ($wheel.arch -ne $expectedArch) {
+                Write-Warn "Skipping local wheelhouse: unexpected architecture for $name"
+                return $false
+            }
+
+            $wheelPath = Join-Path $WheelhouseDir $name
+            if (-not (Test-Path $wheelPath -PathType Leaf)) {
+                Write-Warn "Skipping local wheelhouse: missing wheel $name"
+                return $false
+            }
+
+            $item = Get-Item -Path $wheelPath
+            if ($null -ne $wheel.sizeBytes -and [int64]$wheel.sizeBytes -ne $item.Length) {
+                Write-Warn "Skipping local wheelhouse: size mismatch for $name"
+                return $false
+            }
+
+            $expectedSha = [string]$wheel.sha256
+            $actualSha = (Get-FileHash -Path $wheelPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ([string]::IsNullOrWhiteSpace($expectedSha) -or $actualSha -ne $expectedSha.ToLowerInvariant()) {
+                Write-Warn "Skipping local wheelhouse: sha256 mismatch for $name"
+                return $false
+            }
+            [void]$manifested.Add($name)
+        }
+
+        foreach ($wheelFile in Get-ChildItem -Path $WheelhouseDir -Filter "*.whl" -File) {
+            if (-not $manifested.Contains($wheelFile.Name)) {
+                Write-Warn "Skipping local wheelhouse: unmanifested wheel $($wheelFile.Name)"
+                return $false
+            }
+        }
+        return $true
+    } catch {
+        Write-Warn "Skipping local wheelhouse: $_"
+        return $false
+    }
+}
+
+function Get-LocalWheelhouseDir {
+    param([string]$FallbackDir)
+    if (-not [string]::IsNullOrWhiteSpace($env:HERMES_BUNDLED_WHEELHOUSE_DIR)) {
+        return $env:HERMES_BUNDLED_WHEELHOUSE_DIR
+    }
+    return $FallbackDir
+}
+
+function Get-BundledBootstrapToolsDir {
+    if ([string]::IsNullOrWhiteSpace($env:HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR)) {
+        return $null
+    }
+    if (-not (Test-Path $env:HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR)) {
+        return $null
+    }
+    return $env:HERMES_BUNDLED_BOOTSTRAP_TOOLS_DIR
+}
+
+function Test-BundledCacheArchiveManifest {
+    param(
+        [string]$ToolsDir,
+        [string]$ArchiveName,
+        [string]$ArchivePath
+    )
+    $manifestPath = Join-Path $ToolsDir "bootstrap-tools-manifest.json"
+    if (-not (Test-Path $manifestPath)) {
+        Write-Warn "Skipping bundled cache archive without manifest: $ArchiveName"
+        return $false
+    }
+
+    try {
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $record = $manifest.archives | Where-Object { $_.name -eq $ArchiveName } | Select-Object -First 1
+        if (-not $record) {
+            Write-Warn "Skipping bundled cache archive not listed in manifest: $ArchiveName"
+            return $false
+        }
+
+        $expectedSize = [int64]$record.sizeBytes
+        $actualSize = (Get-Item -LiteralPath $ArchivePath).Length
+        if ($expectedSize -ne $actualSize) {
+            Write-Warn "Skipping bundled cache archive with size mismatch: $ArchiveName"
+            return $false
+        }
+
+        $expectedHash = [string]$record.sha256
+        $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ArchivePath).Hash.ToLowerInvariant()
+        if ($expectedHash.ToLowerInvariant() -ne $actualHash) {
+            Write-Warn "Skipping bundled cache archive with checksum mismatch: $ArchiveName"
+            return $false
+        }
+
+        return $true
+    } catch {
+        Write-Warn "Skipping bundled cache archive with invalid manifest entry: $ArchiveName"
+        return $false
+    }
+}
+
+function Test-ZipArchiveMembersSafe {
+    param([string]$ArchivePath)
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
+        try {
+            foreach ($entry in $zip.Entries) {
+                $name = [string]$entry.FullName
+                $normalized = $name.Replace('\', '/')
+                if ([string]::IsNullOrWhiteSpace($normalized) `
+                    -or [System.IO.Path]::IsPathRooted($name) `
+                    -or [System.IO.Path]::IsPathRooted($normalized) `
+                    -or $normalized.StartsWith("/") `
+                    -or $normalized -match '(^|/)\.\.(/|$)') {
+                    Write-Warn "Skipping bundled cache archive with unsafe member: $name"
+                    return $false
+                }
+            }
+        } finally {
+            $zip.Dispose()
+        }
+        return $true
+    } catch {
+        Write-Warn "Skipping bundled cache archive with unreadable ZIP members: $_"
+        return $false
+    }
+}
+
+function Restore-BundledCacheArchive {
+    param(
+        [string]$ArchiveName,
+        [string]$CacheRootName,
+        [string]$Destination
+    )
+    $toolsDir = Get-BundledBootstrapToolsDir
+    if (-not $toolsDir) { return $false }
+    $archive = Join-Path $toolsDir $ArchiveName
+    if (-not (Test-Path $archive)) { return $false }
+    if (-not (Test-BundledCacheArchiveManifest `
+                -ToolsDir $toolsDir `
+                -ArchiveName $ArchiveName `
+                -ArchivePath $archive)) {
+        return $false
+    }
+    if (-not (Test-ZipArchiveMembersSafe -ArchivePath $archive)) {
+        return $false
+    }
+
+    $tmpParent = Join-Path $HermesHome "bootstrap-cache"
+    $tmp = Join-Path $tmpParent "extract-$CacheRootName-$([guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+    try {
+        Expand-Archive -LiteralPath $archive -DestinationPath $tmp -Force
+        $source = Join-Path $tmp $CacheRootName
+        if (-not (Test-Path $source)) {
+            $source = $tmp
+        }
+        if (Test-Path $Destination) {
+            Remove-Item -Recurse -Force -LiteralPath $Destination
+        }
+        New-Item -ItemType Directory -Path (Split-Path $Destination -Parent) -Force | Out-Null
+        Move-Item -LiteralPath $source -Destination $Destination -Force
+        Write-Info "Restored $CacheRootName from bundled bootstrap tools"
+        return $true
+    } catch {
+        Write-Warn "Could not restore $CacheRootName from bundled bootstrap tools: $_"
+        return $false
+    } finally {
+        Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
+    }
+}
+
+function Restore-BundledNpmCacheIfAvailable {
+    $arch = Get-WindowsArch
+    Restore-BundledCacheArchive `
+        -ArchiveName "npm-cache-windows-$arch.zip" `
+        -CacheRootName "npm-cache" `
+        -Destination (Join-Path $HermesHome "npm-cache") | Out-Null
+}
+
+function Restore-BundledPlaywrightBrowsersIfAvailable {
+    $arch = Get-WindowsArch
+    return Restore-BundledCacheArchive `
+        -ArchiveName "playwright-browsers-windows-$arch.zip" `
+        -CacheRootName "playwright-browsers" `
+        -Destination (Join-Path $HermesHome "playwright-browsers")
+}
+
+function Restore-BundledElectronCacheIfAvailable {
+    $arch = Get-WindowsArch
+    Restore-BundledCacheArchive `
+        -ArchiveName "electron-cache-windows-$arch.zip" `
+        -CacheRootName "electron-cache" `
+        -Destination (Join-Path $HermesHome "electron-cache") | Out-Null
+}
+
+function Install-LocalWheelhouseTier {
+    $fallbackWheelhouseDir = Join-Path $InstallDir "resources\wheelhouse"
+    $wheelhouseDir = Get-LocalWheelhouseDir -FallbackDir $fallbackWheelhouseDir
+    if (-not (Test-LocalWheelhouseManifest -WheelhouseDir $wheelhouseDir)) {
+        return $false
+    }
+
+    Write-Info "Trying tier: local wheelhouse (all) ..."
+    & $UvCmd pip install --no-index --find-links $wheelhouseDir -e ".[all]"
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "Main package installed (local wheelhouse)"
+        $script:InstalledTier = "local wheelhouse (all)"
+        return $true
+    }
+
+    Write-Warn "Local wheelhouse install failed. Falling back to uv.lock/PyPI tiers..."
+    return $false
+}
+
 function Install-Dependencies {
     Write-Info "Installing dependencies..."
     
@@ -1418,6 +1727,15 @@ function Install-Dependencies {
         }
     }
 
+    # Offline release-bundle install (Tier -1) -- direct script runs can use
+    # the same repository-local wheelhouse that the Rust bootstrapper bundles.
+    # A manifest with target platform, architecture, size, and SHA-256 keeps
+    # this path auditable; failure falls through to the existing network tiers.
+    $skipPipFallback = $false
+    if (Install-LocalWheelhouseTier) {
+        $skipPipFallback = $true
+    }
+
     # Hash-verified install (Tier 0) -- when uv.lock is present, prefer
     # `uv sync --locked`. The lockfile records SHA256 hashes for every
     # transitive dependency, so a compromised transitive (different hash
@@ -1428,7 +1746,7 @@ function Install-Dependencies {
     # without any hash verification -- they exist to keep installs working
     # when the lockfile is stale, missing, or out-of-sync with the
     # current extras spec, NOT because they're equivalent in posture.
-    if (Test-Path "uv.lock") {
+    if (-not $skipPipFallback -and (Test-Path "uv.lock")) {
         Write-Info "Trying tier: hash-verified (uv.lock) ..."
         # Critical flag choice: `--extra all`, NOT `--all-extras`.
         #   --all-extras = every [project.optional-dependencies] key,
@@ -1449,14 +1767,14 @@ function Install-Dependencies {
         if ($LASTEXITCODE -eq 0) {
             Write-Success "Main package installed (hash-verified via uv.lock)"
             $script:InstalledTier = "hash-verified (uv.lock)"
+            $skipPipFallback = $true
             # Skip the rest of the tiered cascade -- we already have a
             # complete, hash-verified install.
-            $skipPipFallback = $true
         } else {
             Write-Warn "uv.lock sync failed (lockfile may be stale), falling back to PyPI resolve..."
             $skipPipFallback = $false
         }
-    } else {
+    } elseif (-not $skipPipFallback) {
         Write-Info "uv.lock not found -- falling back to PyPI resolve (no hash verification)"
         $skipPipFallback = $false
     }
@@ -1860,6 +2178,14 @@ function Install-NodeDeps {
         }
     }
 
+    $npmCacheDir = Join-Path $HermesHome "npm-cache"
+    $browserCacheDir = Join-Path $HermesHome "playwright-browsers"
+    New-Item -ItemType Directory -Path $npmCacheDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $browserCacheDir -Force | Out-Null
+    $env:npm_config_cache = Join-Path $HermesHome "npm-cache"
+    $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $HermesHome "playwright-browsers"
+    Restore-BundledNpmCacheIfAvailable
+
     # Helper: run "npm install" in a given directory and surface the real
     # error when it fails.  Returns $true on success.
     #
@@ -1899,8 +2225,22 @@ function Install-NodeDeps {
             # for uv's stderr-emitting installer.  Check success via
             # $LASTEXITCODE, which is reliable regardless of stderr noise.
             $ErrorActionPreference = "Continue"
-            & $npmPath install --silent 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $logPath
-            $code = $LASTEXITCODE
+            $hasLockfile = Test-Path (Join-Path $installDir "package-lock.json")
+            if ($hasLockfile) {
+                & $npmPath ci --prefer-offline --no-audit --fund=false `
+                    2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $logPath
+                $code = $LASTEXITCODE
+                if ($code -ne 0) {
+                    Write-Info "$label npm ci failed (exit $code) -- retrying with npm install..."
+                    & $npmPath install --silent --prefer-offline --no-audit --fund=false `
+                        2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $logPath
+                    $code = $LASTEXITCODE
+                }
+            } else {
+                & $npmPath install --silent --prefer-offline --no-audit --fund=false `
+                    2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $logPath
+                $code = $LASTEXITCODE
+            }
             $ErrorActionPreference = $prevEAP
             if ($code -eq 0) {
                 Write-Success "$label dependencies installed"
@@ -1960,6 +2300,8 @@ function Install-NodeDeps {
             if (-not $npxExe) {
                 Write-Warn "npx not found -- cannot install Playwright Chromium."
                 Write-Info "Run manually later: cd `"$InstallDir`"; npx playwright install chromium"
+            } elseif (Restore-BundledPlaywrightBrowsersIfAvailable) {
+                Write-Success "Browser engine restored from bundled Playwright cache"
             } else {
                 $pwLog = "$env:TEMP\hermes-playwright-install-$(Get-Random).log"
                 Push-Location $InstallDir
@@ -2068,6 +2410,7 @@ function Clear-ElectronBuildCache {
     $cacheDirs = @()
     if ($env:electron_config_cache) { $cacheDirs += $env:electron_config_cache }
     if ($env:ELECTRON_CACHE)        { $cacheDirs += $env:ELECTRON_CACHE }
+    if ($env:ELECTRON_BUILDER_CACHE) { $cacheDirs += $env:ELECTRON_BUILDER_CACHE }
     if ($env:LOCALAPPDATA)          { $cacheDirs += (Join-Path $env:LOCALAPPDATA 'electron\Cache') }
     $cacheDirs += (Join-Path $HOME 'AppData\Local\electron\Cache')
 
@@ -2142,6 +2485,17 @@ function Install-Desktop {
         if (Test-Path $sibling) { $npmExe = $sibling }
     }
 
+    $npmCacheDir = Join-Path $HermesHome "npm-cache"
+    $electronCacheDir = Join-Path $HermesHome "electron-cache"
+    New-Item -ItemType Directory -Path $npmCacheDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $electronCacheDir -Force | Out-Null
+    $env:npm_config_cache = Join-Path $HermesHome "npm-cache"
+    $env:electron_config_cache = Join-Path $HermesHome "electron-cache"
+    $env:ELECTRON_CACHE = Join-Path $HermesHome "electron-cache"
+    $env:ELECTRON_BUILDER_CACHE = Join-Path $HermesHome "electron-cache"
+    Restore-BundledNpmCacheIfAvailable
+    Restore-BundledElectronCacheIfAvailable
+
     # 1. Workspace-level install so apps/desktop's deps (Electron, Vite,
     # node-pty prebuilds, etc.) actually land in node_modules. This is
     # the SAME `npm install` Install-NodeDeps does for browser tools,
@@ -2178,11 +2532,13 @@ function Install-Desktop {
         # is the artifact), but on failure we scan $npmOut for the TLS-trust
         # signature so corporate-proxy users get the NODE_EXTRA_CA_CERTS hint
         # instead of an opaque "exit 1" (issue #38016).
-        & $npmExe ci 2>&1 | ForEach-Object { "$_" } | Tee-Object -Variable npmOut
+        & $npmExe ci --prefer-offline --no-audit --fund=false `
+            2>&1 | ForEach-Object { "$_" } | Tee-Object -Variable npmOut
         $code = $LASTEXITCODE
         if ($code -ne 0) {
             Write-Info "  npm ci failed (exit $code) -- retrying with npm install..."
-            & $npmExe install 2>&1 | ForEach-Object { "$_" } | Tee-Object -Variable npmOut
+            & $npmExe install --prefer-offline --no-audit --fund=false `
+                2>&1 | ForEach-Object { "$_" } | Tee-Object -Variable npmOut
             $code = $LASTEXITCODE
         }
         $ErrorActionPreference = $prevEAP
@@ -2327,7 +2683,11 @@ function Install-Desktop {
     #    which would cost minutes each time. The packed exe is the consumer —
     #    launching it directly is instant, and updates flow through the
     #    installer's --update path (which rebuilds once, then relaunches).
-    New-DesktopShortcuts -TargetExe $desktopExe
+    if (-not $SkipDesktopShortcuts) {
+        New-DesktopShortcuts -TargetExe $desktopExe
+    } else {
+        Write-Info "Skipping PowerShell shortcut creation; bootstrapper will create shortcuts natively"
+    }
 }
 
 function New-DesktopShortcuts {
@@ -2487,9 +2847,25 @@ function Install-PlatformSdks {
         }
 
         foreach ($sdk in $missing) {
-            Write-Info "  Installing $($sdk.Spec) ..."
-            & $pythonExe -m pip install $sdk.Spec 2>&1 | ForEach-Object { Write-Host "    $_" }
-            if ($LASTEXITCODE -eq 0) {
+            $installedSdk = $false
+            $fallbackWheelhouseDir = Join-Path $InstallDir "resources\wheelhouse"
+            $wheelhouseDir = Get-LocalWheelhouseDir -FallbackDir $fallbackWheelhouseDir
+            if (Test-LocalWheelhouseManifest -WheelhouseDir $wheelhouseDir) {
+                Write-Info "  Installing $($sdk.Spec) from local wheelhouse ..."
+                & $pythonExe -m pip install --no-index --find-links $wheelhouseDir $sdk.Spec 2>&1 |
+                    ForEach-Object { Write-Host "    $_" }
+                if ($LASTEXITCODE -eq 0) {
+                    $installedSdk = $true
+                } else {
+                    Write-Warn "  Local wheelhouse install failed for $($sdk.Spec); trying network pip..."
+                }
+            }
+            if (-not $installedSdk) {
+                Write-Info "  Installing $($sdk.Spec) ..."
+                & $pythonExe -m pip install $sdk.Spec 2>&1 | ForEach-Object { Write-Host "    $_" }
+                $installedSdk = $LASTEXITCODE -eq 0
+            }
+            if ($installedSdk) {
                 Write-Success "  Installed $($sdk.Import)"
             } else {
                 Write-Warn "  Failed to install $($sdk.Spec). Recover manually: $pythonExe -m pip install `"$($sdk.Spec)`""

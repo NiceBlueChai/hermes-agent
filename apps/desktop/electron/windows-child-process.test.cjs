@@ -8,11 +8,21 @@ const path = require('node:path')
 const ELECTRON_DIR = __dirname
 
 function readElectronFile(name) {
-  return fs.readFileSync(path.join(ELECTRON_DIR, name), 'utf8')
+  return fs.readFileSync(path.join(ELECTRON_DIR, name), 'utf8').replace(/\r\n/g, '\n')
 }
 
 function requireHiddenChildOptions(source, needle) {
-  const index = source.indexOf(needle)
+  const compactNeedle = needle.replace(/\s+/g, '')
+  const compactSource = []
+  const sourceIndexes = []
+  for (let index = 0; index < source.length; index += 1) {
+    if (!/\s/.test(source[index])) {
+      compactSource.push(source[index])
+      sourceIndexes.push(index)
+    }
+  }
+  const compactIndex = compactSource.join('').indexOf(compactNeedle)
+  const index = compactIndex === -1 ? -1 : sourceIndexes[compactIndex]
   assert.notEqual(index, -1, `missing call site: ${needle}`)
   const snippet = source.slice(index, index + 700)
   assert.match(

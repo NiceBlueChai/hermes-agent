@@ -768,28 +768,195 @@ class TestCmdUpdateCheckBranchFlag:
         assert "bb/gui" in out
 
 
-class TestCmdUpdateZipBranchRefusal:
-    """``hermes update --branch=<non-main>`` must refuse on the ZIP fallback path.
+class TestCmdUpdateZipBranchFallback:
+    """``hermes update --branch=<non-main>`` uses that branch on the ZIP fallback path."""
 
-    The ZIP fallback hard-codes a GitHub archive URL for main.zip; honoring
-    --branch arbitrarily would require remote-branch existence checks the
-    fallback can't easily do. Refusing is the right move — silently lying
-    about which branch got installed is the bug --branch was meant to prevent.
-    """
+    def test_zip_fallback_uses_requested_branch_archive(self, tmp_path, monkeypatch):
+        import zipfile
 
-    def test_zip_fallback_refuses_non_main_branch(self, capsys):
-        from hermes_cli.main import _update_via_zip
+        from hermes_cli import main as hm
 
-        args = SimpleNamespace(branch="bb/gui")
-        with pytest.raises(SystemExit) as exc_info:
-            _update_via_zip(args)
-        assert exc_info.value.code == 1
+        fake_root = tmp_path / "install_dir"
+        fake_root.mkdir()
+        downloaded_urls = []
 
-        out = capsys.readouterr().out
-        assert "bb/gui" in out
-        assert "not supported" in out
-        # No actual download attempted.
-        assert "Downloading latest version" not in out
+        def fake_urlretrieve(url, dest):
+            downloaded_urls.append(url)
+            with zipfile.ZipFile(dest, "w") as zf:
+                zf.writestr("hermes-agent-bb-gui/README.md", "branch ok\n")
+            return dest, None
+
+        monkeypatch.setattr(hm, "PROJECT_ROOT", fake_root)
+        monkeypatch.setattr(
+            hm,
+            "_install_python_dependencies_with_optional_fallback",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(hm, "_update_node_dependencies", lambda: None)
+        monkeypatch.setattr(hm, "_build_web_ui", lambda *args, **kwargs: None)
+        monkeypatch.setattr(hm, "_kill_stale_dashboard_processes", lambda: None)
+        monkeypatch.setattr("urllib.request.urlretrieve", fake_urlretrieve)
+
+        hm._update_via_zip(SimpleNamespace(branch="bb/gui"))
+
+        assert downloaded_urls == [
+            "https://github.com/NousResearch/hermes-agent/archive/refs/heads/bb/gui.zip"
+        ]
+        assert (fake_root / "README.md").read_text() == "branch ok\n"
+
+
+class TestCmdUpdateFinalizeOnly:
+    """Internal update finalization skips code transport after Rust refreshes the checkout."""
+
+    def test_finalize_only_skips_git_and_zip_code_update(self, tmp_path, monkeypatch):
+        from hermes_cli import main as hm
+
+        fake_root = tmp_path / "install_dir"
+        fake_root.mkdir()
+        calls = []
+
+        monkeypatch.setattr(hm, "PROJECT_ROOT", fake_root)
+        monkeypatch.setattr(hm, "_is_windows", lambda: False)
+        monkeypatch.setattr(hm, "_run_pre_update_backup", lambda args: calls.append("backup"))
+        monkeypatch.setattr(hm, "_finalize_updated_checkout", lambda args: calls.append("finalize"))
+        monkeypatch.setattr(hm, "_update_via_zip", lambda args: calls.append("zip"))
+        monkeypatch.setattr(
+            hm.subprocess,
+            "run",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("git should not run")),
+        )
+
+        hm._cmd_update_impl(SimpleNamespace(finalize_only=True, yes=True), gateway_mode=False)
+
+        assert calls == ["finalize"]
+
+    def test_finalize_helper_marks_dependency_install_recoverable(self, tmp_path, monkeypatch):
+        from hermes_cli import main as hm
+
+        fake_root = tmp_path / "install_dir"
+        fake_root.mkdir()
+        calls = []
+
+        monkeypatch.setattr(hm, "PROJECT_ROOT", fake_root)
+        monkeypatch.setattr(hm, "_clear_bytecode_cache", lambda root: 0)
+        monkeypatch.setattr(hm, "_write_update_incomplete_marker", lambda: calls.append("write"))
+        monkeypatch.setattr(hm, "_clear_update_incomplete_marker", lambda: calls.append("clear"))
+        monkeypatch.setattr("hermes_cli.managed_uv.update_managed_uv", lambda: None)
+        monkeypatch.setattr("hermes_cli.managed_uv.ensure_uv", lambda: None)
+        monkeypatch.setattr(hm, "_ensure_uv_for_termux", lambda pip_cmd: None)
+        monkeypatch.setattr(hm, "_is_termux_env", lambda *args, **kwargs: False)
+        monkeypatch.setattr(
+            hm,
+            "_install_python_dependencies_with_optional_fallback",
+            lambda *args, **kwargs: calls.append("install"),
+        )
+        monkeypatch.setattr(hm, "_update_node_dependencies", lambda: None)
+        monkeypatch.setattr(hm, "_build_web_ui", lambda *args, **kwargs: None)
+        monkeypatch.setattr(hm, "_kill_stale_dashboard_processes", lambda: None)
+        monkeypatch.setattr(hm, "_print_curator_first_run_notice", lambda: None)
+        monkeypatch.setattr(hm, "_print_curator_recent_run_notice", lambda: None)
+        monkeypatch.setattr("tools.skills_sync.sync_skills", lambda quiet=True: {"copied": []})
+        monkeypatch.setattr(
+            "hermes_cli.model_catalog.seed_cache_from_checkout",
+            lambda root: False,
+        )
+        monkeypatch.setattr(
+            hm.subprocess,
+            "run",
+            lambda *args, **kwargs: type("R", (), {"returncode": 0})(),
+        )
+
+        hm._finalize_updated_checkout(SimpleNamespace())
+
+        assert calls == ["write", "install", "clear"]
+
+    def test_finalize_helper_refreshes_lazy_features_after_core_deps(self, tmp_path, monkeypatch):
+        from hermes_cli import main as hm
+
+        fake_root = tmp_path / "install_dir"
+        fake_root.mkdir()
+        calls = []
+
+        monkeypatch.setattr(hm, "PROJECT_ROOT", fake_root)
+        monkeypatch.setattr(hm, "_clear_bytecode_cache", lambda root: 0)
+        monkeypatch.setattr(hm, "_write_update_incomplete_marker", lambda: calls.append("write"))
+        monkeypatch.setattr(hm, "_clear_update_incomplete_marker", lambda: calls.append("clear"))
+        monkeypatch.setattr("hermes_cli.managed_uv.update_managed_uv", lambda: None)
+        monkeypatch.setattr("hermes_cli.managed_uv.ensure_uv", lambda: None)
+        monkeypatch.setattr(hm, "_ensure_uv_for_termux", lambda pip_cmd: None)
+        monkeypatch.setattr(hm, "_is_termux_env", lambda *args, **kwargs: False)
+        monkeypatch.setattr(
+            hm,
+            "_install_python_dependencies_with_optional_fallback",
+            lambda *args, **kwargs: calls.append("install"),
+        )
+        monkeypatch.setattr(hm, "_refresh_active_lazy_features", lambda: calls.append("lazy"))
+        monkeypatch.setattr(hm, "_update_node_dependencies", lambda: calls.append("node"))
+        monkeypatch.setattr(hm, "_build_web_ui", lambda *args, **kwargs: None)
+        monkeypatch.setattr(hm, "_kill_stale_dashboard_processes", lambda: None)
+        monkeypatch.setattr(hm, "_print_curator_first_run_notice", lambda: None)
+        monkeypatch.setattr(hm, "_print_curator_recent_run_notice", lambda: None)
+        monkeypatch.setattr("tools.skills_sync.sync_skills", lambda quiet=True: {"copied": []})
+        monkeypatch.setattr(
+            "hermes_cli.model_catalog.seed_cache_from_checkout",
+            lambda root: False,
+        )
+        monkeypatch.setattr(
+            hm.subprocess,
+            "run",
+            lambda *args, **kwargs: type("R", (), {"returncode": 0})(),
+        )
+
+        hm._finalize_updated_checkout(SimpleNamespace())
+
+        assert calls == ["write", "install", "clear", "lazy", "node"]
+
+    def test_finalize_helper_preserves_termux_android_dependency_strategy(
+        self, tmp_path, monkeypatch
+    ):
+        from hermes_cli import main as hm
+
+        fake_root = tmp_path / "install_dir"
+        fake_root.mkdir()
+        calls = []
+
+        monkeypatch.setattr(hm, "PROJECT_ROOT", fake_root)
+        monkeypatch.setattr(hm, "_clear_bytecode_cache", lambda root: 0)
+        monkeypatch.setattr(hm, "_write_update_incomplete_marker", lambda: None)
+        monkeypatch.setattr(hm, "_clear_update_incomplete_marker", lambda: None)
+        monkeypatch.setattr("hermes_cli.managed_uv.update_managed_uv", lambda: None)
+        monkeypatch.setattr("hermes_cli.managed_uv.ensure_uv", lambda: "/usr/bin/uv")
+        monkeypatch.setattr(hm, "_is_termux_env", lambda *args, **kwargs: True)
+        monkeypatch.setattr(hm, "_is_android_python", lambda: True)
+        monkeypatch.setattr(
+            hm,
+            "_install_psutil_android_compat",
+            lambda cmd, env=None: calls.append(("psutil", cmd, env)),
+        )
+        monkeypatch.setattr(
+            hm,
+            "_install_python_dependencies_with_optional_fallback",
+            lambda cmd, env=None, group="all": calls.append(("install", cmd, env, group)),
+        )
+        monkeypatch.setattr(hm, "_refresh_active_lazy_features", lambda: None)
+        monkeypatch.setattr(hm, "_update_node_dependencies", lambda: None)
+        monkeypatch.setattr(hm, "_build_web_ui", lambda *args, **kwargs: None)
+        monkeypatch.setattr(hm, "_kill_stale_dashboard_processes", lambda: None)
+        monkeypatch.setattr(hm, "_print_curator_first_run_notice", lambda: None)
+        monkeypatch.setattr(hm, "_print_curator_recent_run_notice", lambda: None)
+        monkeypatch.setattr("tools.skills_sync.sync_skills", lambda quiet=True: {"copied": []})
+        monkeypatch.setattr(
+            "hermes_cli.model_catalog.seed_cache_from_checkout",
+            lambda root: False,
+        )
+
+        hm._finalize_updated_checkout(SimpleNamespace())
+
+        assert calls[0][0] == "psutil"
+        assert calls[0][1] == ["/usr/bin/uv", "pip"]
+        assert calls[1][0] == "install"
+        assert calls[1][1] == ["/usr/bin/uv", "pip"]
+        assert calls[1][3] == "termux-all"
 
 
 def test_is_termux_env_true_for_termux_prefix():

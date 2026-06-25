@@ -1,0 +1,119 @@
+{
+    "schemaVersion": 1,
+    "entries": [
+        {
+            "id": "desktop-bootstrap-script-fallback",
+            "owner": "desktop",
+            "file": "apps/desktop/electron/bootstrap-runner.cjs",
+            "marker": "HERMES-FALLBACK-BURN-DOWN: desktop-bootstrap-script-fallback",
+            "fallback": "Use install.ps1 or install.sh when the packaged native bridge cannot run the full desktop bootstrap.",
+            "removalGate": "Remove only after one signed Windows, macOS, and Linux release reports canRunFullBootstrap=true, packaged smoke covers the native bridge, repair and uninstall cover native-created resources, and release notes document the install behavior change.",
+            "requiredEvidence": [
+                {
+                    "platform": "windows",
+                    "checks": [
+                        "can-run-full-bootstrap",
+                        "packaged-native-bridge-smoke",
+                        "repair-uninstall-native-resources",
+                        "release-notes"
+                    ]
+                },
+                {
+                    "platform": "macos",
+                    "checks": [
+                        "can-run-full-bootstrap",
+                        "packaged-native-bridge-smoke",
+                        "repair-uninstall-native-resources",
+                        "release-notes"
+                    ]
+                },
+                {
+                    "platform": "linux",
+                    "checks": [
+                        "can-run-full-bootstrap",
+                        "packaged-native-bridge-smoke",
+                        "repair-uninstall-native-resources",
+                        "release-notes"
+                    ]
+                }
+            ],
+            "evidence": []
+        },
+        {
+            "id": "installer-source-archive-download-fallback",
+            "owner": "installer",
+            "file": "apps/bootstrap-installer/src-tauri/src/update.rs",
+            "marker": "HERMES-FALLBACK-BURN-DOWN: installer-source-archive-download-fallback",
+            "fallback": "Download the GitHub repository archive when a packaged source archive is missing or does not match the requested commit.",
+            "removalGate": "Remove only after one signed Windows, macOS, and Linux release ships manifest-verified source archives, packaged smoke proves update refresh from the bundled archive, direct install.ps1/install.sh still covers source installs, and release notes document the offline archive behavior.",
+            "requiredEvidence": [
+                {
+                    "platform": "windows",
+                    "checks": [
+                        "manifest-verified-source-archive",
+                        "packaged-update-refresh-smoke",
+                        "direct-install-script-coverage",
+                        "release-notes"
+                    ]
+                },
+                {
+                    "platform": "macos",
+                    "checks": [
+                        "manifest-verified-source-archive",
+                        "packaged-update-refresh-smoke",
+                        "direct-install-script-coverage",
+                        "release-notes"
+                    ]
+                },
+                {
+                    "platform": "linux",
+                    "checks": [
+                        "manifest-verified-source-archive",
+                        "packaged-update-refresh-smoke",
+                        "direct-install-script-coverage",
+                        "release-notes"
+                    ]
+                }
+            ],
+            "evidence": []
+        },
+        {
+            "id": "installer-python-runtime-download-fallback",
+            "owner": "installer",
+            "file": "apps/bootstrap-installer/src-tauri/src/orchestrator.rs",
+            "marker": "HERMES-FALLBACK-BURN-DOWN: installer-python-runtime-download-fallback",
+            "fallback": "Run uv python install 3.11 when the packaged Python runtime archive is unavailable or fails validation/extraction.",
+            "removalGate": "Remove only after one signed Windows, macOS, and Linux release ships Python runtime archives, packaged smoke proves first install and repair from the bundled runtime, uninstall cleans the runtime directory, and release notes document the bundled Python behavior.",
+            "requiredEvidence": [
+                {
+                    "platform": "windows",
+                    "checks": [
+                        "bundled-python-runtime-archive",
+                        "packaged-install-repair-smoke",
+                        "uninstall-runtime-cleanup",
+                        "release-notes"
+                    ]
+                },
+                {
+                    "platform": "macos",
+                    "checks": [
+                        "bundled-python-runtime-archive",
+                        "packaged-install-repair-smoke",
+                        "uninstall-runtime-cleanup",
+                        "release-notes"
+                    ]
+                },
+                {
+                    "platform": "linux",
+                    "checks": [
+                        "bundled-python-runtime-archive",
+                        "packaged-install-repair-smoke",
+                        "uninstall-runtime-cleanup",
+                        "release-notes"
+                    ]
+                }
+            ],
+            "evidence": []
+        }
+    ]
+}

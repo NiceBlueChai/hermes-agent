@@ -5666,6 +5666,120 @@ def _kill_stale_dashboard_processes(
 _warn_stale_dashboard_processes = _kill_stale_dashboard_processes
 
 
+def _finalize_updated_checkout(args):
+    """Run dependency, cache, and skill refresh steps after source files changed."""
+    # Clear stale bytecode after the checkout has changed.
+    removed = _clear_bytecode_cache(PROJECT_ROOT)
+    if removed:
+        print(
+            f"  ✓ Cleared {removed} stale __pycache__ director{'y' if removed == 1 else 'ies'}"
+        )
+
+    # Reinstall Python dependencies. Prefer .[all], but if one optional extra
+    # breaks on this machine, keep base deps and reinstall the remaining extras
+    # individually so update does not silently strip working capabilities.
+    _write_update_incomplete_marker()
+    print("→ Updating Python dependencies...")
+
+    from hermes_cli.managed_uv import ensure_uv, update_managed_uv
+
+    # Keep managed uv current — runs `uv self update` if we already have one.
+    update_managed_uv()
+
+    uv_bin = ensure_uv()
+
+    pip_cmd = [sys.executable, "-m", "pip"]
+    if not uv_bin:
+        uv_bin = _ensure_uv_for_termux(pip_cmd)
+    install_group = "all"
+    if uv_bin:
+        uv_env = {**os.environ, "VIRTUAL_ENV": str(PROJECT_ROOT / "venv")}
+        if _is_termux_env(uv_env):
+            uv_env.pop("PYTHONPATH", None)
+            uv_env.pop("PYTHONHOME", None)
+            install_group = "termux-all"
+            print("  → Termux detected: using uv + curated termux-all optional profile...")
+        if _is_termux_env(uv_env) and _is_android_python():
+            print("  → Termux/Android detected: prebuilding psutil with Linux source path compatibility...")
+            _install_psutil_android_compat([uv_bin, "pip"], env=uv_env)
+        _install_python_dependencies_with_optional_fallback(
+            [uv_bin, "pip"], env=uv_env, group=install_group
+        )
+    else:
+        # Use sys.executable to explicitly call the venv's pip module,
+        # avoiding PEP 668 'externally-managed-environment' errors on Debian/Ubuntu.
+        # Some environments lose pip inside the venv; bootstrap it back with
+        # ensurepip before trying the editable install.
+        try:
+            subprocess.run(
+                pip_cmd + ["--version"],
+                cwd=PROJECT_ROOT,
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError:
+            subprocess.run(
+                [sys.executable, "-m", "ensurepip", "--upgrade", "--default-pip"],
+                cwd=PROJECT_ROOT,
+                check=True,
+            )
+        if _is_termux_env():
+            install_group = "termux-all"
+            print("  → Termux detected: using curated termux-all optional profile...")
+        if _is_termux_env() and _is_android_python():
+            print("  → Termux/Android detected: prebuilding psutil with Linux source path compatibility...")
+            _install_psutil_android_compat(pip_cmd)
+        _install_python_dependencies_with_optional_fallback(pip_cmd, group=install_group)
+
+    _clear_update_incomplete_marker()
+    _refresh_active_lazy_features()
+    _update_node_dependencies()
+    _build_web_ui(PROJECT_ROOT / "web")
+
+    # Sync skills.
+    try:
+        from tools.skills_sync import sync_skills
+
+        print("→ Syncing bundled skills...")
+        result = sync_skills(quiet=True)
+        if result["copied"]:
+            print(f"  + {len(result['copied'])} new: {', '.join(result['copied'])}")
+        if result.get("updated"):
+            print(
+                f"  ↑ {len(result['updated'])} updated: {', '.join(result['updated'])}"
+            )
+        if result.get("user_modified"):
+            print(f"  ~ {len(result['user_modified'])} user-modified (kept)")
+        if result.get("cleaned"):
+            print(f"  − {len(result['cleaned'])} removed from manifest")
+        if not result["copied"] and not result.get("updated"):
+            print("  ✓ Skills are up to date")
+    except Exception:
+        pass
+
+    # Seed the model-catalog disk cache from the freshly-updated checkout.
+    # Non-fatal: the normal network refresh still applies later.
+    try:
+        from hermes_cli.model_catalog import seed_cache_from_checkout
+
+        if seed_cache_from_checkout(PROJECT_ROOT):
+            print("  ✓ Model catalog cache refreshed from checkout")
+    except Exception as e:
+        logger.debug("Model catalog seed during update finalization failed: %s", e)
+
+    print()
+    print("✓ Update complete!")
+    try:
+        _print_curator_first_run_notice()
+    except Exception as e:
+        logger.debug("Curator first-run notice failed: %s", e)
+    try:
+        _print_curator_recent_run_notice()
+    except Exception as e:
+        logger.debug("Curator recent-run notice failed: %s", e)
+    _kill_stale_dashboard_processes()
+
+
 def _update_via_zip(args):
     """Update Hermes Agent by downloading a ZIP archive.
 
@@ -5676,25 +5790,11 @@ def _update_via_zip(args):
     import zipfile
     from urllib.request import urlretrieve
 
-    # The ZIP fallback exists for Windows git-file-I/O breakage. It pulls a
-    # static archive from GitHub, which is fine for the default "main"
-    # channel but would silently ignore --branch and update from main even
-    # if the user asked for something else — exactly the silent-divergence
-    # bug --branch was added to prevent. Refuse to proceed in that case
-    # rather than lie.
+    # The ZIP fallback exists for Windows git-file-I/O breakage and archive
+    # installs that intentionally do not have a .git checkout yet. Honor the
+    # same branch selector as the git path so callers do not silently update
+    # from the wrong channel.
     branch = _resolve_update_branch(args)
-    if branch != "main":
-        print(
-            f"✗ --branch={branch} is not supported on the Windows ZIP-fallback "
-            "update path."
-        )
-        print(
-            "  This path runs when git file I/O is broken on the system. "
-            "Either resolve the git-side breakage (typically an antivirus "
-            "or NTFS filter holding files open) and rerun `hermes update "
-            f"--branch {branch}`, or update against main with `hermes update`."
-        )
-        sys.exit(1)
     zip_url = (
         f"https://github.com/NousResearch/hermes-agent/archive/refs/heads/{branch}.zip"
     )
@@ -5702,7 +5802,9 @@ def _update_via_zip(args):
     print("→ Downloading latest version...")
     tmp_dir = tempfile.mkdtemp(prefix="hermes-update-")
     try:
-        zip_path = os.path.join(tmp_dir, f"hermes-agent-{branch}.zip")
+        import re
+        safe_branch = re.sub(r"[^A-Za-z0-9._-]+", "-", branch).strip("-") or "main"
+        zip_path = os.path.join(tmp_dir, f"hermes-agent-{safe_branch}.zip")
         urlretrieve(zip_url, zip_path)
 
         print("→ Extracting...")
@@ -5766,99 +5868,7 @@ def _update_via_zip(args):
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # Clear stale bytecode after ZIP extraction
-    removed = _clear_bytecode_cache(PROJECT_ROOT)
-    if removed:
-        print(
-            f"  ✓ Cleared {removed} stale __pycache__ director{'y' if removed == 1 else 'ies'}"
-        )
-
-    # Reinstall Python dependencies. Prefer .[all], but if one optional extra
-    # breaks on this machine, keep base deps and reinstall the remaining extras
-    # individually so update does not silently strip working capabilities.
-    print("→ Updating Python dependencies...")
-
-    from hermes_cli.managed_uv import ensure_uv, update_managed_uv
-
-    # Keep managed uv current — runs `uv self update` if we already have one.
-    update_managed_uv()
-
-    uv_bin = ensure_uv()
-
-    pip_cmd = [sys.executable, "-m", "pip"]
-    if not uv_bin:
-        uv_bin = _ensure_uv_for_termux(pip_cmd)
-    if uv_bin:
-        uv_env = {**os.environ, "VIRTUAL_ENV": str(PROJECT_ROOT / "venv")}
-        if _is_termux_env(uv_env):
-            uv_env.pop("PYTHONPATH", None)
-            uv_env.pop("PYTHONHOME", None)
-        _install_python_dependencies_with_optional_fallback([uv_bin, "pip"], env=uv_env)
-    else:
-        # Use sys.executable to explicitly call the venv's pip module,
-        # avoiding PEP 668 'externally-managed-environment' errors on Debian/Ubuntu.
-        # Some environments lose pip inside the venv; bootstrap it back with
-        # ensurepip before trying the editable install.
-        try:
-            subprocess.run(
-                pip_cmd + ["--version"],
-                cwd=PROJECT_ROOT,
-                check=True,
-                capture_output=True,
-            )
-        except subprocess.CalledProcessError:
-            subprocess.run(
-                [sys.executable, "-m", "ensurepip", "--upgrade", "--default-pip"],
-                cwd=PROJECT_ROOT,
-                check=True,
-            )
-        _install_python_dependencies_with_optional_fallback(pip_cmd)
-
-    _update_node_dependencies()
-    _build_web_ui(PROJECT_ROOT / "web")
-
-    # Sync skills
-    try:
-        from tools.skills_sync import sync_skills
-
-        print("→ Syncing bundled skills...")
-        result = sync_skills(quiet=True)
-        if result["copied"]:
-            print(f"  + {len(result['copied'])} new: {', '.join(result['copied'])}")
-        if result.get("updated"):
-            print(
-                f"  ↑ {len(result['updated'])} updated: {', '.join(result['updated'])}"
-            )
-        if result.get("user_modified"):
-            print(f"  ~ {len(result['user_modified'])} user-modified (kept)")
-        if result.get("cleaned"):
-            print(f"  − {len(result['cleaned'])} removed from manifest")
-        if not result["copied"] and not result.get("updated"):
-            print("  ✓ Skills are up to date")
-    except Exception:
-        pass
-
-    # Seed the model-catalog disk cache from the freshly-unpacked checkout
-    # (same rationale as the git-pull path in _cmd_update_impl). Non-fatal.
-    try:
-        from hermes_cli.model_catalog import seed_cache_from_checkout
-
-        if seed_cache_from_checkout(PROJECT_ROOT):
-            print("  ✓ Model catalog cache refreshed from checkout")
-    except Exception as e:
-        logger.debug("Model catalog seed during zip update failed: %s", e)
-
-    print()
-    print("✓ Update complete!")
-    try:
-        _print_curator_first_run_notice()
-    except Exception as e:
-        logger.debug("Curator first-run notice failed: %s", e)
-    try:
-        _print_curator_recent_run_notice()
-    except Exception as e:
-        logger.debug("Curator recent-run notice failed: %s", e)
-    _kill_stale_dashboard_processes()
+    _finalize_updated_checkout(args)
 
 
 def _stash_local_changes_if_needed(git_cmd: list[str], cwd: Path) -> Optional[str]:
@@ -8124,6 +8134,10 @@ def _cmd_update_impl(args, gateway_mode: bool):
 
     print("⚕ Updating Hermes Agent...")
     print()
+
+    if getattr(args, "finalize_only", False):
+        _finalize_updated_checkout(args)
+        return
 
     # On Windows, abort early if another hermes.exe is holding the venv shim
     # open. Continuing would result in a string of WinError 32 warnings and
